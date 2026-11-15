@@ -4,6 +4,10 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ## Unreleased
 
+### Changed
+
+- The project status is Beta, in the package classifiers and the documentation.
+
 ## 0.3.0 - 2026-11-15
 
 Roller 0.3.0 adds the SWE-Bench Pro bench adapter, keeps images in the trajectories of all seven Harnesses, and lets a benchmark run be described in a YAML file. It also fixes defects found by running every Harness against a real model.

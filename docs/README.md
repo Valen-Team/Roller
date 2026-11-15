@@ -144,4 +144,4 @@ roller collect --help
 roller view --help
 ```
 
-Roller 需要 Python 3.10+，使用 Task schema `roller.task/v1`。项目处于 Alpha 阶段。
+Roller 需要 Python 3.10+，使用 Task schema `roller.task/v1`。项目处于 Beta 阶段。
