@@ -2,20 +2,14 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import binascii
-import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import time
-from urllib.parse import unquote, urlsplit
 
 VERSION = "1.18.30"
 TOOLS = ("bash", "read", "write", "edit", "apply_patch", "glob", "grep", "skill")
-IMAGE_MIME_TYPES = {"image/gif", "image/jpeg", "image/png", "image/webp"}
-MAX_IMAGE_BYTES = 50 * 1024 * 1024
 
 
 def atomic_json(path, value):
@@ -61,67 +55,6 @@ def export_session(state, session_id, timeout):
     return json.loads(export_path.read_text(encoding="utf-8"))
 
 
-def _attachment_bytes(reference):
-    mime, url = reference.get("mime"), reference.get("url", reference.get("uri"))
-    if mime not in IMAGE_MIME_TYPES:
-        return None  # Non-image metadata stays in the native export.
-    if not isinstance(url, str) or not url or any(c in url for c in "\r\n\0"):
-        raise ValueError("OpenCode image reference must be a single-line URL")
-    if url.startswith("data:"):
-        prefix = f"data:{mime};base64,"
-        if not url.startswith(prefix):
-            raise ValueError("OpenCode image data URL MIME type does not match its file part")
-        encoded = url[len(prefix):]
-        if len(encoded) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):
-            raise ValueError("OpenCode image exceeds the journal byte limit")
-        try:
-            data = base64.b64decode(encoded, validate=True)
-        except (ValueError, binascii.Error) as exc:
-            raise ValueError("OpenCode image file part contains invalid base64 data") from exc
-        if not 0 < len(data) <= MAX_IMAGE_BYTES:
-            raise ValueError("OpenCode image file size is outside the supported range")
-        return None  # Already durable in session_export; do not duplicate it.
-    parsed = urlsplit(url)
-    if parsed.scheme == "file" and not parsed.netloc and not parsed.query and not parsed.fragment:
-        path = Path(unquote(parsed.path))
-    elif not parsed.scheme and Path(url).is_absolute():
-        path = Path(url)
-    else:
-        raise ValueError("OpenCode image file part is neither embedded nor a local file")
-    if not path.is_absolute() or any(c in str(path) for c in "\r\n\0") or not path.is_file():
-        raise ValueError("OpenCode image path must be an existing absolute regular file")
-    if not 0 < path.stat().st_size <= MAX_IMAGE_BYTES:
-        raise ValueError("OpenCode image file size is outside the supported range")
-    # A size race cannot turn the read into an unbounded allocation.
-    with path.open("rb") as source:
-        data = source.read(MAX_IMAGE_BYTES + 1)
-    if not 0 < len(data) <= MAX_IMAGE_BYTES:
-        raise ValueError("OpenCode image file size changed outside the supported range")
-    return data
-
-
-def attachment_records(export):
-    """Yield image bytes while the container exists; never dereference on host."""
-    for message in export.get("messages", []):
-        for part in message.get("parts", []):
-            references = []
-            if part.get("type") == "file":
-                references.append((f"part:{part['id']}", part))
-            elif part.get("type") == "tool":
-                attachments = part.get("state", {}).get("attachments") or []
-                if not isinstance(attachments, list):
-                    raise ValueError("OpenCode tool attachments must be a list")
-                references.extend((f"tool:{part['id']}:{index}", ref) for index, ref in enumerate(attachments))
-            for key, reference in references:
-                if not isinstance(reference, dict):
-                    raise ValueError("OpenCode attachment must be an object")
-                data = _attachment_bytes(reference)
-                if data is not None:
-                    yield {"type": "attachment", "key": key, "mime": reference["mime"],
-                           "data": base64.b64encode(data).decode("ascii"),
-                           "sha256": hashlib.sha256(data).hexdigest()}
-
-
 def run_turn(config, state):
     deadline = time.monotonic() + config["timeout_seconds"]
 
@@ -156,17 +89,24 @@ def run_turn(config, state):
         "share": "disabled", "autoupdate": False, "snapshot": False,
         "compaction": {"auto": False, "prune": False},
         "lsp": False, "formatter": False,
-        "permission": {"*": "deny", **{name: "allow" for name in TOOLS}, "external_directory": "allow"},
+        "permission": {"*": "deny", **{name: "allow" for name in TOOLS}, "external_directory": "allow",
+                       **({"task": "allow"} if config.get("capture_calls") else {})},
         "agent": {"build": {"steps": config["max_steps"]}, "title": {"disable": True}, "summary": {"disable": True}},
     }
+    if config.get("capture_calls"):
+        # Global task permissions otherwise override Explore's native tool
+        # restrictions. Retain a distinct child tool profile when delegating.
+        native_config["agent"]["general"] = {"steps": config["max_steps"]}
+        native_config["agent"]["explore"] = {"steps": config["max_steps"], "permission": {
+            "write": "deny", "edit": "deny", "apply_patch": "deny",
+            "task": "deny", "skill": "deny",
+        }}
     atomic_json(state / "opencode.json", native_config)
     session_file = state / "session.json"
     session = json.loads(session_file.read_text()) if session_file.exists() else {}
     args = ["opencode", "run", "--format", "json", "--thinking", "--agent", "build", "--model", "roller/" + model, "--title", "Roller task"]
     if session.get("id"):
         args += ["--session", session["id"]]
-    for path in config.get("files", []):
-        args += ["--file", path]
     stream_path = state / "cli.jsonl"
     with stream_path.open("w", encoding="utf-8") as output:
         process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=output, stderr=None, text=True)
@@ -201,9 +141,33 @@ def run_turn(config, state):
         raise ValueError("OpenCode exported a different session")
     with (state / "trace.jsonl").open("a", encoding="utf-8") as journal:
         journal.write(json.dumps({"type": "session_export", "data": export}, ensure_ascii=False) + "\n")
-        # Keep native evidence even if one attachment cannot be recovered.
-        for record in attachment_records(export):
-            journal.write(json.dumps(record, ensure_ascii=False) + "\n")
+    if config.get("capture_calls"):
+        # Preserve child sessions too. Read exact native IDs from task metadata
+        # and session events; never infer ownership from CLI output ordering.
+        ids = set()
+        for line in (state / "trace.jsonl").read_text(encoding="utf-8").split("\n"):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            event = row.get("event", {})
+            if event.get("type") in {"session.created", "session.updated"}:
+                info = event.get("properties", {}).get("info", {})
+                if info.get("id"):
+                    ids.add(info["id"])
+            if event.get("type") == "message.part.updated":
+                child = event.get("properties", {}).get("part", {}).get("state", {}).get("metadata", {}).get("sessionId")
+                if child:
+                    ids.add(child)
+        for child_id in sorted(ids - {session_id}):
+            try:
+                child_export = export_session(state, child_id, remaining())
+                record = {"type": "session_export", "data": child_export}
+            except Exception as exc:
+                # Evidence failures do not change the completed root turn.
+                record = {"type": "capture_error", "session_id": child_id,
+                          "error": "child session export failed: " + type(exc).__name__}
+            with (state / "trace.jsonl").open("a", encoding="utf-8") as journal:
+                journal.write(json.dumps(record, ensure_ascii=False) + "\n")
     errors = [e.get("error") for e in events if e.get("type") == "error"]
     if process.returncode or errors:
         raise RuntimeError("OpenCode CLI failed: " + json.dumps(errors, ensure_ascii=False)[:2000])

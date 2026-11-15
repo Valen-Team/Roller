@@ -7,13 +7,11 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 from roller.actf import convert_openclaw_trace
 from roller.collector import CollectionConfig, Collector
 from roller.harnesses.base import Harness
 from roller.models import HarnessResult, RunRequest, Task, TaskBundle
-from roller.trajectory_status import export_sft
 
 
 class FakeHarness(Harness):
@@ -31,7 +29,7 @@ class FakeHarness(Harness):
             self.state["active"] += 1
             self.state["max_active"] = max(self.state["max_active"], self.state["active"])
         try:
-            time.sleep(0.01)
+            time.sleep(self.state.get("delay", 0.01))
             if self.state.get("interrupt_task") == request.task.id:
                 raise KeyboardInterrupt("interrupted for test")
             if self.state.get("fail_first") and attempt == 1:
@@ -137,6 +135,11 @@ class FakeHarness(Harness):
                 "request_count": 1,
             }
             metadata = {"slot": self.slot}
+            if "reasoning_effort" in self.state:
+                metadata["settings"] = {
+                    "reasoning_effort": self.state["reasoning_effort"],
+                    "keep_thinking": self.state.get("keep_thinking", True),
+                }
             trajectory_path = str(trajectory)
             if self.state.get("raw_only"):
                 trajectory.unlink()
@@ -171,6 +174,25 @@ class FakeHarness(Harness):
                     }
                 ]
                 trajectory.write_text(json.dumps(payload), encoding="utf-8")
+            if self.state.get("reasoning_text") and trajectory.is_file():
+                payload = json.loads(trajectory.read_text(encoding="utf-8"))
+                payload["steps"][0]["assistant_content"]["reasoning_content"] = (
+                    self.state["reasoning_text"]
+                )
+                trajectory.write_text(json.dumps(payload), encoding="utf-8")
+            if "final_content" in self.state or "stop_reason" in self.state:
+                payload = json.loads(trajectory.read_text())
+                last = payload["steps"][-1]
+                if "final_content" in self.state:
+                    last["assistant_content"]["content"] = self.state["final_content"]
+                if "stop_reason" in self.state:
+                    last["metric"]["stop_reason"] = self.state["stop_reason"]
+                trajectory.write_text(json.dumps(payload))
+            if "wire_efforts" in self.state:
+                (output_dir / "wire_trace.jsonl").write_text("".join(
+                    json.dumps({"seq": i, "path": "/v1/chat/completions", "params": {"reasoning_effort": effort}}) + "\n"
+                    for i, effort in enumerate(self.state["wire_efforts"])
+                ))
             if self.state.get("record_output"):
                 artifact = output_dir / "results" / "artifact.txt"
                 artifact.parent.mkdir(parents=True, exist_ok=True)
@@ -180,7 +202,7 @@ class FakeHarness(Harness):
                     "files": [{"path": "artifact.txt", "size": artifact.stat().st_size}],
                 }
             return HarnessResult(
-                status="ok",
+                status=self.state.get("final_status", "ok"),
                 elapsed_seconds=0.01,
                 usage=usage,
                 trace_path=str(trace),
@@ -190,6 +212,23 @@ class FakeHarness(Harness):
         finally:
             with self.state["lock"]:
                 self.state["active"] -= 1
+
+
+class FailingHarnessWithLogs(Harness):
+    name = "fake"
+
+    def __init__(self, crash: bool = False) -> None:
+        self.crash = crash
+
+    def run(self, request: RunRequest, output_dir: Path, attempt: int) -> HarnessResult:
+        rollout = output_dir / "rollout"
+        rollout.mkdir(parents=True, exist_ok=True)
+        (rollout / f"gateway.attempt-{attempt}.log").write_text("gateway startup detail")
+        (rollout / f"agent.attempt-{attempt}.log").write_text("agent startup detail")
+        (rollout / "trace_ACTF.json").write_text("partial trajectory")
+        if self.crash:
+            raise RuntimeError("gateway startup crashed")
+        return HarnessResult.error_result("gateway startup timed out")
 
 
 def make_requests() -> list[RunRequest]:
@@ -203,6 +242,30 @@ def make_requests() -> list[RunRequest]:
 
 
 class CollectorTests(unittest.TestCase):
+    def test_training_audits_exclude_without_changing_execution_status(self) -> None:
+        for state_update, reason in (
+            ({"final_content": ""}, "empty_final_answer"),
+            ({"stop_reason": "length"}, "token_limit"),
+            ({"reasoning_effort": "low", "wire_efforts": ["low", "high"]}, "wire_effort_mismatch"),
+        ):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as temporary:
+                run_dir = Path(temporary)
+                state = self._state()
+                state.update(state_update)
+                collector = Collector(CollectionConfig(run_dir=run_dir), lambda slot: FakeHarness(state, slot))
+                result = collector.collect(make_requests()[:1])[0]
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual(result["runtime"]["sft_eligibility"]["reason"], reason)
+                if reason != "empty_final_answer":
+                    self.assertIsNotNone(result["trajectory"]["sft"])
+                self.assertEqual((run_dir / "sft.jsonl").read_text(), "")
+                resumed = Collector(CollectionConfig(run_dir=run_dir, resume=True), lambda slot: FakeHarness(state, slot)).collect(make_requests()[:1])[0]
+                self.assertEqual(resumed["status"], "skipped")
+                self.assertEqual((run_dir / "sft.jsonl").read_text(), "")
+                summary = json.loads((run_dir / "info.json").read_text())["summary"]
+                self.assertEqual(summary["training"]["sft_included"], 0)
+                self.assertEqual(summary["training"]["sft_excluded"], 1)
+
     def _state(self, fail_first: bool = False) -> dict:
         return {
             "lock": threading.Lock(),
@@ -231,6 +294,8 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(summary["processed"], 4)
             self.assertEqual(summary["pending"], 0)
             self.assertEqual(summary["ok"], 4)
+            self.assertEqual(summary["training"]["sft_included"], 4)
+            self.assertEqual(summary["training"]["sft_excluded"], 0)
             self.assertEqual(summary["usage"]["total_tokens"], 12)
             sample = next((run_dir / "samples").glob("*/00000000_task-0"))
             self.assertEqual(
@@ -248,6 +313,151 @@ class CollectorTests(unittest.TestCase):
             ]
             self.assertEqual(len(dataset), 4)
             self.assertEqual(dataset[0], sft)
+
+    def test_failed_sample_keeps_only_attempt_logs_in_rollout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            result = Collector(
+                CollectionConfig(run_dir=run_dir),
+                lambda slot: FailingHarnessWithLogs(),
+            ).collect(make_requests()[:1])[0]
+
+            sample = next((run_dir / "samples").glob("*/00000000_task-0"))
+            rollout = sample / "rollout"
+            self.assertEqual(result["status"], "error")
+            self.assertEqual(
+                {path.name for path in rollout.iterdir()},
+                {"gateway.attempt-1.log", "agent.attempt-1.log"},
+            )
+            self.assertEqual(
+                (rollout / "gateway.attempt-1.log").read_text(),
+                "gateway startup detail",
+            )
+
+    def test_crashed_attempt_logs_survive_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            result = Collector(
+                CollectionConfig(run_dir=run_dir, retries=1),
+                lambda slot: FailingHarnessWithLogs(crash=True),
+            ).collect(make_requests()[:1])[0]
+
+            sample = next((run_dir / "samples").glob("*/00000000_task-0"))
+            self.assertEqual(result["status"], "error")
+            self.assertEqual(
+                {path.name for path in (sample / "rollout").iterdir()},
+                {
+                    "gateway.attempt-1.log",
+                    "agent.attempt-1.log",
+                    "gateway.attempt-2.log",
+                    "agent.attempt-2.log",
+                },
+            )
+
+    def test_rollout_log_pruning_unlinks_symlinks_without_following_them(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            external = root / "external"
+            external.mkdir()
+            external_log = external / "external.log"
+            external_log.write_text("keep this file")
+
+            sample = root / "sample"
+            rollout = sample / "rollout"
+            rollout.mkdir(parents=True)
+            (rollout / "linked-dir").symlink_to(external, target_is_directory=True)
+            Collector._prune_sample(sample, keep_rollout_logs=True)
+
+            self.assertFalse(rollout.exists())
+            self.assertEqual(external_log.read_text(), "keep this file")
+
+            linked_sample = root / "linked-sample"
+            linked_sample.mkdir()
+            (linked_sample / "rollout").symlink_to(external, target_is_directory=True)
+            Collector._prune_sample(linked_sample, keep_rollout_logs=True)
+
+            self.assertFalse((linked_sample / "rollout").exists())
+            self.assertEqual(external_log.read_text(), "keep this file")
+
+    def test_audits_visible_reasoning_without_rewriting_it(self) -> None:
+        cases = (
+            ("off", "unexpected chain", True, "mismatch", True),
+            ("off", None, True, "no_visible_reasoning", False),
+            ("high", "expected chain", True, "visible_reasoning_observed", False),
+            ("off", "filtered chain", False, "not_observable", False),
+        )
+        for effort, reasoning, keep, status, warned in cases:
+            with self.subTest(effort=effort, reasoning=reasoning, keep=keep):
+                with tempfile.TemporaryDirectory() as temporary:
+                    run_dir = Path(temporary) / "run"
+                    state = self._state()
+                    state.update(
+                        reasoning_effort=effort,
+                        reasoning_text=reasoning,
+                        keep_thinking=keep,
+                    )
+                    collector = Collector(
+                        CollectionConfig(run_dir=run_dir),
+                        lambda slot: FakeHarness(state, slot),
+                    )
+                    if warned:
+                        with self.assertLogs("roller.trajectory_audit", level="WARNING"):
+                            result = collector.collect(make_requests()[:1])[0]
+                    else:
+                        result = collector.collect(make_requests()[:1])[0]
+
+                    audit = result["runtime"]["thinking_audit"]
+                    self.assertEqual(audit["requested_effort"], effort)
+                    self.assertEqual(audit["status"], status)
+                    self.assertEqual(audit["retained_in_actf"], keep)
+                    warnings = result["runtime"].get("warnings", [])
+                    self.assertEqual(bool(warnings), warned)
+                    actf = json.loads(
+                        next((run_dir / "samples").glob("*/*/trace_ACTF.json"))
+                        .read_text()
+                    )
+                    retained = actf["steps"][0]["assistant_content"][
+                        "reasoning_content"
+                    ]
+                    self.assertEqual(retained, reasoning or "")
+                    self.assertEqual(result["status"], "ok")
+                    self.assertEqual(
+                        bool((run_dir / "sft.jsonl").read_text()), not warned
+                    )
+                    self.assertTrue(list(run_dir.glob("samples/*/*/trace_SFT.json")))
+                    if warned:
+                        self.assertFalse(result["runtime"]["sft_eligibility"]["eligible"])
+                        # Older samples carry only the audit, not eligibility.
+                        info_path = next(run_dir.glob("samples/*/*/info.json"))
+                        legacy = json.loads(info_path.read_text())
+                        legacy["runtime"].pop("sft_eligibility")
+                        info_path.write_text(json.dumps(legacy), encoding="utf-8")
+                    resumed = Collector(
+                        CollectionConfig(run_dir=run_dir, resume=True),
+                        lambda slot: FakeHarness(state, slot),
+                    ).collect(make_requests()[:1])[0]
+                    self.assertEqual(resumed["status"], "skipped")
+                    self.assertEqual(
+                        bool((run_dir / "sft.jsonl").read_text()), not warned
+                    )
+
+    def test_failed_partial_trace_has_no_training_export(self) -> None:
+        for status in ("error", "timeout"):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
+                run_dir = Path(temporary) / "run"
+                state = self._state()
+                state["final_status"] = status
+                collector = Collector(
+                    CollectionConfig(run_dir=run_dir),
+                    lambda slot: FakeHarness(state, slot),
+                )
+                result = collector.collect(make_requests()[:1])[0]
+                self.assertEqual(result["status"], status)
+                self.assertIsNotNone(result["trajectory"]["raw"])
+                self.assertIsNotNone(result["trajectory"]["actf"])
+                self.assertIsNone(result["trajectory"]["sft"])
+                self.assertFalse(list(run_dir.glob("samples/*/*/trace_SFT.json")))
+                self.assertEqual((run_dir / "sft.jsonl").read_text(), "")
 
     def test_collects_multimodal_sft_dataset_and_resumes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -473,64 +683,34 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(state["calls"][("task-0", "provider/model")], 2)
 
     def test_raw_only_conversion_failure_stays_ok_and_resumes(self) -> None:
-        for name in ("codex", "claude-code", "pi", "deepseek", "opencode", "openclaw"):
-            with self.subTest(harness=name), tempfile.TemporaryDirectory() as temporary:
-                run_dir = Path(temporary) / "run"
-                state = self._state()
-                state.update(raw_only=True, harness_name=name)
-                requests = make_requests()[:1]
-                first = Collector(CollectionConfig(run_dir=run_dir),
-                                  lambda slot: FakeHarness(state, slot)).collect(requests)
-                self.assertEqual(first[0]["status"], "ok")
-                self.assertFalse(first[0]["training"]["eligible"])
-                self.assertEqual(first[0]["conversion"]["status"], "unavailable")
-                self.assertIsNone(first[0]["trajectory"]["actf"])
-                self.assertIsNone(first[0]["trajectory"]["sft"])
-                self.assertEqual((run_dir / "sft.jsonl").read_text(), "")
-                sample = next((run_dir / "samples").glob("*/*"))
-                self.assertTrue((sample / "trace.jsonl").is_file())
-                self.assertFalse((sample / "trace_ACTF.json").exists())
-                resumed = Collector(CollectionConfig(run_dir=run_dir, resume=True),
-                                    lambda slot: FakeHarness(state, slot)).collect(requests)
-                self.assertEqual(resumed[0]["status"], "skipped")
-                self.assertEqual(resumed[0]["resumed_from_status"], "ok")
-                self.assertFalse(resumed[0]["training"]["eligible"])
-                self.assertEqual(state["calls"][("task-0", "provider/model")], 1)
-
-    def test_incomplete_projection_invalidates_existing_sft(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
             state = self._state()
-            collector = Collector(CollectionConfig(run_dir=Path(tmp)), lambda slot: FakeHarness(state, slot))
-            request = make_requests()[0]
-            result = collector.collect([request])[0]
-            sample = collector._sample_dir(request)
-            path = sample / "trace_ACTF.json"
-            trajectory = json.loads(path.read_text())
-            trajectory["projection"] = {"complete": False}
-            path.write_text(json.dumps(trajectory))
-            with self.assertRaisesRegex(RuntimeError, "incomplete diagnostic"):
-                collector._write_sft_dataset([result])
-            metadata = {}
-            export_sft(sample, metadata)
-            self.assertEqual(metadata["trajectory_conversion"]["status"], "unavailable")
-            self.assertFalse((sample / "trace_SFT.json").exists())
+            state["raw_only"] = True
+            state["harness_name"] = "opencode"
+            requests = make_requests()[:1]
 
-    def test_retry_backoff_does_not_reduce_each_attempt_timeout(self) -> None:
-        for retries, delays in ((0, []), (2, [3, 6])):
-            with self.subTest(retries=retries), tempfile.TemporaryDirectory() as tmp:
-                harness = Mock()
-                harness.run.return_value = HarnessResult.error_result("failed")
-                collector = Collector(CollectionConfig(Path(tmp), retries=retries, retry_backoff_seconds=3),
-                                      lambda slot: harness)
-                request = RunRequest(0, Task("sample", ("hello",), 0), "model", 10)
-                with patch.object(collector, "_finalize_sample", return_value={}), \
-                        patch("roller.collector.time.sleep") as sleep:
-                    collector._run_one(request, 0)
-                self.assertEqual([call.args[0] for call in sleep.call_args_list], delays)
-                self.assertEqual(harness.run.call_count, retries + 1)
-                self.assertTrue(all(call.args[0].timeout_seconds == 10 for call in harness.run.call_args_list))
+            first = Collector(
+                CollectionConfig(run_dir=run_dir),
+                lambda slot: FakeHarness(state, slot),
+            ).collect(requests)
 
-    def test_missing_actf_is_conversion_failure_not_execution_failure(self) -> None:
+            self.assertEqual(first[0]["status"], "ok")
+            self.assertIsNone(first[0]["trajectory"]["actf"])
+            self.assertIsNone(first[0]["trajectory"]["sft"])
+            self.assertEqual((run_dir / "sft.jsonl").read_text(), "")
+            sample = next((run_dir / "samples").glob("*/*"))
+            self.assertTrue((sample / "trace.jsonl").is_file())
+            self.assertFalse((sample / "trace_ACTF.json").exists())
+
+            resumed = Collector(
+                CollectionConfig(run_dir=run_dir, resume=True),
+                lambda slot: FakeHarness(state, slot),
+            ).collect(requests)
+            self.assertEqual(resumed[0]["status"], "skipped")
+            self.assertEqual(state["calls"][("task-0", "provider/model")], 1)
+
+    def test_missing_actf_without_structured_conversion_error_is_an_error(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run_dir = Path(temporary) / "run"
             state = self._state()
@@ -543,12 +723,9 @@ class CollectorTests(unittest.TestCase):
                 lambda slot: FakeHarness(state, slot),
             ).collect(make_requests()[:1])[0]
 
-            self.assertEqual(result["status"], "ok")
-            self.assertIsNone(result["error"])
-            self.assertFalse(result["training"]["eligible"])
-            self.assertEqual(result["conversion"]["status"], "failed")
+            self.assertEqual(result["status"], "error")
             self.assertEqual(
-                result["conversion"]["error"],
+                result["error"],
                 "harness finished but no canonical ACTF trajectory was found",
             )
 
@@ -710,6 +887,31 @@ class CollectorTests(unittest.TestCase):
             rows = (run_dir / "sft.jsonl").read_text().splitlines()
             self.assertEqual(len(rows), 1)
 
+    def test_interruption_cancels_queued_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            state = self._state()
+            state.update(interrupt_task="task-1", delay=0.3)
+            requests = [
+                RunRequest(index, Task(id=f"task-{index}", prompts=("hello",), source_index=index),
+                           "provider/model", 30)
+                for index in range(8)
+            ]
+            collector = Collector(
+                CollectionConfig(run_dir=run_dir, parallel=2),
+                lambda slot: FakeHarness(state, slot),
+            )
+
+            with self.assertRaises(KeyboardInterrupt):
+                collector.collect(requests)
+
+            # Each worker may pick up one more request before the interrupt is
+            # seen; everything behind them stays queued and is cancelled.
+            self.assertLessEqual(len(state["calls"]), 4)
+            info = json.loads((run_dir / "info.json").read_text())
+            self.assertEqual(info["state"], "interrupted")
+            self.assertGreaterEqual(info["summary"]["pending"], 4)
+
     def test_resume_is_bound_to_bundle_digest_and_privacy_policy(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -720,15 +922,9 @@ class CollectorTests(unittest.TestCase):
             def bundle(digest: str, resume_safe: bool = True) -> TaskBundle:
                 bundle_root = run_dir / "tasks" / digest
                 bundle_root.mkdir(parents=True, exist_ok=True)
-                manifest = bundle_root / "task.json"
-                manifest.write_text("{}", encoding="utf-8")
                 return TaskBundle(
-                    root=bundle_root,
                     inputs_root=bundle_root,
                     context_root=bundle_root,
-                    manifest_path=manifest,
-                    input_manifest_path=manifest,
-                    context_manifest_path=manifest,
                     manifest_digest=digest,
                     input_tree_digest="inputs",
                     input_manifest_digest="input-manifest",
@@ -763,6 +959,145 @@ class CollectorTests(unittest.TestCase):
             ).collect([private_request])
             self.assertEqual(private[0]["status"], "ok")
             self.assertEqual(state["calls"][("task", "provider/model")], 3)
+
+
+class TimedHarness(FakeHarness):
+    def run(self, request: RunRequest, output_dir: Path, attempt: int) -> HarnessResult:
+        with self.state["lock"]:
+            self.state.setdefault("starts", []).append((time.monotonic(), attempt))
+        time.sleep(self.state.get("extra_delay", {}).get(request.task.id, 0))
+        return super().run(request, output_dir, attempt)
+
+
+class LaunchIntervalTests(unittest.TestCase):
+    def _state(self, **extra) -> dict:
+        return {
+            "lock": threading.Lock(), "calls": {}, "active": 0, "max_active": 0,
+            "fail_first": False, **extra,
+        }
+
+    def _collect(self, run_dir: Path, state: dict, requests, **config) -> list[dict]:
+        return Collector(
+            CollectionConfig(run_dir=run_dir, **config),
+            lambda slot: TimedHarness(state, slot),
+        ).collect(requests)
+
+    def test_launches_are_spaced_across_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state = self._state(delay=0.6)
+            results = self._collect(
+                Path(temporary) / "run", state, make_requests(),
+                parallel=4, launch_interval=0.15,
+            )
+
+        self.assertEqual([result["status"] for result in results], ["ok"] * 4)
+        starts = sorted(start for start, _ in state["starts"])
+        gaps = [later - earlier for earlier, later in zip(starts, starts[1:])]
+        self.assertTrue(all(gap >= 0.13 for gap in gaps), gaps)
+        # Spacing delays launches; it does not cap concurrency.
+        self.assertEqual(state["max_active"], 4)
+
+    def test_without_an_interval_workers_start_together(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state = self._state(delay=0.3)
+            self._collect(Path(temporary) / "run", state, make_requests(), parallel=4)
+
+        starts = sorted(start for start, _ in state["starts"])
+        self.assertLess(starts[-1] - starts[0], 0.1)
+
+    def test_retry_waits_for_its_own_launch_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state = self._state(fail_first=True)
+            results = self._collect(
+                Path(temporary) / "run", state, make_requests()[:1],
+                retries=1, launch_interval=0.3,
+            )
+
+        self.assertEqual(results[0]["status"], "ok")
+        (first, _), (second, attempt) = state["starts"]
+        self.assertEqual(attempt, 2)
+        self.assertGreaterEqual(second - first, 0.28)
+
+    def test_resumed_samples_do_not_take_launch_turns(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            state = self._state()
+            self._collect(run_dir, state, make_requests(), parallel=4)
+            started = time.monotonic()
+            resumed = self._collect(
+                run_dir, state, make_requests(), parallel=4, resume=True,
+                launch_interval=30,
+            )
+
+        self.assertEqual([result["status"] for result in resumed], ["skipped"] * 4)
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_interrupt_releases_workers_waiting_for_their_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            state = self._state(interrupt_task="task-0", delay=0.2)
+            started = time.monotonic()
+            with self.assertRaises(KeyboardInterrupt):
+                self._collect(
+                    run_dir, state, make_requests(), parallel=4, launch_interval=30,
+                )
+            elapsed = time.monotonic() - started
+
+            # The other three were waiting 30-90 s for their turn; none launched
+            # and none left a sample directory behind.
+            self.assertLess(elapsed, 10)
+            self.assertEqual(list(state["calls"]), [("task-0", "provider/model")])
+            sample_dirs = sorted(path.name for path in (run_dir / "samples").glob("*/*"))
+            self.assertEqual(sample_dirs, ["00000000_task-0"])
+            info = json.loads((run_dir / "info.json").read_text())
+            self.assertEqual(info["state"], "interrupted")
+
+    def test_interrupt_between_attempts_keeps_the_last_failure(self) -> None:
+        for interval in (0.0, 0.1):
+            with self.subTest(interval=interval), tempfile.TemporaryDirectory() as temporary:
+                run_dir = Path(temporary) / "run"
+                # task-0 interrupts at 0.2 s while task-1 (launched by 0.1 s) is
+                # still in its failing first attempt; its retry must not start.
+                state = self._state(
+                    interrupt_task="task-0", delay=0.2, fail_first=True,
+                    extra_delay={"task-1": 0.3},
+                )
+                with self.assertLogs("roller.collector", "WARNING") as logs:
+                    with self.assertRaises(KeyboardInterrupt):
+                        self._collect(
+                            run_dir, state, make_requests()[:2], parallel=2, retries=2,
+                            launch_interval=interval,
+                        )
+
+                self.assertEqual(state["calls"][("task-1", "provider/model")], 1)
+                info = json.loads(next(run_dir.glob("samples/*/00000001_task-1/info.json")).read_text())
+                self.assertEqual([row["attempt"] for row in info["attempts"]], [1])
+                self.assertEqual(info["status"], "error")
+                output = "\n".join(logs.output)
+                self.assertIn("not retrying after attempt 1", output)
+                self.assertNotIn("failed; retrying", output)
+
+    def test_collect_launches_again_after_an_interrupted_collect(self) -> None:
+        # An interrupt cancels the launch gate for good, so each collect() needs its own.
+        with tempfile.TemporaryDirectory() as temporary:
+            state = self._state(interrupt_task="task-0")
+            collector = Collector(
+                CollectionConfig(run_dir=Path(temporary) / "run"),
+                lambda slot: TimedHarness(state, slot),
+            )
+            with self.assertRaises(KeyboardInterrupt):
+                collector.collect(make_requests()[:1])
+            del state["interrupt_task"]
+            results = collector.collect(make_requests()[:1])
+
+        self.assertEqual(results[0]["status"], "ok")
+        self.assertEqual(state["calls"][("task-0", "provider/model")], 2)
+
+    def test_rejects_negative_or_non_finite_intervals(self) -> None:
+        for interval in (-1.0, float("inf"), float("nan")):
+            with self.subTest(interval=interval):
+                with self.assertRaises(ValueError):
+                    CollectionConfig(run_dir=Path("run"), launch_interval=interval)
 
 
 if __name__ == "__main__":

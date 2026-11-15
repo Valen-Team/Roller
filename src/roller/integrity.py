@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from roller.models import RunRequest
-from roller.harness_registry import requires_cache_trace
+from roller.capture import validate_capture
+from roller.compaction_sft import SFT_SEGMENTS_DIR, build_compaction_segments, has_main_compaction
+from roller.harness_registry import allows_raw_only_actf, compaction_mode, requires_cache_trace
 from roller.sft import actf_to_sft, validate_sft_record
 
 
@@ -34,6 +36,27 @@ def trajectory_conversion_unavailable(
         return None
     target = conversion.get("target", "actf")
     return target if target in {"actf", "sft"} else None
+
+
+def keeps_thinking(metadata: Mapping[str, Any] | None) -> bool:
+    """Read the recorded ``--keep-thinking`` choice; bridge harnesses nest it in settings."""
+    if not isinstance(metadata, Mapping):
+        return True
+    settings = metadata.get("settings")
+    settings = settings if isinstance(settings, Mapping) else {}
+    return bool(metadata.get("keep_thinking", settings.get("keep_thinking", True)))
+
+
+def has_legacy_claude_sidechain(trajectory: Mapping[str, Any]) -> bool:
+    """Identify older ACTF records that mixed child steps into the root."""
+
+    steps = trajectory.get("steps")
+    return isinstance(steps, list) and any(
+        isinstance(step, Mapping)
+        and isinstance(step.get("extra"), Mapping)
+        and step["extra"].get("is_sidechain") is True
+        for step in steps
+    )
 
 
 def _json_object(path: Path) -> dict[str, Any]:
@@ -121,20 +144,33 @@ def _validate_trajectory_files(
     require_cache_trace: bool,
 ) -> None:
     raw_path = base / "trace.jsonl"
-    conversion = info.get("conversion")
-    if isinstance(conversion, Mapping) and conversion.get("status") == "failed":
-        raise ValueError("sample capture/conversion failed and cannot be reused")
     actf_path = base / "trace_ACTF.json"
     sft_path = base / "trace_SFT.json"
+    segment_dir = base / SFT_SEGMENTS_DIR
+    trajectory = info.get("trajectory")
+    segments = trajectory.get("sft_segments") if isinstance(trajectory, Mapping) else None
+    if segments is not None and (not isinstance(segments, list) or not segments):
+        raise ValueError("SFT segment metadata must be a non-empty list")
+    if not segments and segment_dir.exists():
+        raise ValueError("unreferenced SFT segment directory is present")
+    if segments and trajectory.get("sft") is not None:
+        raise ValueError("compacted sample cannot also reference a linear SFT")
     if not raw_path.is_file():
         raise ValueError(f"required trajectory file is missing: {raw_path.name}")
     runtime = info.get("runtime")
     conversion_target = trajectory_conversion_unavailable(
         runtime if isinstance(runtime, Mapping) else None
     )
-    raw_only = conversion_target == "actf"
+    raw_only = (
+        allows_raw_only_actf(info.get("harness"))
+        and conversion_target == "actf"
+    )
     sft_unavailable = conversion_target == "sft"
+    if segments and sft_unavailable:
+        raise ValueError("SFT-unavailable sample cannot reference SFT segments")
     if raw_only:
+        if segments:
+            raise ValueError("raw-only sample cannot contain SFT segments")
         trajectory = info.get("trajectory")
         if not isinstance(trajectory, Mapping):
             raise ValueError("info.json trajectory must be an object")
@@ -153,8 +189,10 @@ def _validate_trajectory_files(
                 raise ValueError("SFT-unavailable trajectory metadata must have null SFT")
             if sft_path.exists():
                 raise ValueError("SFT-unavailable sample contains an unexpected SFT artifact")
-        elif not sft_path.is_file():
+        elif not segments and not sft_path.is_file():
             raise ValueError(f"required trajectory file is missing: {sft_path.name}")
+        elif segments and sft_path.exists():
+            raise ValueError("compacted sample must not contain a linear SFT")
     if require_wire_trace and not (base / "wire_trace.jsonl").is_file():
         raise ValueError("required full-mode wire_trace.jsonl is missing")
     # Only OpenClaw emits cache traces. Finalized metadata records the actual
@@ -165,11 +203,31 @@ def _validate_trajectory_files(
         raise ValueError("required full-mode cache_trace.jsonl is missing")
     if not _has_json_event(raw_path):
         raise ValueError("trace.jsonl contains no valid JSON object event")
-
+    capture = runtime.get("capture") if isinstance(runtime, Mapping) else None
+    if isinstance(capture, dict):
+        validate_capture(base, capture)
     if raw_only:
         return
+    manifest = capture.get("manifest") if isinstance(capture, Mapping) else None
+    try:
+        # Captured Calls can reveal a rewrite that the native trace did not log.
+        expected = (build_compaction_segments(base, info.get("harness"), manifest,
+                                              keep_thinking=keeps_thinking(runtime))
+                    if not sft_unavailable and isinstance(manifest, str) else [])
+        # Like the collector: without Calls, any native reset rules out linear SFT.
+        uncaptured_reset = (not isinstance(manifest, str)
+                            and has_main_compaction(raw_path, info.get("harness")))
+        if not sft_unavailable and not segments and (expected or uncaptured_reset):
+            raise ValueError("context reset requires per-call export, not linear SFT")
+    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
+        raise ValueError(f"compaction evidence cannot be validated: {exc}") from exc
 
     actf = _json_object(actf_path)
+    if compaction_mode(info.get("harness")) == "claude" and has_legacy_claude_sidechain(actf):
+        raise ValueError(
+            "legacy Claude Code sidechain steps are mixed into root ACTF/SFT; "
+            "the sample cannot be safely reused or silently rerun"
+        )
     if actf.get("schema_version") != "ACTF_v1.0":
         raise ValueError("trace_ACTF.json has an unsupported schema_version")
     steps = actf.get("steps")
@@ -181,7 +239,26 @@ def _validate_trajectory_files(
                 "trace_ACTF.json step_id values must be sequential from 1"
             )
 
-    if not sft_unavailable:
+    if segments and not sft_unavailable:
+        if not isinstance(manifest, str):
+            raise ValueError("SFT segments lack their captured Calls")
+        if segments != [metadata for metadata, _ in expected]:
+            raise ValueError("SFT segment metadata does not match captured boundaries and Calls")
+        expected_paths = {item["path"] for item in segments}
+        if not segment_dir.is_dir() or segment_dir.is_symlink():
+            raise ValueError("SFT segment directory is missing or invalid")
+        files = list(segment_dir.iterdir())
+        if any(not path.is_file() or path.is_symlink() for path in files):
+            raise ValueError("SFT segment directory contains an invalid entry")
+        actual_paths = {path.relative_to(base).as_posix() for path in files}
+        if actual_paths != expected_paths:
+            raise ValueError("SFT segment files do not match metadata")
+        for metadata, record in expected:
+            actual = _json_object(base / metadata["path"])
+            validate_sft_record(actual)
+            if actual != record:
+                raise ValueError("SFT segment does not match captured Call context")
+    elif not sft_unavailable:
         actual_sft = _json_object(sft_path)
         try:
             validate_sft_record(actual_sft)
@@ -210,13 +287,6 @@ def validate_resumable_sample(
         raise ValueError("info.json has an unsupported schema_version")
     if info.get("status") != "ok":
         raise ValueError("info.json status is not ok")
-    conversion = info.get("conversion")
-    if isinstance(conversion, Mapping) and conversion.get("status") == "failed":
-        raise ValueError("sample capture/conversion failed and cannot be reused")
-    training = info.get("training")
-    if isinstance(training, Mapping) and training.get("eligible") is True:
-        if not isinstance(conversion, Mapping) or conversion.get("status") != "ok":
-            raise ValueError("training eligibility contradicts conversion status")
     expected_identity = {
         "request_index": request.index,
         "sample_index": request.sample_index,

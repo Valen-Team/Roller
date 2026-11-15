@@ -21,7 +21,7 @@ from roller.harnesses.opencode import (
     _ensure_local_proxy_bypass,
     _system_prompt,
 )
-from roller.opencode_actf import convert_opencode_trace, extract_opencode_usage, opencode_events_to_actf
+from roller.opencode_actf import convert_opencode_trace, extract_opencode_usage, native_messages, opencode_events_to_actf
 from roller.models import RunRequest, Task
 from roller.sft import SFTConversionError, actf_to_sft
 
@@ -46,26 +46,6 @@ def write_events(path, events=None):
 
 
 class OpenCodeTraceTests(unittest.TestCase):
-    def test_journal_images_survive_container_file_removal(self):
-        spec = importlib.util.spec_from_file_location("image_journal_runner", RUNNER_PATH)
-        runner = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(runner)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "image with spaces.png"
-            path.write_bytes(b"\0")
-            events = sample_events()
-            messages = events[-1]["data"]["messages"]
-            messages[0]["parts"].append({"id": "image-1", "messageID": "m1", "type": "file",
-                                         "mime": "image/png", "url": path.as_uri()})
-            messages[1]["parts"][1]["state"]["attachments"] = [{"mime": "image/png", "url": path.as_uri()}]
-            records = list(runner.attachment_records(events[-1]["data"]))
-            events.extend(records)
-        self.assertFalse(path.exists())
-        self.assertEqual(len(records), 2)
-        self.assertEqual(actf_to_sft(opencode_events_to_actf(events))["images"], ["data:image/png;base64,AA=="] * 2)
-        with self.assertRaises(ValueError):
-            opencode_events_to_actf(events + [{**records[0], "sha256": "0" * 64}])
-
     def test_native_tools_reasoning_and_usage(self):
         events = sample_events()
         actf = opencode_events_to_actf(events)
@@ -96,6 +76,58 @@ class OpenCodeTraceTests(unittest.TestCase):
             updates.extend({"type": "event", "event": {"type": "message.part.updated", "properties": {"part": p}}} for p in m["parts"])
         self.assertEqual(opencode_events_to_actf([events[0], *updates, events[-1], events[-1]]), opencode_events_to_actf(events))
         self.assertEqual(opencode_events_to_actf([events[0], *updates]), opencode_events_to_actf(events))
+
+    def test_message_update_without_session_id_uses_native_part_identity(self):
+        events = sample_events()
+        updates = [{"type": "event", "event": {"type": "session.created", "properties": {
+            "info": {"id": "s1"}}}}]
+        for message in events[-1]["data"]["messages"]:
+            info = {key: deepcopy(value) for key, value in message["info"].items() if key != "sessionID"}
+            updates.append({"type": "event", "event": {"type": "message.updated", "properties": {"info": info}}})
+            updates.extend({"type": "event", "event": {"type": "message.part.updated", "properties": {
+                "part": {**part, "sessionID": message["info"]["sessionID"]}}}}
+                           for part in message["parts"])
+        journal = [events[0], *updates]
+        self.assertEqual({row["info"]["sessionID"] for row in native_messages(journal)}, {"s1"})
+        self.assertEqual(opencode_events_to_actf(journal), opencode_events_to_actf(events))
+
+    def test_partial_message_update_keeps_exported_session_identity(self):
+        events = sample_events()
+        update = {"type": "event", "event": {"type": "message.updated", "properties": {
+            "info": {"id": "m3", "finish": "stop"}}}}
+        self.assertEqual(opencode_events_to_actf([*events, update]), opencode_events_to_actf(events))
+
+    def test_null_session_id_update_keeps_previous_native_identity(self):
+        events = sample_events()
+        for message in events[-1]["data"]["messages"]:
+            if message["info"]["id"] == "m3":
+                for part in message["parts"]:
+                    part.pop("sessionID", None)
+        update = {"type": "event", "event": {"type": "message.updated", "properties": {
+            "info": {"id": "m3", "sessionID": None, "finish": "stop"}}}}
+        rows = native_messages([*events, update], root_only=True)
+        self.assertIn("m3", [row["info"]["id"] for row in rows])
+
+    def test_missing_message_identity_is_explicitly_rejected(self):
+        events = sample_events()
+        for message in events[-1]["data"]["messages"]:
+            message["info"].pop("sessionID")
+            for part in message["parts"]:
+                part.pop("sessionID", None)
+        with self.assertRaisesRegex(ValueError, "session identity"):
+            opencode_events_to_actf(events)
+
+    def test_missing_child_message_session_id_does_not_enter_root(self):
+        events = sample_events()
+        events.insert(1, {"type": "event", "event": {"type": "session.created", "properties": {
+            "info": {"id": "child", "parentID": "s1"}}}})
+        child = {"info": {"id": "child-message", "role": "assistant", "time": {"created": 1005},
+                          "finish": "stop"},
+                 "parts": [{"id": "child-part", "messageID": "child-message", "sessionID": "child",
+                            "type": "text", "text": "child only"}]}
+        events[-1]["data"]["messages"].append(child)
+        self.assertNotIn("child-message", [row["info"]["id"] for row in native_messages(events, root_only=True)])
+        self.assertEqual(opencode_events_to_actf(events), opencode_events_to_actf(sample_events()))
 
     def test_empty_unfinished_timeout_placeholder_is_not_training_data(self):
         events = sample_events()

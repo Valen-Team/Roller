@@ -11,7 +11,8 @@ from typing import Any
 
 from roller.harnesses.base import Harness, InteractiveHarness
 from roller.models import HarnessResult, RunRequest, Task, UserSimulatorSpec
-from roller.trajectory_status import conversion_outcome, export_sft, training_outcome
+from roller.sft import write_sft
+from roller.trajectory_audit import record_training_audits
 from roller.storage import atomic_write_json
 from roller.usage import ZERO_USAGE
 
@@ -150,14 +151,28 @@ class ConversationManager(Harness):
         raw_path = simulator_dir / "trace.jsonl"
         actf_path = simulator_dir / "trace_ACTF.json"
         sft_path = simulator_dir / "trace_SFT.json"
+        # Remove stale exports before any copy/parse can fail.
+        if result.status != "ok":
+            sft_path.unlink(missing_ok=True)
+        if source is None and result.status == "ok":
+            raise RuntimeError("User Simulator finished but no raw trace was found")
+        if trajectory_source is None and result.status == "ok":
+            raise RuntimeError(
+                "User Simulator finished but no canonical ACTF trajectory was found"
+            )
         if source is not None:
             if source.resolve() != raw_path.resolve():
                 shutil.copy2(source, raw_path)
+        trajectory = None
         if trajectory_source is not None:
             if trajectory_source.resolve() != actf_path.resolve():
                 shutil.copy2(trajectory_source, actf_path)
-            export_sft(simulator_dir, result.metadata)
-        conversion = conversion_outcome(simulator_dir, result.metadata)
+            trajectory = json.loads(actf_path.read_text(encoding="utf-8"))
+            if not isinstance(trajectory, dict):
+                raise ValueError("canonical ACTF trajectory must be a JSON object")
+            if result.status == "ok":
+                write_sft(sft_path, trajectory)
+        record_training_audits(result.metadata, trajectory, simulator_dir / "wire_trace.jsonl")
         rollout_dir = simulator_dir / "rollout"
         if rollout_dir.exists():
             shutil.rmtree(rollout_dir)
@@ -171,8 +186,6 @@ class ConversationManager(Harness):
             "model": model,
             "status": result.status,
             "error": result.error,
-            "conversion": conversion,
-            "training": training_outcome(result.status, conversion),
             "usage": result.usage,
             "trajectory": {
                 "raw": "trace.jsonl" if raw_path.is_file() else None,
@@ -280,8 +293,11 @@ class ConversationManager(Harness):
             error = str(exc)
             termination_detail = error
 
-        agent_result = agent_session.finish(status, error)
-        simulator_result = simulator_session.finish(status, error)
+        # Each participant owns a container; one failing cleanup must not leak the other.
+        try:
+            agent_result = agent_session.finish(status, error)
+        finally:
+            simulator_result = simulator_session.finish(status, error)
         if status == "ok" and agent_result.status != "ok":
             status, error = agent_result.status, agent_result.error
             termination_reason = "agent_error"
@@ -309,6 +325,7 @@ class ConversationManager(Harness):
             raw_path = simulator_dir / "trace.jsonl"
             actf_path = simulator_dir / "trace_ACTF.json"
             sft_path = simulator_dir / "trace_SFT.json"
+            sft_path.unlink(missing_ok=True)
             simulator_info = {
                 "schema_version": PARTICIPANT_SCHEMA,
                 "role": "user_simulator",
@@ -399,8 +416,6 @@ class ConversationManager(Harness):
                     "harness": self.simulator_harness.name,
                     "model": simulator_request.model,
                     "usage": simulator_result.usage,
-                    "conversion": simulator_info.get("conversion"),
-                    "training": simulator_info.get("training"),
                     "trajectory": simulator_info.get("trajectory"),
                     "path": "user_simulator",
                 },

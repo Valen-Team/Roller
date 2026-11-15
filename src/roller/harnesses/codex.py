@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -12,38 +11,82 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
-from roller.artifacts import ArtifactCollectionResult, collect_output_directory
+from roller.capture_runtime import CaptureRuntime
+from roller.artifacts import ArtifactCollectionResult
 from roller.codex_actf import convert_codex_trace
-from roller.harnesses.base import Harness, InteractiveHarness, InteractiveSession, TurnResult
+from roller.codex_capture import retain_root_tools
+from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
+from roller.harnesses.config_overrides import (
+    ConfigAssignment,
+    config_path,
+    validate_config_assignments,
+)
+from roller.harnesses.container import (
+    CONTEXT_CONTAINER_PATH,
+    ENV_NAME as ENV_NAME_RE,
+    INPUTS_CONTAINER_PATH,
+    OUTPUTS_CONTAINER_PATH,
+    PROXY_ENV_NAMES as COMMON_ENV_NAMES,
+    ContainerCommands,
+    build_provenance,
+    docker_run_args,
+    output_collection_metadata,
+)
 from roller.harnesses.docker import DockerRuntime, remove_container
 from roller.models import HarnessResult, RunRequest
-from roller.native_images import attachment_specs
 from roller.storage import safe_component
 from roller.thinking import normalize_thinking, resolve_thinking
 from roller.usage import ZERO_USAGE, extract_codex_usage
-from roller.version import __version__
 from roller.wire_trace import WireTraceProxy, redact_jsonl_file
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CODEX_IMAGE = "roller-codex:0.149.0"
 CODEX_HOME_CONTAINER_PATH = "/roller/codex-home"
-INPUTS_CONTAINER_PATH = "/roller/task/inputs"
-CONTEXT_CONTAINER_PATH = "/roller/task/context"
-OUTPUTS_CONTAINER_PATH = "/roller/task/outputs"
-ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Codex always replays reasoning.encrypted_content with store=false; give
+# relayed endpoints a few chances before one rejected replay ends the rollout.
+CODEX_ENCRYPTED_CONTENT_RETRIES = 3
+# Provider Roller defines for --api-base. Its other keys (stream_idle_timeout_ms,
+# request_max_retries, ...) stay open to --codex-config-set.
+CODEX_PROVIDER_ID = "roller_api"
+# Config paths Roller passes on every ``codex exec``, with the option that
+# controls each. ``--codex-config-set`` may not touch them.
+ROLLER_MANAGED_CODEX_CONFIG: dict[str, str] = {
+    "model": "use --model",
+    "model_provider": "use --api-base / --codex-api-base",
+    f"model_providers.{CODEX_PROVIDER_ID}.name": "use --api-base / --codex-api-base",
+    f"model_providers.{CODEX_PROVIDER_ID}.base_url": "use --api-base / --codex-api-base",
+    f"model_providers.{CODEX_PROVIDER_ID}.env_key": "use --api-key-env / --codex-api-key-env",
+    f"model_providers.{CODEX_PROVIDER_ID}.wire_api": "Roller uses the Responses API",
+    f"model_providers.{CODEX_PROVIDER_ID}.supports_websockets": (
+        "use --codex-websockets / --no-codex-websockets"
+    ),
+    "disable_response_storage": "Roller disables response storage",
+    "model_reasoning_effort": "use --thinking",
+    "model_reasoning_summary": "use --reasoning-summary",
+    "web_search": "use --codex-web-search",
+    "features.unified_exec": "Roller enables it for every rollout",
+    "sandbox_mode": "Roller bypasses the sandbox inside the disposable container",
+    "approval_policy": "Roller bypasses approvals inside the disposable container",
+}
 
-COMMON_ENV_NAMES = (
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "NO_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "no_proxy",
-)
+
+def codex_effort(value: str | None) -> str | None:
+    """Validate a logical effort using the same rules as Codex execution."""
+    effort = normalize_thinking(value, field="Codex reasoning effort")
+    if effort == "off":
+        raise ValueError(
+            "Codex does not expose a harness-level reasoning-off mode; omit "
+            "--thinking to use the model default or choose an explicit effort"
+        )
+    if effort == "adaptive":
+        raise ValueError(
+            "Codex does not accept the OpenClaw-specific adaptive thinking profile"
+        )
+    return effort
 
 
 def redact_api_base(value: str) -> str:
@@ -61,19 +104,6 @@ def redact_api_base(value: str) -> str:
     return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
-def validate_codex_thinking(version: str, effort: str | None) -> None:
-    """Reject effort levels unsupported by the pinned default Codex CLI."""
-
-    if effort in {"max", "ultra"} and re.search(
-        r"(?:^|\s)0\.149\.0(?:\s|$)", version
-    ):
-        raise RuntimeError(
-            f"Codex {version!r} does not accept reasoning effort {effort!r}; "
-            "use minimal|low|medium|high|xhigh (xhigh is model-dependent), "
-            "or select a later image that explicitly supports the requested level"
-        )
-
-
 @dataclass(frozen=True)
 class CodexConfig:
     docker_image: str = DEFAULT_CODEX_IMAGE
@@ -88,13 +118,36 @@ class CodexConfig:
     reasoning_summary: str | None = None
     web_search: str = "disabled"
     supports_websockets: bool = False
+    capture_calls: bool = False
+    capture_debug: str = "on-error"
     wire_trace_mode: str = "actf"
     keep_thinking: bool = True
     keep_container_on_error: bool = False
     docker_binary: str = "docker"
-    responses_image_detail: str | None = None
+    preflight_image_digest: str | None = None
+    # Extra ``codex exec -c KEY=VALUE`` overrides, after Roller's own.
+    config_set: tuple[ConfigAssignment, ...] = ()
 
     def __post_init__(self) -> None:
+        managed = ROLLER_MANAGED_CODEX_CONFIG
+        if self.capture_calls:
+            managed = {**managed, "features.multi_agent": "Roller enables it for --capture-calls"}
+        object.__setattr__(
+            self,
+            "config_set",
+            validate_config_assignments(
+                self.config_set,
+                managed,
+                flag="--codex-config-set",
+            ),
+        )
+        if not self.api_base:
+            for key, _ in self.config_set:
+                if config_path(key)[:2] == ("model_providers", CODEX_PROVIDER_ID):
+                    raise ValueError(
+                        f"--codex-config-set cannot set {key!r}: Roller defines the "
+                        f"{CODEX_PROVIDER_ID} provider only with --api-base / --codex-api-base"
+                    )
         object.__setattr__(
             self,
             "reasoning_effort",
@@ -124,12 +177,10 @@ class CodexConfig:
             raise ValueError("Codex reasoning summary must be auto|concise|detailed|none")
         if self.web_search not in {"disabled", "cached", "live"}:
             raise ValueError("Codex web search must be disabled|cached|live")
+        if self.capture_calls and (not self.api_base or self.network != "host" or self.supports_websockets or self.wire_trace_mode == "off"):
+            raise ValueError("Codex call capture requires --api-base, host network, wire tracing and --no-codex-websockets")
         if self.wire_trace_mode not in {"off", "actf", "full"}:
             raise ValueError("Codex wire trace mode must be off|actf|full")
-        if self.responses_image_detail not in {None, "auto", "low", "high", "original"}:
-            raise ValueError("Codex responses image detail must be auto|low|high|original")
-        if self.responses_image_detail and (not self.api_base or self.network != "host" or self.supports_websockets):
-            raise ValueError("Codex image detail compatibility requires api_base, host network, and HTTP (no WebSockets)")
         if self.wire_trace_mode == "full" and not self.api_base:
             raise ValueError("Codex --wire-trace full requires --api-base")
         if self.wire_trace_mode == "full" and self.supports_websockets:
@@ -146,7 +197,7 @@ class CodexConfig:
             raise FileNotFoundError(f"Codex config not found: {self.config_path}")
 
 
-class CodexHarness(InteractiveHarness):
+class CodexHarness(ContainerCommands, InteractiveHarness):
     """Run Codex CLI in an isolated container and retain its native session JSONL."""
 
     name = "codex"
@@ -161,6 +212,9 @@ class CodexHarness(InteractiveHarness):
         self.worker_slot = worker_slot
         self.runtime = runtime or DockerRuntime(config.docker_binary)
         self._wire_proxy: WireTraceProxy | None = None
+        self.capture = None
+        self._capture_attempt = 0
+        self._root_thread_id: str | None = None
 
     def create_session(
         self,
@@ -172,25 +226,29 @@ class CodexHarness(InteractiveHarness):
     ) -> InteractiveSession:
         return CodexSession(self, request, output_dir, attempt, collect_outputs=collect_outputs)
 
-    def _start_wire_proxy(self, output_dir: Path) -> None:
+    def _start_wire_proxy(self, output_dir: Path, attempt: int = 1) -> None:
+        self._root_thread_id = None
+        self.capture = CaptureRuntime(output_dir, attempt, "codex", self.config.capture_debug) if self.config.capture_calls else None
+        self._capture_attempt = attempt
         self._wire_proxy = None
         tools_path = output_dir / "tools_capture.jsonl"
         tools_path.unlink(missing_ok=True)
-        capture_tools = (
-            self.config.wire_trace_mode != "off"
-            and bool(self.config.api_base)
-            and not self.config.supports_websockets
-        )
-        if not capture_tools and not self.config.responses_image_detail:
+        if (
+            self.config.wire_trace_mode == "off"
+            or not self.config.api_base
+            or self.config.supports_websockets
+        ):
             return
         log_path = output_dir / "wire_trace.jsonl"
         log_path.unlink(missing_ok=True)
         self._wire_proxy = WireTraceProxy(
             self.config.api_base,
             log_path,
-            mode="full" if self.config.wire_trace_mode == "full" else "tools" if capture_tools else "off",
-            responses_image_detail=self.config.responses_image_detail,
-            responses_tools_path=tools_path if capture_tools else None,
+            mode="full" if self.config.wire_trace_mode == "full" or self.config.capture_calls else "tools",
+            capture_recorder=self.capture.recorder if self.capture else None,
+            capture_identity_header="thread-id" if self.capture else None,
+            responses_tools_path=tools_path,
+            encrypted_content_retries=CODEX_ENCRYPTED_CONTENT_RETRIES,
         )
         self._wire_proxy.start()
 
@@ -211,21 +269,6 @@ class CodexHarness(InteractiveHarness):
                 redact_jsonl_file(proxy.log_path)
         finally:
             self._wire_proxy = None
-
-    @staticmethod
-    def _error_text(result: subprocess.CompletedProcess[str]) -> str:
-        return (result.stderr or result.stdout or "unknown error").strip()[-2000:]
-
-    def _checked(
-        self,
-        args: Sequence[str],
-        description: str,
-        timeout: float | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        result = self.runtime.run(args, timeout=timeout)
-        if result.returncode != 0:
-            raise RuntimeError(f"{description} failed: {self._error_text(result)}")
-        return result
 
     def _environment(self, request: RunRequest) -> dict[str, str]:
         environment: dict[str, str] = {}
@@ -257,46 +300,10 @@ class CodexHarness(InteractiveHarness):
         self, container: str, request: RunRequest
     ) -> dict[str, str]:
         environment = self._environment(request)
-        args = [
-            "run",
-            "-d",
-            "--name",
-            container,
-            "--label",
-            "ai.roller.harness=codex",
-        ]
-        if self.config.container_user is not None:
-            args.extend(["--user", self.config.container_user])
-        if self.config.network:
-            args.extend(["--network", self.config.network])
-        for key, value in sorted(environment.items()):
-            args.extend(["-e", f"{key}={value}"])
-        args.extend(["-e", f"CODEX_HOME={CODEX_HOME_CONTAINER_PATH}"])
-
-        if request.bundle is not None:
-            args.extend(["-v", f"{request.bundle.inputs_root}:{INPUTS_CONTAINER_PATH}:ro"])
-            args.extend(["-v", f"{request.bundle.context_root}:{CONTEXT_CONTAINER_PATH}:ro"])
-            if (
-                not request.bundle.legacy_workspace
-                and request.task.input_mode == "mount"
-            ):
-                for input_file in request.task.inputs:
-                    input_path = request.bundle.inputs_root / input_file.path
-                    if input_path.exists():
-                        args.extend(
-                            [
-                                "-v",
-                                f"{input_path}:"
-                                f"{self.config.workspace_container_path}/{input_file.path}:ro",
-                            ]
-                        )
-        elif request.task.workspace is not None:
-            if not request.task.workspace.is_dir():
-                raise FileNotFoundError(
-                    f"task workspace is not a directory: {request.task.workspace}"
-                )
-            args.extend(["-v", f"{request.task.workspace}:/roller-input:ro"])
-
+        args = docker_run_args(
+            self.name, container, self.config, environment, request,
+            extra_env={"CODEX_HOME": CODEX_HOME_CONTAINER_PATH},
+        )
         args.extend(
             [self.config.docker_image, "/bin/bash", "-c", "tail -f /dev/null"]
         )
@@ -384,16 +391,7 @@ class CodexHarness(InteractiveHarness):
 
     def _effective_effort(self, request: RunRequest) -> str | None:
         effort = resolve_thinking(request.task.thinking, self.config.reasoning_effort)
-        if effort == "off":
-            raise ValueError(
-                "Codex does not expose a harness-level reasoning-off mode; omit "
-                "--thinking to use the model default or choose an explicit effort"
-            )
-        if effort == "adaptive":
-            raise ValueError(
-                "Codex does not accept the OpenClaw-specific adaptive thinking profile"
-            )
-        return effort
+        return codex_effort(effort)
 
     def _codex_command(
         self,
@@ -414,7 +412,9 @@ class CodexHarness(InteractiveHarness):
             "exec",
         ]
         if resume:
-            command.extend(["resume", "--last"])
+            if self.config.capture_calls and not self._root_thread_id:
+                raise RuntimeError("Cannot resume Codex capture without a confirmed root thread")
+            command.extend(["resume", self._root_thread_id] if self._root_thread_id else ["resume", "--last"])
         command.extend(
             [
                 "--dangerously-bypass-approvals-and-sandbox",
@@ -426,6 +426,8 @@ class CodexHarness(InteractiveHarness):
                 "unified_exec",
             ]
         )
+        if self.config.capture_calls:
+            command.extend(["--enable", "multi_agent"])
         effort = self._effective_effort(request)
         if effort:
             command.extend(["-c", f"model_reasoning_effort={json.dumps(effort)}"])
@@ -447,25 +449,25 @@ class CodexHarness(InteractiveHarness):
             command.extend(
                 [
                     "-c",
-                    'model_provider="roller_api"',
+                    f'model_provider="{CODEX_PROVIDER_ID}"',
                     "-c",
-                    'model_providers.roller_api.name="Roller API"',
+                    f'model_providers.{CODEX_PROVIDER_ID}.name="Roller API"',
                     "-c",
-                    "model_providers.roller_api.base_url="
+                    f"model_providers.{CODEX_PROVIDER_ID}.base_url="
                     f"{json.dumps(api_base)}",
                     "-c",
-                    'model_providers.roller_api.env_key="OPENAI_API_KEY"',
+                    f'model_providers.{CODEX_PROVIDER_ID}.env_key="OPENAI_API_KEY"',
                     "-c",
-                    'model_providers.roller_api.wire_api="responses"',
+                    f'model_providers.{CODEX_PROVIDER_ID}.wire_api="responses"',
                     "-c",
-                    "model_providers.roller_api.supports_websockets="
+                    f"model_providers.{CODEX_PROVIDER_ID}.supports_websockets="
                     f"{str(self.config.supports_websockets).lower()}",
                     "-c",
                     "disable_response_storage=true",
                 ]
             )
-        for image in attachment_specs(request, self.config.workspace_container_path, first_turn=not resume):
-            command.extend(["--image", image["path"]])
+        for key, value in self.config.config_set:
+            command.extend(["-c", f"{key}={value}"])
         command.extend(["--", prompt])
         return command
 
@@ -505,6 +507,8 @@ class CodexHarness(InteractiveHarness):
                 f"Codex exec exited with code {return_code}"
                 + (f": {detail}" if detail else "")
             )
+        if self.capture is not None:
+            self._collect_trace(container, self.capture.output_dir, self._capture_attempt)
         return return_code
 
     def _collect_trace(
@@ -518,6 +522,8 @@ class CodexHarness(InteractiveHarness):
             "from pathlib import Path; "
             f"p=Path({CODEX_HOME_CONTAINER_PATH!r})/'sessions'; "
             "rows=[x for x in p.rglob('*.jsonl') if x.is_file()]; "
+            "import json; "
+            "rows=[x for x in rows if not json.loads(x.open().readline()).get('payload',{}).get('parent_thread_id')]; "
             "print(max(rows,key=lambda x:x.stat().st_mtime_ns) if rows else '')"
         )
         found = self.runtime.run(["exec", container, "python3", "-c", finder])
@@ -529,84 +535,30 @@ class CodexHarness(InteractiveHarness):
             return None
         trace_path = rollout_dir / "trace.jsonl"
         shutil.copyfile(destination, trace_path)
+        if self.config.capture_calls:
+            from roller.capture import read_jsonl
+            meta = next((r.get("payload", {}) for r in read_jsonl(trace_path) if r.get("type") == "session_meta"), {})
+            if isinstance(meta.get("id"), str) and not meta.get("parent_thread_id"):
+                self._root_thread_id = meta["id"]
         return trace_path
 
-    def _collect_outputs(
-        self, container: str, request: RunRequest, output_dir: Path
-    ) -> tuple[ArtifactCollectionResult, str | None]:
-        staging_root = output_dir / ".runtime-outputs"
-        if staging_root.exists():
-            shutil.rmtree(staging_root)
-        staging_root.mkdir(parents=True, exist_ok=True)
-        result = self.runtime.run(
-            [
-                "cp",
-                f"{container}:{self.config.workspace_container_path}/"
-                f"{request.task.output_dir}/.",
-                str(staging_root),
-            ]
-        )
-        copy_error = None if result.returncode == 0 else self._error_text(result)
-        try:
-            collected = collect_output_directory(staging_root, output_dir)
-        finally:
-            shutil.rmtree(staging_root, ignore_errors=True)
-        return collected, copy_error
-
-    def _image_digest(self) -> str | None:
-        result = self.runtime.run(
-            ["image", "inspect", self.config.docker_image, "--format", "{{.Id}}"]
-        )
-        return result.stdout.strip() if result.returncode == 0 else None
-
     def run(self, request: RunRequest, output_dir: Path, attempt: int) -> HarnessResult:
-        started = time.monotonic()
-        started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        container = (
-            f"roller-codex-{request.index}-{safe_component(request.display_model, 20)}-"
-            f"{uuid.uuid4().hex[:8]}"
-        ).lower()
-        container_started = False
-        status = "error"
-        error: str | None = None
-        return_codes: list[int] = []
-        trace_path: Path | None = None
-        trajectory_path: Path | None = None
-        trajectory_conversion = None
-        artifact_result: ArtifactCollectionResult | None = None
-        output_copy_error: str | None = None
-        codex_version = ""
-        environment: dict[str, str] = {}
-        image_digest = self._image_digest()
-        log_path = output_dir / "rollout" / f"codex.attempt-{attempt}.jsonl"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-
+        session = CodexSession(self, request, output_dir, attempt)
+        status, error = "error", None
         try:
-            self._start_wire_proxy(output_dir)
-            environment = self._start_container(container, request)
-            container_started = True
-            self._prepare_workspace(container, request)
-            self._prepare_context_and_setup(container, request)
-            self._prepare_config(container)
-            codex_version = self._checked(
-                ["exec", container, "codex", "--version"],
-                "Codex version check",
-            ).stdout.strip()
-            validate_codex_thinking(
-                codex_version, self._effective_effort(request)
-            )
+            session.start()
             for index, prompt in enumerate(request.task.prompts):
-                remaining = request.timeout_seconds - (time.monotonic() - started)
+                remaining = request.timeout_seconds - (time.monotonic() - session.started_monotonic)
                 if remaining <= 0:
                     raise TimeoutError("Codex task timed out")
-                return_codes.append(
+                session.return_codes.append(
                     self._run_turn(
-                        container,
+                        session.container,
                         request,
                         prompt,
                         resume=index > 0,
                         timeout_seconds=remaining,
-                        log_path=log_path,
+                        log_path=session.log_path,
                     )
                 )
             status = "ok"
@@ -616,146 +568,7 @@ class CodexHarness(InteractiveHarness):
         except Exception as exc:
             status = "error"
             error = str(exc)
-        finally:
-            try:
-                self._stop_wire_proxy()
-            except Exception as exc:
-                logger.warning("[%s] Codex wire proxy shutdown failed: %s", request.task.id, exc)
-
-        if container_started:
-            try:
-                trace_path = self._collect_trace(container, output_dir, attempt)
-            except Exception as exc:
-                logger.warning("[%s] Codex trace collection failed: %s", request.task.id, exc)
-            try:
-                artifact_result, output_copy_error = self._collect_outputs(
-                    container, request, output_dir
-                )
-            except Exception as exc:
-                output_copy_error = str(exc)
-                logger.warning("[%s] Codex output collection failed: %s", request.task.id, exc)
-
-        if trace_path is not None:
-            try:
-                trajectory_path = output_dir / "rollout" / "trace_ACTF.json"
-                trajectory = convert_codex_trace(
-                    trace_path,
-                    trajectory_path,
-                    user_messages=request.task.prompts,
-                    keep_thinking=self.config.keep_thinking,
-                    tools_trace=output_dir / "tools_capture.jsonl",
-                )
-                if not trajectory.get("steps"):
-                    raise ValueError("Codex native trace produced no assistant steps")
-            except Exception as exc:
-                trajectory_path = None
-                trajectory_conversion = {"status": "unavailable", "target": "actf", "error": str(exc)}
-
-        if trace_path is None:
-            trajectory_conversion = {"status": "failed", "target": "raw",
-                                     "error": "Codex finished but no native session trace was found"}
-        if status == "ok" and output_copy_error is not None:
-            status = "error"
-            error = f"output collection failed: {output_copy_error}"
-        if status == "ok" and artifact_result is not None and not artifact_result.passed:
-            status = "error"
-            error = "unsafe output files were rejected"
-
-        retained_container: str | None = None
-        if container_started:
-            if self.config.keep_container_on_error and status != "ok":
-                retained_container = container
-            else:
-                removed = remove_container(self.runtime, container)
-                if removed.returncode != 0:
-                    logger.warning("[%s] failed to remove container %s", request.task.id, container)
-
-        elapsed = time.monotonic() - started
-        usage: dict[str, Any] = (
-            extract_codex_usage(trace_path) if trace_path is not None else dict(ZERO_USAGE)
-        )
-        usage["elapsed_seconds"] = round(elapsed, 3)
-        output_metadata = (
-            {
-                "mode": "all",
-                "agent_output_dir": request.task.output_dir,
-                "passed": artifact_result.passed,
-                "path": (
-                    artifact_result.results_path.relative_to(output_dir).as_posix()
-                    if artifact_result.results_path is not None
-                    else None
-                ),
-                "file_count": artifact_result.file_count,
-                "directory_count": artifact_result.directory_count,
-                "files": list(artifact_result.files),
-                "errors": list(artifact_result.errors),
-            }
-            if artifact_result is not None
-            else None
-        )
-        provenance = {
-            "schema_version": "roller.provenance/v1",
-            "roller_version": __version__,
-            "task_id": request.task.id,
-            "task_bundle_digest": request.bundle.manifest_digest if request.bundle else None,
-            "input_tree_digest": request.bundle.input_tree_digest if request.bundle else None,
-            "input_manifest_digest": (
-                request.bundle.input_manifest_digest if request.bundle else None
-            ),
-            "context_manifest_digest": (
-                request.bundle.context_manifest_digest if request.bundle else None
-            ),
-            "resume_safe": request.bundle.resume_safe if request.bundle else None,
-            "harness": self.name,
-            "codex_version": codex_version,
-            "docker_image": self.config.docker_image,
-            "docker_image_digest": image_digest,
-            "model": request.model,
-            "api_base_urls": (
-                [redact_api_base(self.config.api_base)] if self.config.api_base else []
-            ),
-            "environment_names": sorted(environment),
-            "attempt": attempt,
-            "started_at": started_at,
-            "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        }
-        return HarnessResult(
-            status=status,
-            elapsed_seconds=elapsed,
-            error=error,
-            usage=usage,
-            trace_path=(
-                trace_path.relative_to(output_dir).as_posix()
-                if trace_path is not None
-                else None
-            ),
-            trajectory_path=(
-                trajectory_path.relative_to(output_dir).as_posix()
-                if trajectory_path is not None
-                else None
-            ),
-            metadata={
-                "raw_trace_schema": "codex-session-jsonl",
-                "trajectory_conversion": trajectory_conversion,
-                "codex_version": codex_version,
-                "container": retained_container,
-                "agent_return_codes": return_codes,
-                "turns": len(request.task.prompts),
-                "reasoning_effort": resolve_thinking(
-                    request.task.thinking, self.config.reasoning_effort
-                ),
-                "wire_trace": self.config.wire_trace_mode,
-                "responses_image_detail": self.config.responses_image_detail,
-                "reasoning_summary": self.config.reasoning_summary,
-                "keep_thinking": self.config.keep_thinking,
-                "web_search": self.config.web_search,
-                "supports_websockets": self.config.supports_websockets,
-                "output_collection": output_metadata,
-                "output_copy_error": output_copy_error,
-                "attempt": attempt,
-                "provenance": provenance,
-            },
-        )
+        return session.finish(status, error, user_messages=request.task.prompts)
 
 
 class CodexSession(InteractiveSession):
@@ -791,9 +604,9 @@ class CodexSession(InteractiveSession):
         self._pending_message = ""
         self.environment: dict[str, str] = {}
         self.codex_version = ""
-        self.image_digest = harness._image_digest()
         self.started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.started_monotonic = time.monotonic()
+        self.image_digest = harness._image_digest()
         self.log_path = output_dir / "rollout" / f"codex.attempt-{attempt}.jsonl"
         self._finished: HarnessResult | None = None
 
@@ -808,24 +621,20 @@ class CodexSession(InteractiveSession):
             "wire_trace.jsonl",
         ):
             (self.output_dir / relative).unlink(missing_ok=True)
-        try:
-            self.harness._start_wire_proxy(self.output_dir)
-            self.environment = self.harness._start_container(self.container, self.request)
-            self.container_started = True
-            self.harness._prepare_workspace(self.container, self.request)
-            self.harness._prepare_context_and_setup(self.container, self.request)
-            self.harness._prepare_config(self.container)
-            self.codex_version = self.harness._checked(
-                ["exec", self.container, "codex", "--version"],
-                "Codex version check",
-            ).stdout.strip()
-            validate_codex_thinking(
-                self.codex_version, self.harness._effective_effort(self.request)
-            )
-            self.started = True
-        except Exception:
-            # ``finish`` is still responsible for stopping the proxy/container.
-            raise
+        # On failure ``finish`` is still responsible for stopping the proxy/container.
+        self.harness.deadline = self.started_monotonic + self.request.timeout_seconds
+        self.harness._start_wire_proxy(self.output_dir, self.attempt)
+        # Mark before run: a timed-out Docker client may already have created it.
+        self.container_started = True
+        self.environment = self.harness._start_container(self.container, self.request)
+        self.harness._prepare_workspace(self.container, self.request)
+        self.harness._prepare_context_and_setup(self.container, self.request)
+        self.harness._prepare_config(self.container)
+        self.codex_version = self.harness._checked(
+            ["exec", self.container, "codex", "--version"],
+            "Codex version check",
+        ).stdout.strip()
+        self.started = True
 
     def _latest_reply(self) -> str:
         trace = self.harness._collect_trace(self.container, self.output_dir, self.attempt)
@@ -875,41 +684,54 @@ class CodexSession(InteractiveSession):
         self.messages.append(prompt)
         return TurnResult(reply, time.monotonic() - turn_started, self.return_codes[-1])
 
-    def finish(self, status: str, error: str | None = None) -> HarnessResult:
+    def finish(
+        self,
+        status: str,
+        error: str | None = None,
+        *,
+        user_messages: Sequence[str] | None = None,
+    ) -> HarnessResult:
+        """Collect traces and outputs, release the container and build the result.
+
+        ``user_messages`` defaults to the messages delivered through :meth:`send`;
+        :meth:`CodexHarness.run` passes the task prompts it ran directly.
+        """
+
         if self._finished is not None:
             return self._finished
-        config = self.harness.config
+        harness, config = self.harness, self.harness.config
+        task_id = self.request.task.id
+        messages = list(self.messages if user_messages is None else user_messages)
         trace_path: Path | None = None
         trajectory_path: Path | None = None
         artifact_result: ArtifactCollectionResult | None = None
         output_copy_error: str | None = None
-        final_status = status
-        final_error = error
-        trajectory_conversion = None
         try:
-            self.harness._stop_wire_proxy()
+            harness._stop_wire_proxy()
         except Exception as exc:
-            logger.warning("[%s] Codex wire proxy shutdown failed: %s", self.request.task.id, exc)
+            logger.warning("[%s] Codex wire proxy shutdown failed: %s", task_id, exc)
         if self.container_started:
             try:
-                trace_path = self.harness._collect_trace(self.container, self.output_dir, self.attempt)
+                trace_path = harness._collect_trace(self.container, self.output_dir, self.attempt)
             except Exception as exc:
-                logger.warning("[%s] Codex trace collection failed: %s", self.request.task.id, exc)
+                logger.warning("[%s] Codex trace collection failed: %s", task_id, exc)
             if self.collect_outputs:
                 try:
-                    artifact_result, output_copy_error = self.harness._collect_outputs(
+                    artifact_result, output_copy_error = harness._collect_outputs(
                         self.container, self.request, self.output_dir
                     )
                 except Exception as exc:
                     output_copy_error = str(exc)
-                    logger.warning("[%s] Codex output collection failed: %s", self.request.task.id, exc)
+                    logger.warning("[%s] Codex output collection failed: %s", task_id, exc)
+        if harness.capture is not None and trace_path is not None:
+            retain_root_tools(harness.capture, trace_path)
         if trace_path is not None:
             try:
                 trajectory_path = self.output_dir / "rollout" / "trace_ACTF.json"
                 trajectory = convert_codex_trace(
                     trace_path,
                     trajectory_path,
-                    user_messages=self.messages,
+                    user_messages=messages,
                     keep_thinking=config.keep_thinking,
                     tools_trace=self.output_dir / "tools_capture.jsonl",
                 )
@@ -917,92 +739,71 @@ class CodexSession(InteractiveSession):
                     raise ValueError("Codex native trace produced no assistant steps")
             except Exception as exc:
                 trajectory_path = None
-                trajectory_conversion = {"status": "unavailable", "target": "actf", "error": str(exc)}
-        if trace_path is None:
-            trajectory_conversion = {"status": "failed", "target": "raw",
-                                     "error": "Codex finished but no native session trace was found"}
-        if final_status == "ok" and output_copy_error is not None:
-            final_status, final_error = "error", f"output collection failed: {output_copy_error}"
-        if final_status == "ok" and artifact_result is not None and not artifact_result.passed:
-            final_status, final_error = "error", "unsafe output files were rejected"
+                if status == "ok":
+                    status, error = "error", f"Codex trajectory conversion failed: {exc}"
+        if status == "ok" and trace_path is None:
+            status, error = "error", "Codex finished but no native session trace was found"
+        if status == "ok" and output_copy_error is not None:
+            status, error = "error", f"output collection failed: {output_copy_error}"
+        if status == "ok" and artifact_result is not None and not artifact_result.passed:
+            status, error = "error", "unsafe output files were rejected"
+        capture_metadata = {}
+        if harness.capture is not None:
+            harness.capture.copy_native(harness.runtime, self.container, CODEX_HOME_CONTAINER_PATH + "/sessions/.", "sessions")
+            capture_metadata = harness.capture.finish(status)
         retained_container: str | None = None
         if self.container_started:
-            if config.keep_container_on_error and final_status != "ok":
+            if config.keep_container_on_error and status != "ok":
                 retained_container = self.container
             else:
-                removed = remove_container(self.harness.runtime, self.container)
+                removed = remove_container(harness.runtime, self.container)
                 if removed.returncode != 0:
-                    logger.warning("[%s] failed to remove container %s", self.request.task.id, self.container)
+                    logger.warning("[%s] failed to remove container %s", task_id, self.container)
         elapsed = time.monotonic() - self.started_monotonic
         usage = extract_codex_usage(trace_path) if trace_path is not None else dict(ZERO_USAGE)
         usage["elapsed_seconds"] = round(elapsed, 3)
-        output_metadata = None
-        if artifact_result is not None:
-            output_metadata = {
-                "mode": "all",
-                "agent_output_dir": self.request.task.output_dir,
-                "passed": artifact_result.passed,
-                "path": (
-                    artifact_result.results_path.relative_to(self.output_dir).as_posix()
-                    if artifact_result.results_path is not None else None
-                ),
-                "file_count": artifact_result.file_count,
-                "directory_count": artifact_result.directory_count,
-                "files": list(artifact_result.files),
-                "errors": list(artifact_result.errors),
-            }
-        provenance = {
-            "schema_version": "roller.provenance/v1",
-            "roller_version": __version__,
-            "task_id": self.request.task.id,
-            "task_bundle_digest": self.request.bundle.manifest_digest if self.request.bundle else None,
-            "input_tree_digest": self.request.bundle.input_tree_digest if self.request.bundle else None,
-            "input_manifest_digest": self.request.bundle.input_manifest_digest if self.request.bundle else None,
-            "context_manifest_digest": self.request.bundle.context_manifest_digest if self.request.bundle else None,
-            "resume_safe": self.request.bundle.resume_safe if self.request.bundle else None,
-            "harness": self.harness.name,
-            "codex_version": self.codex_version,
-            "docker_image": config.docker_image,
-            "docker_image_digest": self.image_digest,
-            "model": self.request.model,
-            "api_base_urls": [redact_api_base(config.api_base)] if config.api_base else [],
-            "environment_names": sorted(self.environment),
-            "attempt": self.attempt,
-            "started_at": self.started_at,
-            "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        }
+        provenance = build_provenance(
+            self.request,
+            harness=harness.name,
+            codex_version=self.codex_version,
+            docker_image=config.docker_image,
+            docker_image_digest=self.image_digest,
+            api_base_urls=[redact_api_base(config.api_base)] if config.api_base else [],
+            environment=self.environment,
+            attempt=self.attempt,
+            started_at=self.started_at,
+            finished_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
         try:
             reasoning_effort = resolve_thinking(
                 self.request.task.thinking, config.reasoning_effort
             )
         except Exception:
             reasoning_effort = None
-        result = HarnessResult(
-            status=final_status,
+        self._finished = HarnessResult(
+            status=status,
             elapsed_seconds=elapsed,
-            error=final_error,
+            error=error,
             usage=usage,
             trace_path=trace_path.relative_to(self.output_dir).as_posix() if trace_path else None,
             trajectory_path=trajectory_path.relative_to(self.output_dir).as_posix() if trajectory_path else None,
             metadata={
+                **capture_metadata,
                 "raw_trace_schema": "codex-session-jsonl",
-                "trajectory_conversion": trajectory_conversion,
                 "codex_version": self.codex_version,
                 "container": retained_container,
                 "agent_return_codes": self.return_codes,
-                "turns": len(self.messages),
+                "turns": len(messages),
                 "reasoning_effort": reasoning_effort,
                 "wire_trace": config.wire_trace_mode,
-                "responses_image_detail": config.responses_image_detail,
                 "reasoning_summary": config.reasoning_summary,
                 "keep_thinking": config.keep_thinking,
                 "web_search": config.web_search,
                 "supports_websockets": config.supports_websockets,
-                "output_collection": output_metadata,
+                "output_collection": output_collection_metadata(artifact_result, self.request, self.output_dir),
                 "output_copy_error": output_copy_error,
                 "attempt": self.attempt,
                 "provenance": provenance,
             },
         )
-        self._finished = result
-        return result
+        return self._finished

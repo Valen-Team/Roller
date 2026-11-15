@@ -201,8 +201,8 @@ def _differences(recorded: Any, current: Any, path: str = "$", limit: int = 8) -
     ]
 
 
-def _without_disabled_cot_options(lock: Any) -> Any:
-    """Ignore retired no-ops for comparison only; never rewrite the saved lock."""
+def _comparable_lock(lock: Any) -> Any:
+    """Ignore retired no-ops and host-specific placement; never rewrite the saved lock."""
 
     if not isinstance(lock, dict) or not isinstance(lock.get("execution"), dict):
         return lock
@@ -221,6 +221,13 @@ def _without_disabled_cot_options(lock: Any) -> Any:
                 "signature_recovery_max_tokens",
             ):
                 settings.pop(key, None)
+        if name == "openclaw":
+            # Host-specific placement, not run semantics: the gateway range is
+            # picked per host when the run starts, and which worker slot (so
+            # which port) serves a sample is already decided by whichever
+            # worker frees up first.
+            settings.pop("gateway_port_start", None)
+            settings.pop("gateway_port_step", None)
         execution[name] = settings
     return {**lock, "execution": execution}
 
@@ -231,12 +238,14 @@ def ensure_run_lock(
     *,
     resume: bool,
     existing_run: bool,
+    compatible_expected: Sequence[Mapping[str, Any]] = (),
 ) -> RunLockDecision:
     """Write a new lock or reject resume against a different resolved run.
 
     Legacy runs without a lock are adopted, but their old samples are not
     reused on that first adoption because their execution configuration cannot
-    be proven equivalent.
+    be proven equivalent. ``compatible_expected`` contains exact historical
+    encodings that may be accepted for Resume but are never written for new runs.
     """
 
     expected_row = dict(expected)
@@ -248,12 +257,15 @@ def ensure_run_lock(
             raise ValueError(
                 f"existing run lock cannot be parsed; refusing to overwrite {path}: {exc}"
             ) from exc
-        recorded_comparison = _without_disabled_cot_options(recorded)
-        expected_comparison = _without_disabled_cot_options(expected_row)
-        if recorded_comparison != expected_comparison:
+        recorded_comparison = _comparable_lock(recorded)
+        expected_comparisons = [
+            _comparable_lock(candidate)
+            for candidate in (expected_row, *compatible_expected)
+        ]
+        if recorded_comparison not in expected_comparisons:
             details = "\n".join(
                 f"- {row}"
-                for row in _differences(recorded_comparison, expected_comparison)
+                for row in _differences(recorded_comparison, expected_comparisons[0])
             )
             raise FileExistsError(
                 "run directory cannot be resumed with different resolved inputs; "

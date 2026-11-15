@@ -19,7 +19,7 @@ class SFTUnsupportedContentError(SFTConversionError):
     """Raised when valid ACTF content cannot be represented without data loss."""
 
 
-# Multimodal SFT contract: every image in a tool result becomes one
+# Multimodal SFT contract: every image in user or tool content becomes one
 # ``<image>`` placeholder in the message text and one entry in the top-level
 # ``images`` list. Scanning ``messages`` front to back, the Nth placeholder
 # maps to ``images[N-1]``, so the placeholder count must equal the list length.
@@ -44,30 +44,7 @@ def _normalize_tools(value: Any) -> list[dict[str, Any]]:
 
     tools: list[dict[str, Any]] = []
     names: set[str] = set()
-
-    def flattened(items: list[Any], prefix: str = ""):
-        for original in items:
-            if isinstance(original, dict) and original.get("type") == "namespace":
-                name, children = original.get("name"), original.get("tools")
-                if not isinstance(name, str) or not name or not isinstance(children, list) or not children:
-                    raise SFTConversionError("namespace requires a name and non-empty tools list")
-                yield from flattened(children, prefix + name + ".")
-                continue
-            tool = deepcopy(original)
-            if isinstance(tool, dict) and tool.get("type") == "custom":
-                tool = {
-                    "type": "function", "name": tool.get("name"),
-                    "description": str(tool.get("description", "")) + "\nNative custom tool format: " + json.dumps(tool.get("format"), ensure_ascii=False),
-                    "parameters": {"type": "object", "properties": {"input": {"type": "string"}},
-                                   "required": ["input"], "additionalProperties": False},
-                }
-            if prefix and isinstance(tool, dict) and tool.get("type") == "function":
-                target = tool.get("function", tool)
-                if isinstance(target, dict) and isinstance(target.get("name"), str):
-                    target["name"] = prefix + target["name"]
-            yield tool
-
-    for index, tool in enumerate(flattened(value)):
+    for index, tool in enumerate(value):
         if not isinstance(tool, dict) or tool.get("type") != "function":
             raise SFTConversionError(f"tools[{index}] must be a function tool")
         function = tool.get("function")
@@ -104,7 +81,7 @@ def _arguments_json(value: Any, field: str) -> str:
         raise SFTConversionError(f"{field} is not JSON-serializable") from exc
 
 
-def _normalize_tool_call(call: Any, field: str, *, qualify_namespace: bool = True) -> dict[str, Any]:
+def _normalize_tool_call(call: Any, field: str) -> dict[str, Any]:
     if not isinstance(call, dict):
         raise SFTConversionError(f"{field} must be an object")
     call_id = call.get("id")
@@ -120,9 +97,6 @@ def _normalize_tool_call(call: Any, field: str, *, qualify_namespace: bool = Tru
         arguments = call.get("arguments", {})
     if not isinstance(name, str) or not name:
         raise SFTConversionError(f"{field} tool name must be non-empty")
-    namespace = call.get("namespace")
-    if qualify_namespace and isinstance(namespace, str) and namespace and not name.startswith(namespace + "."):
-        name = namespace + "." + name
     return {
         "id": call_id,
         "type": "function",
@@ -148,8 +122,7 @@ def _responses_tool_call(call: Any, field: str) -> dict[str, Any]:
             "custom": {"name": name, "input": value},
         }
     else:
-        # Responses keeps native name + namespace; legacy exports flatten them.
-        result = _normalize_tool_call(call, field, qualify_namespace=False)
+        result = _normalize_tool_call(call, field)
     if isinstance(call, dict) and "namespace" in call:
         namespace = call["namespace"]
         if not isinstance(namespace, str) or not namespace:
@@ -180,13 +153,6 @@ def _image_data_uri(block: Any, field: str) -> str:
     """
     if not isinstance(block, dict):
         raise SFTConversionError(f"{field} must be an object")
-    url = block.get("image_url", block.get("url"))
-    if isinstance(url, dict):
-        url = url.get("url")
-    if isinstance(url, str):
-        if not url.startswith("data:"):
-            raise SFTUnsupportedContentError(f"{field} image URL has no persisted bytes")
-        block = {**block, "data": url}
     source = block.get("source")
     if isinstance(source, dict):
         if source.get("type") != "base64":
@@ -224,7 +190,7 @@ def _image_data_uri(block: Any, field: str) -> str:
     return f"data:{media_type};base64,{canonical}"
 
 
-def _tool_result_content(value: Any, field: str, images: list[str]) -> str:
+def _message_content(value: Any, field: str, images: list[str]) -> str:
     if isinstance(value, str):
         return value
     if not isinstance(value, list):
@@ -240,12 +206,12 @@ def _tool_result_content(value: Any, field: str, images: list[str]) -> str:
             raise SFTUnsupportedContentError(
                 f"{block_field} is non-text; SFT export would lose data"
             )
-        if block.get("type") in {"text", "input_text", "output_text"}:
+        if block.get("type") == "text":
             text = block.get("text")
             if not isinstance(text, str):
                 raise SFTConversionError(f"{block_field}.text must be a string")
             parts.append(text)
-        elif block.get("type") in {"image", "image_url", "input_image"}:
+        elif block.get("type") == "image":
             # Append without deduplication: images encode the occurrence
             # sequence, the Nth placeholder must keep mapping to images[N-1].
             images.append(_image_data_uri(block, block_field))
@@ -266,13 +232,28 @@ def _placeholder_count(message: Mapping[str, Any]) -> int:
 def validate_sft_record(record: Any) -> None:
     """Check the top-level shape and the multimodal alignment contract.
 
-    Text-only records keep exactly ``messages`` + ``tools``. Records with
+    Legacy text-only records keep exactly ``messages`` + ``tools`` and remain
+    the only records in run-level ``sft.jsonl``. Separate compaction segments
+    carry ``target_start_index``. Assistant messages at
+    or after that index are supervised targets; intervening user/tool messages
+    are context, and earlier assistant messages are preserved prompt history.
+    Records with
     images add a non-empty ``images`` list of base64 data URIs whose length
     equals the number of ``<image>`` placeholders in ``messages``.
     """
     if not isinstance(record, Mapping):
         raise ValueError("SFT record must be a JSON object")
     keys = set(record)
+    target_start = record.get("target_start_index")
+    if "target_start_index" in keys:
+        if (not isinstance(target_start, int) or isinstance(target_start, bool)
+                or target_start < 1 or not isinstance(record.get("messages"), list)
+                or target_start >= len(record["messages"])):
+            raise ValueError("target_start_index must identify a target after the prompt")
+        target = record["messages"][target_start]
+        if not isinstance(target, Mapping) or target.get("role") != "assistant":
+            raise ValueError("target_start_index must point to an assistant target")
+        keys.remove("target_start_index")
     if keys == {"messages", "tools"}:
         return
     if keys != {"messages", "tools", "images"}:
@@ -305,11 +286,16 @@ def validate_sft_record(record: Any) -> None:
 def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
     """Convert one ACTF trajectory to a minimal messages/tools SFT record."""
 
-    projection = trajectory.get("projection")
-    if isinstance(projection, Mapping) and (
-        projection.get("complete") is False or projection.get("training_eligible") is False
-    ):
-        raise SFTConversionError("incomplete diagnostic projection is not eligible for SFT")
+    if trajectory.get("sft_unavailable_reason"):
+        raise SFTConversionError(str(trajectory["sft_unavailable_reason"]))
+    raw_steps = trajectory.get("steps")
+    for step in raw_steps if isinstance(raw_steps, list) else []:
+        extra = step.get("extra") if isinstance(step, Mapping) else None
+        if isinstance(extra, Mapping) and extra.get("is_sidechain"):
+            raise SFTConversionError("mixed subagent steps cannot be exported as one assistant")
+        if isinstance(extra, Mapping) and extra.get("model") == "<synthetic>":
+            raise SFTConversionError("synthetic assistant is not a model output")
+
     system_prompt = trajectory.get("system_prompt", "")
     if not isinstance(system_prompt, str):
         raise SFTConversionError("system_prompt must be a string")
@@ -349,7 +335,9 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(step, dict):
             raise SFTConversionError(f"{prefix} must be an object")
 
-        user_content = _tool_result_content(step.get("user_content", ""), f"{prefix}.user_content", images)
+        user_content = _message_content(
+            step.get("user_content", ""), f"{prefix}.user_content", images
+        )
         if user_content:
             messages.append({"role": "user", "content": user_content})
             user_count += 1
@@ -405,7 +393,7 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(observations, list):
             raise SFTConversionError(f"{prefix}.observation must be a list")
         observed_ids: set[str] = set()
-        tool_messages: list[dict[str, Any]] = []
+        results_by_id: dict[str, tuple[dict[str, Any], str]] = {}
         for observation_index, observation in enumerate(observations):
             field = f"{prefix}.observation[{observation_index}]"
             if not isinstance(observation, dict):
@@ -427,19 +415,25 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
                     f"tool result name {observed_name} does not match call {call_names[call_id]}"
                 )
             observed_ids.add(call_id)
-            tool_message = (
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": _tool_result_content(
-                        observation.get("content", []), f"{field}.content", images
-                    ),
-                }
-            )
-            tool_messages.append(tool_message)
+            results_by_id[call_id] = (observation, field)
         if observed_ids != expected_ids:
             missing = sorted(expected_ids - observed_ids)
             raise SFTConversionError(f"tool calls missing results: {', '.join(missing)}")
+
+        # Parallel tools can finish in any order. Canonicalize only the SFT
+        # output, matching by ID rather than completion order or tool name.
+        # Serialize media in this same order so positional image references
+        # remain aligned with the emitted <image> placeholders.
+        tool_messages: list[dict[str, Any]] = []
+        for call in calls:
+            observation, field = results_by_id[call["id"]]
+            tool_messages.append({
+                "role": "tool",
+                "tool_call_id": call["id"],
+                "content": _message_content(
+                    observation.get("content", []), f"{field}.content", images
+                ),
+            })
 
         messages.append(
             {

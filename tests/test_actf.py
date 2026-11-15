@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
-from copy import deepcopy
+from pathlib import Path
 
-from roller.actf import openclaw_events_to_actf
+from roller.actf import openclaw_events_to_actf, convert_openclaw_trace
 from roller.sft import actf_to_sft
 
 
@@ -61,30 +63,54 @@ def _events() -> list[dict]:
 
 
 class ActfConversionTests(unittest.TestCase):
-    def test_prompt_cleanup_preserves_ordered_user_images(self) -> None:
-        for picture in (
-            {"type": "image", "data": "AA==", "mimeType": "image/png"},
-            {"type": "input_image", "image_url": "data:image/png;base64,AA=="},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
-        ):
-            for content, expected, count in (
-                (["wrapped", picture], ["clean", picture], 1),
-                ([picture], [picture], 1),
-                (["before", picture, "after", picture], ["before", picture, "after", picture], 2),
-                (["literal <image>", "text"], "clean", 0),
-            ):
-                with self.subTest(content=content):
-                    original = deepcopy(content)
-                    events = [{"type": "message", "message": {"role": "user", "content": content}},
-                              {"type": "message", "message": {"role": "assistant", "content": "done"}}]
-                    trajectory = openclaw_events_to_actf(events, user_messages=["clean"])
-                    self.assertEqual(trajectory["steps"][0]["user_content"], expected)
-                    record = actf_to_sft(trajectory)
-                    self.assertEqual(record.get("images", []), ["data:image/png;base64,AA=="] * count)
-                    self.assertEqual(record["messages"][1]["content"],
-                                     expected if isinstance(expected, str) else
-                                     "\n".join(item if isinstance(item, str) else "<image>" for item in expected))
-                    self.assertEqual(content, original)
+    def test_non_object_native_message_does_not_break_default_conversion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = [
+                {"type": "message", "message": {"role": "user", "content": "task"}},
+                {"type": "message", "message": {"role": "assistant", "content": "done"}},
+                {"type": "custom", "message": None},
+                {"type": "custom", "message": "unexpected"},
+            ]
+            source = root / "trace.jsonl"
+            source.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            trajectory = convert_openclaw_trace(source, root / "out.json", user_messages=["task"])
+            self.assertEqual(len(trajectory["steps"]), 1)
+            self.assertEqual(trajectory["steps"][0]["assistant_content"]["content"], "done")
+
+    def test_null_announcement_session_key_does_not_break_conversion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "trace.jsonl"
+            source.write_text("\n".join(json.dumps(row) for row in _events()) + "\n")
+            cache = root / "cache.jsonl"
+            cache.write_text(json.dumps({"runId": "announce:v1:child:run", "sessionKey": None,
+                                         "stage": "stream:context", "messages": []}) + "\n")
+            trajectory = convert_openclaw_trace(source, root / "out.json", cache_trace=cache)
+            self.assertEqual(len(trajectory["steps"]), 2)
+            self.assertIn("sft_unavailable_reason", trajectory)
+
+    def test_announcement_input_uses_native_provider_response_binding(self):
+        notice = "A background task completed.\nsource: subagent\nCHILD_DONE"
+        signature = json.dumps({"id": "provider-final"})
+        assistant = {"role": "assistant", "content": [{"type": "text", "text": "Done", "textSignature": signature}], "stopReason": "stop"}
+        events = [{"type": "message", "message": {"role": "user", "content": "task"}}, {"type": "message", "message": assistant}]
+        base = {"runId": "announce:v1:child:run", "sessionKey": "agent:main:root"}
+        for complete in (True, False):
+            with self.subTest(complete=complete), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                cache_rows = [{**base, "stage": "stream:context", "messages": [{"role": "user", "content": notice}]}]
+                if complete:
+                    cache_rows.append({**base, "stage": "session:after", "messages": [assistant]})
+                (root / "trace.jsonl").write_text("\n".join(json.dumps(e) for e in events))
+                (root / "cache.jsonl").write_text("\n".join(json.dumps(e) for e in cache_rows))
+                trajectory = convert_openclaw_trace(root / "trace.jsonl", root / "out.json", user_messages=["task"], cache_trace=root / "cache.jsonl")
+                if complete:
+                    self.assertEqual(trajectory["steps"][0]["user_content"], notice)
+                    self.assertNotIn("sft_unavailable_reason", trajectory)
+                else:
+                    self.assertIn("sft_unavailable_reason", trajectory)
+
 
     def test_groups_assistant_tool_results_and_multiple_user_turns(self) -> None:
         trajectory = openclaw_events_to_actf(
@@ -179,6 +205,213 @@ class ActfConversionTests(unittest.TestCase):
         tool_result = next(m for m in sft["messages"] if m["role"] == "tool")
         self.assertEqual(tool_result["content"], "image\n<image>")
         self.assertEqual(sft["images"], [data_url])
+
+    def test_preserves_images_in_user_messages(self) -> None:
+        events = _events()
+        events[1]["message"]["content"] = [
+            {"type": "text", "text": "[timestamp] first"},
+            {"type": "image", "data": "AA==", "mimeType": "image/png"},
+        ]
+
+        trajectory = openclaw_events_to_actf(
+            events,
+            user_messages=("clean first", "clean second"),
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        )
+
+        self.assertEqual(
+            trajectory["steps"][0]["user_content"],
+            [
+                {"type": "text", "text": "clean first"},
+                {"type": "image", "data": "AA==", "mimeType": "image/png"},
+            ],
+        )
+        record = actf_to_sft(trajectory)
+        self.assertEqual(record["messages"][1]["content"], "clean first\n<image>")
+        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+
+    def test_attaches_generated_wire_image_to_image_tool_result(self) -> None:
+        events = _events()
+        events[2]["message"]["content"][1]["name"] = "image"
+        events[2]["message"]["content"][1]["arguments"] = {
+            "image": "outputs/generated.png"
+        }
+        events[3]["message"]["toolName"] = "image"
+        events[3]["message"]["content"] = [{"type": "text", "text": "red"}]
+        wire = {
+            "kind": "request",
+            "ts": "1970-01-01T00:00:01Z",
+            "image_inputs": [
+                {"type": "image", "data": "AA==", "mimeType": "image/png"}
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "trace.jsonl"
+            wire_trace = root / "wire.jsonl"
+            source.write_text(
+                "\n".join(json.dumps(event) for event in events) + "\n",
+                encoding="utf-8",
+            )
+            wire_trace.write_text(json.dumps(wire) + "\n", encoding="utf-8")
+            trajectory = convert_openclaw_trace(
+                source,
+                root / "trace_ACTF.json",
+                user_messages=("first", "second"),
+                wire_trace=wire_trace,
+                tools=[{"type": "function", "function": {"name": "image"}}],
+            )
+
+        content = trajectory["steps"][0]["observation"][0]["content"]
+        self.assertEqual(content[-1], wire["image_inputs"][0])
+        self.assertEqual(
+            actf_to_sft(trajectory)["images"], ["data:image/png;base64,AA=="]
+        )
+
+    def _parallel_image_trajectory(self, prompts, wire_entries):
+        events = [
+            {"type": "session", "timestamp": "2026-09-22T00:00:00.000Z"},
+            {
+                "type": "message",
+                "timestamp": "2026-09-22T00:00:00.100Z",
+                "message": {"role": "user", "content": "compare"},
+            },
+            {
+                "type": "message",
+                "timestamp": "2026-09-22T00:00:00.200Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": f"call-{index}",
+                            "name": "image",
+                            "arguments": {"image": f"{index}.png", "prompt": prompt},
+                        }
+                        for index, prompt in enumerate(prompts)
+                    ],
+                    "stopReason": "toolUse",
+                },
+            },
+            *(
+                {
+                    "type": "message",
+                    "timestamp": "2026-09-22T00:00:00.800Z",
+                    "message": {
+                        "role": "toolResult",
+                        "toolCallId": f"call-{index}",
+                        "toolName": "image",
+                        "content": [{"type": "text", "text": f"answer {index}"}],
+                    },
+                }
+                for index in range(len(prompts))
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "trace.jsonl"
+            wire_trace = root / "wire.jsonl"
+            source.write_text(
+                "\n".join(json.dumps(event) for event in events) + "\n",
+                encoding="utf-8",
+            )
+            wire_trace.write_text(
+                "\n".join(json.dumps(entry) for entry in wire_entries) + "\n",
+                encoding="utf-8",
+            )
+            return convert_openclaw_trace(
+                source, root / "trace_ACTF.json", wire_trace=wire_trace
+            )
+
+    @staticmethod
+    def _image_request(prompt: str, data: str) -> dict:
+        return {
+            "kind": "request",
+            "ts": "2026-09-22T00:00:00Z",
+            "body": {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image", "data": data, "mimeType": "image/png"},
+                        ],
+                    }
+                ]
+            },
+        }
+
+    def test_parallel_image_calls_pair_with_wire_requests_by_prompt(self) -> None:
+        trajectory = self._parallel_image_trajectory(
+            ("describe the cat", "describe the dog"),
+            [
+                self._image_request("describe the dog", "AQ=="),
+                self._image_request("describe the cat", "AA=="),
+            ],
+        )
+
+        observations = trajectory["steps"][0]["observation"]
+        self.assertEqual(
+            [item["content"][-1]["data"] for item in observations],
+            ["AA==", "AQ=="],
+        )
+
+    def test_indistinguishable_parallel_image_calls_stay_unpaired(self) -> None:
+        trajectory = self._parallel_image_trajectory(
+            ("describe", "describe"),
+            [
+                self._image_request("describe", "AQ=="),
+                self._image_request("describe", "AA=="),
+            ],
+        )
+
+        self.assertEqual(
+            [item["content"] for item in trajectory["steps"][0]["observation"]],
+            [
+                [{"type": "text", "text": "answer 0"}],
+                [{"type": "text", "text": "answer 1"}],
+            ],
+        )
+
+    def test_consecutive_user_messages_merge_without_separator_block(self) -> None:
+        events = _events()
+        image = {"type": "image", "data": "AA==", "mimeType": "image/png"}
+        events[1]["message"]["content"] = [{"type": "text", "text": "first"}, image]
+        events.insert(
+            2,
+            {
+                "type": "message",
+                "timestamp": 1500,
+                "message": {"role": "user", "content": "queued"},
+            },
+        )
+        events.insert(
+            3,
+            {
+                "type": "message",
+                "timestamp": 1600,
+                "message": {"role": "user", "content": "again"},
+            },
+        )
+
+        trajectory = openclaw_events_to_actf(events)
+
+        self.assertEqual(
+            trajectory["steps"][0]["user_content"],
+            [
+                {"type": "text", "text": "first"},
+                image,
+                {"type": "text", "text": "queued\n\nagain"},
+            ],
+        )
 
     def test_tool_call_ids_are_namespaced_across_sessions(self) -> None:
         first = _events()[:4]

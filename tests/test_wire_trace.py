@@ -2,52 +2,99 @@ from __future__ import annotations
 
 import json
 import io
+import gzip
 import tempfile
+import threading
 import unittest
+import zlib
+from email.message import Message
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.error import HTTPError
+from urllib.request import Request, build_opener, ProxyHandler
 
 from roller.wire_trace import (
+    ERROR_INSPECTION_LIMIT,
     REDACTED_VALUE,
     _ProxyHandler,
     WireTraceProxy,
+    extract_wire_image_requests,
     extract_wire_tools,
     redact_jsonl_file,
     redact_sensitive_values,
     normalize_chat_completion_reasoning_response,
     strip_thinking_from_body,
 )
+from roller.capture import CallRecorder, read_jsonl
+
+
+class FullCallCaptureTests(unittest.TestCase):
+    def forward(self, root, recorder, payload, *, chat_session=None, native_run=None):
+        body=json.dumps({'model':'model','messages':[{'role':'user','content':'hello'}]}).encode()
+        handler=MagicMock()
+        handler.server.proxy=WireTraceProxy('http://model.test',root/'wire.jsonl',mode='full',capture_recorder=recorder,
+            capture_identity_header='x-roller-native-session-id' if chat_session else None,
+            capture_run_header='x-roller-native-run-id' if native_run else None)
+        handler.headers={'Content-Length':str(len(body)),'Content-Type':'application/json','Authorization':'Bearer private-credential'}
+        handler.rfile=io.BytesIO(body)
+        handler.wfile=io.BytesIO()
+        handler.path='/v1/messages'
+        if chat_session:
+            handler.path='/v1/chat/completions'
+            handler.headers['x-roller-native-session-id']=chat_session
+        if native_run:
+            handler.headers['x-roller-native-run-id']=native_run
+        handler.command='POST'
+        handler._record.side_effect=lambda b:_ProxyHandler._record(handler,b)
+        response=MagicMock(status=200,headers={'Content-Type':'application/json'})
+        stream=io.BytesIO(payload)
+        response.read1.side_effect=stream.read1
+        with patch('roller.wire_trace.urllib_request.urlopen',return_value=response) as send:
+            _ProxyHandler._handle(handler)
+            if chat_session:
+                self.assertNotIn('x-roller-native-session-id',dict((k.lower(),v) for k,v in send.call_args.args[0].header_items()))
+            if native_run:
+                self.assertNotIn('x-roller-native-run-id',dict((k.lower(),v) for k,v in send.call_args.args[0].header_items()))
+        return handler.wfile.getvalue()
+
+    def test_full_response_is_captured_without_changing_delivery(self):
+        payload=b'{"type":"message","id":"m","content":[{"type":"text","text":"hello"}]}'
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);recorder=CallRecorder(root/'capture/attempt-0001')
+            self.assertEqual(self.forward(root,recorder,payload),payload)
+            self.assertEqual(recorder.response_path(1).read_bytes(),payload)
+            events=read_jsonl(recorder.events)
+            self.assertTrue(events[-1]['complete'])
+            self.assertNotIn('private-credential',recorder.events.read_text())
+
+    def test_capture_storage_failure_does_not_interrupt_model_response(self):
+        payload=b'{"type":"message","id":"m","content":[]}'
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);recorder=CallRecorder(root/'capture/attempt-0001')
+            with patch.object(recorder,'open_response',side_effect=OSError('disk full')):
+                self.assertEqual(self.forward(root,recorder,payload),payload)
+            self.assertFalse(read_jsonl(recorder.events)[-1]['complete'])
+            self.assertEqual(recorder.error,'disk full')
+
+    def test_chat_session_is_recorded_locally_and_not_sent_to_provider(self):
+        payload=b'{"id":"m","choices":[]}'
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);recorder=CallRecorder(root/'capture/attempt-0001')
+            self.assertEqual(self.forward(root,recorder,payload,chat_session='child-session'),payload)
+            events=read_jsonl(recorder.events)
+            self.assertEqual(events[0]['native_identity'],{'session_id':'child-session'})
+            self.assertEqual(recorder.response_path(1).read_bytes(),payload)
+
+    def test_native_notification_run_is_local_and_not_sent_to_provider(self):
+        payload=b'{"id":"m","choices":[]}'
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);recorder=CallRecorder(root/'capture/attempt-0001')
+            self.assertEqual(self.forward(root,recorder,payload,chat_session='root',native_run='announce:child'),payload)
+            self.assertEqual(read_jsonl(recorder.events)[0]['native_identity'],{'session_id':'root','run_id':'announce:child'})
 
 
 class ForwardPathTests(unittest.TestCase):
-    def test_explicit_tool_id_repair_works_without_wire_logging(self) -> None:
-        for streaming in (False, True):
-            with self.subTest(streaming=streaming), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                proxy = WireTraceProxy("http://example.test", root / "wire.jsonl", mode="off", unique_anthropic_tool_ids=True)
-                event = ({"type": "content_block_start", "content_block": {"type": "tool_use", "id": "x"}}
-                         if streaming else {"type": "message", "content": [{"type": "tool_use", "id": "x"}]})
-                ids = []
-                for _ in range(2):
-                    body = json.dumps(event).encode()
-                    response = io.BytesIO(b"data: " + body + b"\n\n" if streaming else body)
-                    response.status = 200
-                    response.headers = {"Content-Type": "text/event-stream" if streaming else "application/json"}
-                    handler = MagicMock()
-                    handler.server.proxy = proxy
-                    handler.path, handler.command = "/v1/messages", "POST"
-                    handler.headers = {"Content-Length": "2"}
-                    handler.rfile, handler.wfile = io.BytesIO(b"{}"), io.BytesIO()
-                    with patch("roller.wire_trace.urllib_request.urlopen", return_value=response):
-                        _ProxyHandler._handle(handler)
-                    raw = handler.wfile.getvalue()
-                    result = json.loads(raw[6:].strip() if streaming else raw)
-                    ids.append(result["content_block"]["id"] if streaming else result["content"][0]["id"])
-                self.assertEqual(ids[0], "x")
-                self.assertNotEqual(ids[0], ids[1])
-                self.assertTrue((root / "tool_id_mappings.jsonl").is_file())
-                self.assertFalse((root / "wire.jsonl").exists())
-
     def test_native_request_is_forwarded_once_without_cot_rewrites(self) -> None:
         body = json.dumps({
             "model": "model",
@@ -84,6 +131,229 @@ class ForwardPathTests(unittest.TestCase):
         )
         self.assertEqual(proxy.forward_path("/v1/models"), "/v1/models")
         self.assertEqual(proxy.drop_request_headers, {"anthropic-beta"})
+
+
+ENCRYPTED_CONTENT_REJECTION = json.dumps({"error": {
+    "message": "The encrypted content for item rs_1 could not be verified.",
+    "type": "invalid_request_error", "code": "invalid_encrypted_content",
+}}).encode()
+
+
+class EncryptedContentRetryTests(unittest.TestCase):
+    def forward(self, root, upstream, *, retries, path="/v1/responses"):
+        body = json.dumps({"model": "model", "input": [
+            {"type": "reasoning", "id": "rs_1", "encrypted_content": "opaque", "summary": []},
+        ]}).encode()
+        handler = MagicMock()
+        handler.server.proxy = WireTraceProxy(
+            "http://example.test/v1", root / "wire.jsonl",
+            encrypted_content_retries=retries,
+        )
+        handler.headers = {"Content-Length": str(len(body)), "Content-Type": "application/json"}
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        handler.path = path
+        handler.command = "POST"
+        handler._record.return_value = 1
+        with patch("roller.wire_trace.urllib_request.urlopen", side_effect=upstream) as send, \
+                patch.object(handler.server.proxy._stopping, "wait", return_value=False) as wait:
+            _ProxyHandler._handle(handler)
+        for call in send.call_args_list:
+            self.assertEqual(call.args[0].data, body)
+        status = handler.send_response.call_args.args[0]
+        return status, handler.wfile.getvalue(), send.call_count, wait.call_count
+
+    @staticmethod
+    def rejection(payload=ENCRYPTED_CONTENT_REJECTION, encoding=""):
+        headers = Message()
+        headers["Content-Type"] = "application/json"
+        if encoding:
+            headers["Content-Encoding"] = encoding
+        return HTTPError("http://example.test/v1/responses", 400, "Bad Request",
+                         headers, io.BytesIO(payload))
+
+    @staticmethod
+    def success(payload):
+        response = MagicMock(status=200, headers={"Content-Type": "text/event-stream"})
+        response.read.side_effect = io.BytesIO(payload).read
+        return response
+
+    def test_resends_identical_request_after_encrypted_content_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            status, delivered, sent, slept = self.forward(
+                root, [self.rejection(), self.rejection(), self.success(b"data: ok\n\n")], retries=3,
+            )
+            retries = [entry for entry in read_jsonl(root / "wire.jsonl")
+                       if entry.get("kind") == "upstream_retry"]
+        self.assertEqual((status, delivered, sent, slept), (200, b"data: ok\n\n", 3, 2))
+        self.assertEqual([entry["attempt"] for entry in retries], [1, 2])
+        self.assertEqual(retries[0]["request_seq"], 1)
+        self.assertEqual(retries[0]["reason"], "invalid_encrypted_content")
+
+    def test_forwards_final_rejection_once_retries_are_exhausted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            status, delivered, sent, _ = self.forward(
+                Path(tmp), [self.rejection() for _ in range(3)], retries=2,
+            )
+        self.assertEqual((status, delivered, sent), (400, ENCRYPTED_CONTENT_REJECTION, 3))
+
+    def test_other_errors_and_unconfigured_proxies_are_not_retried(self):
+        other = b'{"error":{"code":"context_length_exceeded"}}'
+        cases = (
+            ("other 400", [self.rejection(other)], 3, "/v1/responses", other),
+            ("disabled", [self.rejection()], 0, "/v1/responses", ENCRYPTED_CONTENT_REJECTION),
+            ("chat path", [self.rejection()], 3, "/v1/chat/completions", ENCRYPTED_CONTENT_REJECTION),
+        )
+        for name, upstream, retries, path, payload in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                status, delivered, sent, slept = self.forward(
+                    Path(tmp), upstream, retries=retries, path=path,
+                )
+                self.assertEqual((status, delivered, sent, slept), (400, payload, 1, 0))
+
+    def test_rejects_negative_retry_count(self):
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            WireTraceProxy("http://example.test", Path("/tmp/unused-wire.jsonl"),
+                           encrypted_content_retries=-1)
+
+    def test_retries_compressed_error_codes(self):
+        for encoding, compress in (("gzip", gzip.compress), ("deflate", zlib.compress)):
+            with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as tmp:
+                result = self.forward(Path(tmp), [
+                    self.rejection(compress(ENCRYPTED_CONTENT_REJECTION), encoding),
+                    self.success(b"ok"),
+                ], retries=3)
+                self.assertEqual(result, (200, b"ok", 2, 1))
+
+    def test_non_target_or_uninspectable_errors_are_forwarded_unchanged(self):
+        other = json.dumps({"error": {"code": "context_length_exceeded",
+            "message": "input contains invalid_encrypted_content"}}).encode()
+        too_large = b" " * ERROR_INSPECTION_LIMIT + ENCRYPTED_CONTENT_REJECTION
+        cases = (
+            (other, ""), (gzip.compress(other), "gzip"),
+            (b'invalid_encrypted_content', ""),
+            (b'{"error":"invalid_encrypted_content"}', ""),
+            (b'["invalid_encrypted_content"]', ""),
+            (b'{"error":{"code":"invalid_encrypted_content_suffix"}}', ""),
+            (b"broken gzip invalid_encrypted_content", "gzip"),
+            (ENCRYPTED_CONTENT_REJECTION, "br"),
+            (too_large, ""), (gzip.compress(too_large), "gzip"),
+        )
+        for payload, encoding in cases:
+            with self.subTest(encoding=encoding, length=len(payload)), tempfile.TemporaryDirectory() as tmp:
+                result = self.forward(Path(tmp), [self.rejection(payload, encoding)], retries=3)
+                self.assertEqual(result, (400, payload, 1, 0))
+
+    def test_stop_during_rejection_does_not_start_a_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proxy = WireTraceProxy("http://example.test", Path(tmp) / "wire.jsonl",
+                                   encrypted_content_retries=3)
+
+            def reject(*args, **kwargs):
+                proxy.stop()
+                raise self.rejection()
+
+            with patch("roller.wire_trace.urllib_request.urlopen", side_effect=reject) as send:
+                with proxy.open_upstream(Request("http://example.test/responses", data=b"{}"), 1) as response:
+                    self.assertEqual(response.code, 400)
+                    self.assertEqual(response.read(), ENCRYPTED_CONTENT_REJECTION)
+            self.assertEqual(send.call_count, 1)
+
+
+class RetryHTTPTests(unittest.TestCase):
+    """Exercise real HTTPError bodies, headers, capture, and shutdown threads."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.requests = []
+        self.responses = []
+        owner = self
+
+        class Upstream(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                owner.requests.append(self.rfile.read(int(self.headers["Content-Length"])))
+                status, payload, encoding = owner.responses.pop(0)
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                if encoding:
+                    self.send_header("Content-Encoding", encoding)
+                self.end_headers()
+                self.wfile.write(payload)
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        upstream.daemon_threads = True
+        thread = threading.Thread(target=upstream.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 2)
+        self.addCleanup(upstream.server_close)
+        self.addCleanup(upstream.shutdown)
+        self.recorder = CallRecorder(self.root / "capture")
+        self.proxy = WireTraceProxy(f"http://127.0.0.1:{upstream.server_port}/v1",
+            self.root / "wire.jsonl", mode="full", encrypted_content_retries=3,
+            capture_recorder=self.recorder)
+        self.proxy.start()
+        self.addCleanup(self.proxy.stop)
+        self.target = self.proxy.proxy_base_url + "/responses"
+
+    def request(self):
+        request = Request(self.target, data=b'{"input":[],"model":"test"}',
+                          headers={"Content-Type": "application/json", "Accept-Encoding": "gzip"})
+        try:
+            response = build_opener(ProxyHandler({})).open(request, timeout=5)
+        except HTTPError as exc:
+            response = exc
+        with response:
+            return response.code, response.read(), response.headers.get("Content-Encoding", "")
+
+    def test_gzip_retry_captures_only_final_response(self):
+        success = b'{"id":"resp_test","status":"completed","output":[]}'
+        self.responses = [(400, gzip.compress(ENCRYPTED_CONTENT_REJECTION), "gzip"),
+                          (200, success, "")]
+        self.assertEqual(self.request(), (200, success, ""))
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.requests[0], self.requests[1])
+        self.assertEqual(self.recorder.response_path(1).read_bytes(), success)
+        events = read_jsonl(self.recorder.events)
+        self.assertEqual(len(events), 2)
+        self.assertTrue(events[-1]["complete"])
+        self.assertEqual(events[-1]["http_status"], 200)
+
+    def test_compressed_other_error_preserves_body_and_headers(self):
+        payload = gzip.compress(b'{"error":{"code":"other","message":"invalid_encrypted_content"}}')
+        self.responses = [(400, payload, "gzip")]
+        self.assertEqual(self.request(), (400, payload, "gzip"))
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(self.recorder.response_path(1).read_bytes(), payload)
+
+    def test_stop_interrupts_backoff_without_another_request(self):
+        self.responses = [(400, ENCRYPTED_CONTENT_REJECTION, "")] * 4
+        waiting = threading.Event()
+        wait = self.proxy._stopping.wait
+        result = []
+
+        def observe_wait(delay):
+            waiting.set()
+            return wait(delay)
+
+        with patch("roller.wire_trace.ENCRYPTED_CONTENT_RETRY_DELAY_SECONDS", 30), \
+                patch.object(self.proxy._stopping, "wait", side_effect=observe_wait):
+            client = threading.Thread(target=lambda: result.append(self.request()), daemon=True)
+            client.start()
+            self.assertTrue(waiting.wait(2))
+            self.proxy.stop()
+            client.join(2)
+            self.assertFalse(client.is_alive())
+        self.assertEqual(result, [(400, ENCRYPTED_CONTENT_REJECTION, "")])
+        self.assertEqual(len(self.requests), 1)
+        self.assertFalse(any(row.get("kind") == "upstream_retry"
+                             for row in read_jsonl(self.root / "wire.jsonl")))
 
 
 class StripThinkingTests(unittest.TestCase):
@@ -217,16 +487,6 @@ class NormalizeReasoningReplayTests(unittest.TestCase):
 
 
 class ExtractWireToolsTests(unittest.TestCase):
-    def test_reads_additional_tool_declarations_without_loading_whole_file(self) -> None:
-        tools = [{"type": "function", "name": "read"}]
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "wire.jsonl"
-            body = {"input": [{"additional_tools": tools},
-                              {"content": {"additional_tools": [{"name": "not_a_declaration"}]}}]}
-            path.write_text(json.dumps({"kind": "request", "body": body}))
-            with patch.object(Path, "read_text", side_effect=AssertionError("whole file read")):
-                self.assertEqual(extract_wire_tools(path), tools)
-
     def test_extracts_from_tools_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "wire.jsonl"
@@ -320,6 +580,140 @@ class ExtractWireToolsTests(unittest.TestCase):
             path.write_text("\n".join(json.dumps(e) for e in entries), encoding="utf-8")
             tools = extract_wire_tools(path)
         self.assertEqual(tools[0]["function"]["name"], "read")
+
+
+class ExtractWireImagesTests(unittest.TestCase):
+    def test_extracts_compact_and_full_image_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wire.jsonl"
+            entries = [
+                {
+                    "kind": "request",
+                    "ts": "2026-09-22T01:00:00Z",
+                    "image_inputs": [
+                        {"type": "image", "data": "AA==", "mimeType": "image/png"}
+                    ],
+                },
+                {
+                    "kind": "request",
+                    "ts": "2026-09-22T01:00:01Z",
+                    "body": {
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": "data:image/jpeg;base64,AQ=="
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                },
+            ]
+            path.write_text(
+                "\n".join(json.dumps(entry) for entry in entries),
+                encoding="utf-8",
+            )
+
+            requests = extract_wire_image_requests(path)
+
+        self.assertEqual(
+            [request["ts"] for request in requests],
+            [entry["ts"] for entry in entries],
+        )
+        self.assertEqual(requests[0]["images"][0]["data"], "AA==")
+        self.assertEqual(
+            requests[1]["images"][0]["data"],
+            "data:image/jpeg;base64,AQ==",
+        )
+
+
+class CompactImageRecordingTests(unittest.TestCase):
+    def test_actf_mode_retains_only_image_inputs_from_request_body(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wire.jsonl"
+            handler = MagicMock()
+            handler.server.proxy = WireTraceProxy(
+                "http://example.test/v1", path, mode="tools"
+            )
+            handler.headers = {}
+            handler.path = "/v1/chat/completions"
+            handler.command = "POST"
+            body = json.dumps(
+                {
+                    "model": "vision-model",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "private prompt"},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": "data:image/png;base64,AA=="
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                    "tools": [],
+                }
+            ).encode()
+
+            _ProxyHandler._record(handler, body)
+            entry = json.loads(path.read_text())
+
+        self.assertNotIn("body", entry)
+        self.assertEqual(entry["n_tools"], 0)
+        self.assertEqual(
+            entry["image_inputs"],
+            [{"type": "image", "data": "data:image/png;base64,AA=="}],
+        )
+        self.assertNotIn("private prompt", json.dumps(entry))
+
+
+    def test_actf_mode_writes_each_image_once_across_requests(self) -> None:
+        image = "data:image/png;base64," + "QUJD" * 64
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look"},
+                    {"type": "image_url", "image_url": {"url": image}},
+                ],
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wire.jsonl"
+            handler = MagicMock()
+            handler.server.proxy = WireTraceProxy(
+                "http://example.test/v1", path, mode="tools"
+            )
+            handler.headers = {}
+            handler.path = "/v1/chat/completions"
+            handler.command = "POST"
+            for turn in range(3):
+                _ProxyHandler._record(
+                    handler,
+                    json.dumps({"model": "vision-model", "messages": messages}).encode(),
+                )
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": f"reply {turn}"},
+                    {"role": "user", "content": f"next {turn}"},
+                ]
+            written = path.read_text()
+            requests = extract_wire_image_requests(path)
+
+        self.assertEqual(written.count(image), 1)
+        self.assertEqual(
+            [request["images"] for request in requests],
+            [[{"type": "image", "data": image}]] * 3,
+        )
 
 
 class TraceRedactionTests(unittest.TestCase):

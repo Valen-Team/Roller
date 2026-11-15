@@ -128,6 +128,19 @@ class CodexToolsTests(unittest.TestCase):
         with self.assertRaisesRegex(SFTConversionError, "additional_tools"):
             actf_to_sft(trajectory)
 
+    def test_dynamic_tool_search_is_preserved_and_static_sft_is_rejected(self) -> None:
+        item = {"type": "tool_search_output", "call_id": "search", "tools": [TOOLS[2]]}
+        snapshots = [tool_snapshot({"tools": TOOLS[:1]}),
+                     tool_snapshot({"tools": TOOLS[:1], "input": [item]})]
+        call = {"type": "function_call", "call_id": "wait", "name": "wait",
+                "namespace": "agents", "arguments": "{}"}
+        with tempfile.TemporaryDirectory() as tmp:
+            trajectory = self.convert(Path(tmp), snapshots, call)
+        self.assertEqual(trajectory["tools_capture"]["requests"][1]["snapshot"]["tool_search_outputs"], [item])
+        self.assertIsNone(trajectory["tools"])
+        with self.assertRaisesRegex(SFTConversionError, "tool_search_output"):
+            actf_to_sft(trajectory)
+
     def test_whole_record_loss_rejects_sft_and_preserves_remaining_snapshots(self) -> None:
         modified = deepcopy(TOOLS)
         modified[0]["description"] = "New definition."
@@ -202,46 +215,6 @@ class CodexToolsTests(unittest.TestCase):
 
 
 class CodexToolsProxyTests(unittest.TestCase):
-    def test_image_detail_and_tool_capture_can_be_enabled_independently(self) -> None:
-        for mode in ("off", "actf", "full"):
-            for detail in (None, "auto"):
-                with self.subTest(mode=mode, detail=detail), tempfile.TemporaryDirectory() as tmp:
-                    root = Path(tmp)
-                    harness = CodexHarness(CodexConfig(api_base="http://example.test/v1", wire_trace_mode=mode,
-                                                       responses_image_detail=detail), 0)
-                    with patch.object(WireTraceProxy, "start"), patch.object(WireTraceProxy, "stop"):
-                        harness._start_wire_proxy(root)
-                        proxy = harness._wire_proxy
-                        if mode == "off" and detail is None:
-                            self.assertIsNone(proxy)
-                            continue
-                        self.assertEqual(proxy.mode, "tools" if mode == "actf" else mode)
-                        self.assertEqual(proxy.responses_tools_path is not None, mode != "off")
-                        body = {"tools": TOOLS, "input": [{"role": "user", "content": [
-                            {"type": "input_image", "image_url": "data:image/png;base64,AA=="}]}]}
-                        raw = json.dumps(body).encode()
-                        handler = MagicMock()
-                        handler.server.proxy = proxy
-                        handler.headers = {"Content-Length": str(len(raw))}
-                        handler.rfile = io.BytesIO(raw)
-                        handler.command, handler.path = "POST", "/v1/responses"
-                        handler._record.side_effect = lambda data: _ProxyHandler._record(handler, data)
-                        response = MagicMock(status=200, headers={})
-                        response.read.return_value = b""
-                        with patch("roller.wire_trace.urllib_request.urlopen", return_value=response) as send:
-                            _ProxyHandler._handle(handler)
-                        expected = deepcopy(body)
-                        if detail:
-                            expected["input"][0]["content"][0]["detail"] = detail
-                        self.assertEqual(json.loads(send.call_args.args[0].data), expected)
-                        harness._stop_wire_proxy()
-                    capture = root / "tools_capture.jsonl"
-                    self.assertEqual(capture.exists(), mode != "off")
-                    self.assertEqual((root / "wire_trace.jsonl").exists(), mode != "off")
-                    if capture.exists():
-                        self.assertEqual(read_tool_capture(capture)["status"], "captured")
-                        self.assertEqual(read_tool_capture(capture)["requests"][0]["snapshot"], tool_snapshot(body))
-
     def test_capture_transport_requirements(self) -> None:
         with self.assertRaisesRegex(ValueError, "network host"):
             CodexConfig(api_base="http://example.test/v1", network="bridge")
