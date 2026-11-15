@@ -70,6 +70,23 @@ class PiTraceTests(unittest.TestCase):
         self.assertEqual(events, original)
         self.assertTrue(all(not step["assistant_content"]["reasoning_content"] for step in actf["steps"]))
 
+    def test_balanced_compaction_keeps_main_steps_for_call_based_sft(self):
+        events = sample_events()
+        events[5:5] = [
+            {"type": "event", "turn": 1, "event": {"type": "compaction_start"}},
+            {"type": "request", "turn": 1, "body": {"messages": [
+                {"role": "user", "content": "Summarize the task"}], "tools": []}},
+            native({"role": "assistant", "content": [{"type": "text", "text": "internal summary"}],
+                    "stopReason": "stop"}),
+            {"type": "event", "turn": 1, "event": {"type": "compaction_end"}},
+        ]
+        actf = pi_events_to_actf(events)
+        self.assertEqual(len(actf["steps"]), 2)
+        self.assertEqual(actf["steps"][-1]["assistant_content"]["content"], "TOKEN")
+        self.assertIn("compaction", actf["sft_unavailable_reason"])
+        with self.assertRaises(ValueError):
+            actf_to_sft(actf)
+
     def test_multiturn_identical_replies_and_unicode_framing(self):
         events = sample_events()
         request = deepcopy(events[2]); request["turn"] = 2
@@ -210,6 +227,22 @@ class PiHarnessTests(unittest.TestCase):
             self.assertEqual(result.status, "timeout")
             self.assertTrue(any(a[0] == "kill" for a in runtime.calls))
             self.assertTrue((Path(tmp)/"results/answer.txt").is_file())
+
+    def test_setup_step_timeout_is_an_error_not_a_task_timeout(self):
+        class Runtime(FakeRuntime):
+            def run(self, args, timeout=None):
+                if args[0] == "run":
+                    raise subprocess.TimeoutExpired(["docker", *args], timeout)
+                return super().run(args, timeout)
+
+        for budget, status, error in (
+            (600, "error", "Pi container startup timed out after 60s"),
+            (30, "timeout", "task exceeded 30s"),
+        ):
+            harness = PiHarness(PiConfig(api_key_env="LOCAL_TEST_KEY", wire_trace_mode="off"), 0, Runtime())
+            with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}):
+                result = harness.run(RunRequest(0, Task("test", ("one",), 0), "model", budget), Path(tmp), 1)
+            self.assertEqual((result.status, result.error), (status, error))
 
     def test_conversion_failure_keeps_raw_and_recovers_outputs(self):
         runtime = FakeRuntime()

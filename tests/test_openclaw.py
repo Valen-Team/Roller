@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -19,12 +20,55 @@ from roller.harnesses.openclaw import (
     prepare_model_config,
     validate_openclaw_thinking,
 )
-from roller.models import RunRequest, Task
+from roller.models import HarnessResult, RunRequest, Task
 from roller.tasks import load_tasks
 from roller.usage import extract_openclaw_usage
 
 
 class GatewayReadinessTests(unittest.TestCase):
+    def test_gateway_startup_timeout_is_an_error_not_a_task_timeout(self):
+        runtime = mock.Mock()
+        runtime.run.return_value = subprocess.CompletedProcess([], 1)
+        process = mock.Mock()
+        process.poll.return_value = None
+        harness = OpenClawHarness(
+            OpenClawConfig(gateway_startup_timeout=0.001), 0, runtime=runtime
+        )
+        request = RunRequest(0, Task(id="hello", prompts=("hello",), source_index=0), "model", 300)
+        session = mock.Mock()
+        session.start.side_effect = lambda: harness._wait_for_gateway("container", process)
+        session.finish.side_effect = lambda status, error: HarnessResult(
+            status=status, elapsed_seconds=1, error=error
+        )
+        with (
+            mock.patch.object(harness, "create_session", return_value=session),
+            mock.patch("roller.harnesses.openclaw.time.sleep"),
+        ):
+            result = harness.run(request, Path("sample"), 1)
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(
+            result.error,
+            "OpenClaw gateway did not listen on port 18789 within 0.001s",
+        )
+
+    def test_checked_timeout_names_the_step_without_leaking_command(self):
+        runtime = mock.Mock()
+        runtime.run.side_effect = subprocess.TimeoutExpired(
+            ["docker", "run", "-e", "API_KEY=secret"], 60
+        )
+        harness = OpenClawHarness(OpenClawConfig(), 0, runtime=runtime)
+
+        with self.assertRaisesRegex(
+            RuntimeError, "^container startup timed out after 60s$"
+        ) as raised:
+            harness._checked(
+                ["run", "-e", "API_KEY=secret"], "container startup", timeout=60
+            )
+
+        # Tracebacks logged by the collector must not print the command either.
+        self.assertTrue(raised.exception.__suppress_context__)
+
     def test_slow_probe_retries_within_startup_budget(self):
         runtime = mock.Mock()
         runtime.run.side_effect = [subprocess.TimeoutExpired("docker exec", 2), subprocess.CompletedProcess([], 0)]
@@ -42,9 +86,59 @@ class GatewayReadinessTests(unittest.TestCase):
         process.poll.return_value = None
         harness = OpenClawHarness(OpenClawConfig(gateway_startup_timeout=3), 0, runtime=runtime)
         with mock.patch("roller.harnesses.openclaw.time.monotonic", side_effect=[0, 0, 2, 4]):
-            with self.assertRaisesRegex(TimeoutError, "gateway did not listen.*3s"):
+            with self.assertRaisesRegex(RuntimeError, "gateway did not listen.*3s"):
                 harness._wait_for_gateway("container", process)
         self.assertEqual(runtime.run.call_count, 2)
+
+
+class StartupBudgetTests(unittest.TestCase):
+    def test_startup_commands_are_clipped_to_the_task_budget(self):
+        calls = []
+
+        class Runtime(FakeDockerRuntime):
+            def run(self, args, timeout=None):
+                calls.append((args[0], timeout))
+                return super().run(args, timeout)
+
+        harness = OpenClawHarness(
+            OpenClawConfig(docker_image="test-image", set_image_model=False), 0, runtime=Runtime(),
+        )
+        task = Task("task", ("hi",), 0, setup_commands=("sleep 3",))
+        with tempfile.TemporaryDirectory() as tmp:
+            result = harness.run(RunRequest(0, task, "provider/model", 5), Path(tmp), attempt=1)
+
+        self.assertEqual(result.status, "ok")
+        # From ``docker run`` through setup/configuration to the first gateway probe.
+        start = calls.index(next(call for call in calls if call[0] == "run"))
+        startup = [timeout for _, timeout in calls[start:calls.index(("exec", 2))]]
+        self.assertGreater(len(startup), 5)
+        self.assertTrue(all(timeout is not None and timeout <= 5 for timeout in startup))
+
+    def test_step_cut_short_by_the_budget_is_a_task_timeout(self):
+        def expire(args, timeout=None):
+            time.sleep(timeout)
+            raise subprocess.TimeoutExpired(args, timeout)
+
+        runtime = mock.Mock()
+        runtime.run.side_effect = expire
+        harness = OpenClawHarness(OpenClawConfig(), 0, runtime=runtime)
+        harness.deadline = time.monotonic() + 0.05
+        with self.assertRaisesRegex(TimeoutError, "^task setup command: task time budget exhausted$"):
+            harness._checked(["exec", "c", "sleep", "3"], "task setup command", timeout=60)
+        # Once the budget is spent, no further command starts.
+        with self.assertRaisesRegex(TimeoutError, "task time budget exhausted"):
+            harness._checked(["exec", "c", "true"], "task setup command")
+        self.assertEqual(runtime.run.call_count, 1)
+
+    def test_gateway_wait_cut_short_by_the_budget_is_a_task_timeout(self):
+        runtime = mock.Mock()
+        runtime.run.return_value = subprocess.CompletedProcess([], 1)
+        process = mock.Mock()
+        process.poll.return_value = None
+        harness = OpenClawHarness(OpenClawConfig(gateway_startup_timeout=240), 0, runtime=runtime)
+        harness.deadline = time.monotonic() + 0.3
+        with self.assertRaisesRegex(TimeoutError, "gateway startup: task time budget exhausted"):
+            harness._wait_for_gateway("container", process)
 
 
 class FakeProcess:
@@ -77,10 +171,16 @@ class FakeDockerRuntime:
         self.commands: list[list[str]] = []
         self.agent_messages: list[str] = []
         self.assistant_extractions = 0
+        self.gateway_started = False
 
     def run(self, args, timeout=None):
         args = list(args)
         self.commands.append(args)
+        if args and args[0] in ("rm", "stop"):
+            self.gateway_started = False  # the gateway went with its container
+        if args and "connect_ex" in args[-1]:
+            # Nothing listens on the gateway port until the gateway starts.
+            return subprocess.CompletedProcess(args, 0 if self.gateway_started else 111)
         stdout = f"{self.version}\n" if args[-2:] == ["openclaw", "--version"] else ""
         if args and "ROLLER_SDK_LAST_ASSISTANT" in args[-1]:
             self.assistant_extractions += 1
@@ -118,6 +218,8 @@ class FakeDockerRuntime:
         self.commands.append(args)
         if "agent" in args:
             self.agent_messages.append(args[args.index("--message") + 1])
+        if any("exec openclaw gateway" in argument for argument in args):
+            self.gateway_started = True
         return FakeProcess(gateway="gateway" in args)
 
     @staticmethod
@@ -211,6 +313,7 @@ class OpenClawHelpersTests(unittest.TestCase):
 
     def test_defaults_to_stable_official_openclaw_image(self) -> None:
         self.assertEqual(OpenClawConfig().docker_image, DEFAULT_OPENCLAW_IMAGE)
+        self.assertEqual(OpenClawConfig().gateway_startup_timeout, 240.0)
 
     def test_session_scope_matches_explicit_session_id_key(self) -> None:
         harness = OpenClawHarness(OpenClawConfig(session_id="roller"), worker_slot=0)
@@ -497,6 +600,39 @@ class OpenClawHelpersTests(unittest.TestCase):
         self.assertEqual(usage["cache_read_tokens"], 3)
         self.assertEqual(usage["cache_write_tokens"], 1)
 
+    def _run_with_redaction_setting(self, returncode: int):
+        setting = ["openclaw", "config", "set", "logging.redactSensitive", "off"]
+
+        class Runtime(FakeDockerRuntime):
+            def run(self, args, timeout=None):
+                result = super().run(args, timeout)
+                if list(args)[-5:] == setting:
+                    return subprocess.CompletedProcess(args, returncode, "", "Unrecognized key")
+                return result
+
+        runtime = Runtime()
+        harness = OpenClawHarness(
+            OpenClawConfig(docker_image="test-image", set_image_model=False), 0, runtime=runtime,
+        )
+        request = RunRequest(0, Task("task", ("hi",), 0), "provider/model", 30)
+        with tempfile.TemporaryDirectory() as temporary:
+            result = harness.run(request, Path(temporary), attempt=1)
+        tails = [command[-5:] for command in runtime.commands]
+        gateway = next(i for i, c in enumerate(runtime.commands) if "openclaw gateway" in c[-1])
+        return result, tails.index(setting), gateway
+
+    def test_session_transcript_redaction_is_disabled_before_the_gateway_starts(self) -> None:
+        result, setting, gateway = self._run_with_redaction_setting(0)
+        self.assertEqual(result.status, "ok")
+        self.assertLess(setting, gateway)
+
+    def test_openclaw_without_the_redaction_setting_still_runs(self) -> None:
+        # Releases that retired logging.redactSensitive reject it.
+        with self.assertLogs("roller.harnesses.openclaw", "WARNING") as logs:
+            result, _, _ = self._run_with_redaction_setting(1)
+        self.assertEqual(result.status, "ok")
+        self.assertIn("logging.redactSensitive", logs.output[0])
+
     def test_harness_collects_raw_trace_and_sends_messages_without_shell_quoting(self) -> None:
         task = Task(
             id="task",
@@ -684,6 +820,145 @@ class OpenClawHelpersTests(unittest.TestCase):
             self.assertEqual(command[command.index("--thinking") + 1], "high")
             self.assertIn(gateway_token, command)
 
+    def test_config_set_runs_after_roller_settings_and_before_gateway(self) -> None:
+        runtime = FakeDockerRuntime()
+        harness = OpenClawHarness(
+            OpenClawConfig(
+                docker_image="test-image",
+                wire_trace_mode="off",
+                config_set=(
+                    ("diagnostics.stuckSessionAbortMs", "2700000"),
+                    ("agents.defaults.timeoutSeconds", "-1"),
+                ),
+            ),
+            worker_slot=0,
+            runtime=runtime,
+        )
+        request = RunRequest(0, Task("task", ("solve",), 0), "provider/model", 30)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            result = harness.run(request, Path(temporary), attempt=1)
+
+        self.assertEqual(result.status, "ok", result.error)
+        commands = runtime.commands
+        overrides = [
+            index
+            for index, command in enumerate(commands)
+            if command[2:6] == ["openclaw", "config", "set", "--"]
+        ]
+        self.assertEqual(
+            [commands[index][6:] for index in overrides],
+            [
+                ["diagnostics.stuckSessionAbortMs", "2700000"],
+                ["agents.defaults.timeoutSeconds", "-1"],
+            ],
+        )
+        image_model = next(
+            index
+            for index, command in enumerate(commands)
+            if "agents.defaults.imageModel.primary" in command
+        )
+        gateway = next(
+            index
+            for index, command in enumerate(commands)
+            if any("exec openclaw gateway" in argument for argument in command)
+        )
+        self.assertLess(image_model, overrides[0])
+        self.assertLess(overrides[-1], gateway)
+
+    def test_config_set_rejects_paths_roller_manages(self) -> None:
+        for key, hint in (
+            ("gateway.port", "--gateway-port"),
+            ("gateway", "--gateway-port"),
+            ("gateway.auth.mode", "token per rollout"),
+            ("models.providers.local.baseUrl", "--model-config"),
+            ("agents.defaults", "--model"),
+            ("agents.defaults.thinkingDefault", "--thinking"),
+            ('diagnostics["cacheTrace"].enabled', "--cache-trace"),
+        ):
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, hint):
+                    OpenClawConfig(config_set=((key, "1"),))
+        # Siblings of managed paths stay open.
+        config = OpenClawConfig(
+            config_set=(
+                ("diagnostics.stuckSessionAbortMs", "2700000"),
+                ("agents.defaults.timeoutSeconds", "900"),
+            )
+        )
+        self.assertEqual(len(config.config_set), 2)
+
+    def test_every_path_roller_sets_is_managed(self) -> None:
+        runtime = FakeDockerRuntime()
+        harness = OpenClawHarness(
+            OpenClawConfig(
+                docker_image="test-image",
+                wire_trace_mode="off",
+                thinking="high",
+                search_provider="brave",
+                capture_cache_trace=True,
+                set_image_model=True,
+            ),
+            worker_slot=0,
+            runtime=runtime,
+        )
+        request = RunRequest(0, Task("task", ("solve",), 0), "provider/model", 30)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            result = harness.run(request, Path(temporary), attempt=1)
+
+        self.assertEqual(result.status, "ok", result.error)
+        keys = [
+            command[5]
+            for command in runtime.commands
+            if command[2:5] == ["openclaw", "config", "set"]
+        ]
+        self.assertLessEqual(
+            {"gateway.auth.token", "tools.web.search.provider"}, set(keys)
+        )
+        for key in keys:
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, "Roller sets itself"):
+                    OpenClawConfig(config_set=((key, "1"),))
+
+    def test_occupied_gateway_port_fails_before_the_gateway_starts(self) -> None:
+        class OccupiedPortRuntime(FakeDockerRuntime):
+            def run(self, args, timeout=None):
+                if args and "connect_ex" in args[-1]:
+                    self.commands.append(list(args))
+                    return subprocess.CompletedProcess(args, 0)  # someone listens
+                return super().run(args, timeout)
+
+        runtime = OccupiedPortRuntime()
+        harness = OpenClawHarness(
+            OpenClawConfig(docker_image="test-image", wire_trace_mode="off"),
+            worker_slot=2,
+            runtime=runtime,
+        )
+        request = RunRequest(0, Task("task", ("solve",), 0), "provider/model", 30)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            result = harness.run(request, Path(temporary), attempt=1)
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("gateway port 18809 is already in use", result.error)
+        self.assertFalse(
+            any(
+                any("exec openclaw gateway" in argument for argument in command)
+                for command in runtime.commands
+            )
+        )
+
+    def test_gateway_port_is_checked_only_on_the_host_network(self) -> None:
+        runtime = FakeDockerRuntime()
+        harness = OpenClawHarness(
+            OpenClawConfig(docker_image="test-image", network="bridge"),
+            worker_slot=0,
+            runtime=runtime,
+        )
+        harness._ensure_gateway_port_free("container")
+        self.assertEqual(runtime.commands, [])
+
     def test_harness_passes_task_max_override_without_downgrading(self) -> None:
         task = Task(
             id="task",
@@ -798,6 +1073,22 @@ class OpenClawHelpersTests(unittest.TestCase):
         )
         starts = [command for command in runtime.commands if command[:2] == ["run", "-d"]]
         self.assertEqual(len(starts), 1)
+
+    def test_subagent_drain_failure_preserves_successful_root_turn(self) -> None:
+        runtime = FakeDockerRuntime()
+        request = RunRequest(0, Task("task", ("first",), 0), "provider/model", 30)
+        harness = OpenClawHarness(OpenClawConfig(docker_image="test-image", set_image_model=False, capture_calls=True, model_config={}), 0, runtime=runtime)
+        with tempfile.TemporaryDirectory() as tmp:
+            session = harness.create_session(request, Path(tmp), attempt=1)
+            session.container_started = True
+            session.gateway_process = FakeProcess(gateway=True)
+            harness.capture = mock.Mock(errors=[])
+            with mock.patch.object(harness, "_checked", side_effect=TimeoutError("pending announcement")):
+                turn = session.send("first", 30)
+            self.assertEqual(turn.content, "done")
+            self.assertEqual(turn.return_code, 0)
+            self.assertEqual(session.messages, ["first"])
+            self.assertIn("pending announcement", harness.capture.errors[0])
 
     def test_retained_error_container_is_stopped_to_release_gateway_port(self) -> None:
         runtime = FakeDockerRuntime()

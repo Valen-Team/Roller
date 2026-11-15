@@ -19,6 +19,8 @@ from roller.models import HarnessResult, RunRequest, Task
 from roller.sft import actf_to_sft
 from roller.trajectory_audit import sft_exclusion_reason
 
+from test_gateway_ports import isolate_gateway_ports
+
 
 TOOL = {"type": "function", "function": {"name": "terminal", "description": "Run a command", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}}
 
@@ -71,8 +73,13 @@ class HermesTraceTests(unittest.TestCase):
         calls = events[2]["message"]["tool_calls"]
         calls.append({**deepcopy(calls[0]), "id": "call-2"})
         events.insert(3, event("tool", "SECOND", tool_call_id="call-2"))
-        sft = actf_to_sft(hermes_events_to_actf(events))
-        self.assertEqual([m["tool_call_id"] for m in sft["messages"] if m["role"] == "tool"], ["call-2", "call-1"])
+        trajectory = hermes_events_to_actf(events)
+        original = deepcopy(trajectory)
+        sft = actf_to_sft(trajectory)
+        results = [m for m in sft["messages"] if m["role"] == "tool"]
+        self.assertEqual([m["tool_call_id"] for m in results], ["call-1", "call-2"])
+        self.assertEqual([m["content"] for m in results], ["TOKEN", "SECOND"])
+        self.assertEqual(trajectory, original)
 
     def test_invalid_native_tools_are_rejected(self):
         for mutation in ("missing_schema", "bad_json", "nonobject", "duplicate_call", "orphan_result"):
@@ -323,6 +330,43 @@ class HermesSessionTests(unittest.TestCase):
         self.assertEqual(len([c for c in self.runtime.calls if c[:2] == ["rm", "-f"]]), 1)
         self.assertNotIn("test-private-key", json.dumps(result.metadata))
 
+    def test_finish_sums_child_usage_before_capture_cleanup(self):
+        session = self.session(capture_calls=True, api_base="http://localhost:1234/v1")
+        session.container_started = True
+
+        def copy_children(*args):
+            children = session.capture.recorder.directory / "native" / "children"
+            children.mkdir(parents=True)
+            for name, tokens in (("a", 11), ("b", 17)):
+                rows = [event("assistant", "child only")]
+                rows[0]["usage"] = {"prompt_tokens": tokens, "completion_tokens": 2,
+                                    "prompt_tokens_details": {"cached_tokens": 3}}
+                # The same provider response is also retained as evidence;
+                # it must not count as a second call.
+                rows.append({"type": "response", "response": {"usage": rows[0]["usage"]}})
+                (children / (name + ".jsonl")).write_text(
+                    "".join(json.dumps(row) + "\n" for row in rows))
+
+        import shutil
+        def finish_capture(status):
+            shutil.rmtree(session.capture.recorder.directory / "native")
+            return {}
+
+        with patch.object(session.capture, "copy_native", side_effect=copy_children), \
+             patch.object(session.capture, "finish", side_effect=finish_capture):
+            result = session.finish("ok")
+        self.assertEqual(result.status, "ok", result.error)
+        # Root: 2 calls, 10 input / 3 output / 4 cached. Children: 2 calls.
+        self.assertEqual(result.usage["request_count"], 4)
+        self.assertEqual(result.usage["input_tokens"], 38)
+        self.assertEqual(result.usage["output_tokens"], 7)
+        self.assertEqual(result.usage["total_tokens"], 45)
+        self.assertEqual(result.usage["cache_read_tokens"], 10)
+        sft = actf_to_sft(json.loads((self.root / "rollout/trace_ACTF.json").read_text()))
+        self.assertNotIn("child only", json.dumps(sft))
+        self.assertIs(session.finish("ok"), result)
+        self.assertEqual(result.usage["request_count"], 4)
+
     def test_native_failure_is_error_and_key_is_redacted(self):
         self.runtime.turn_result = {"ok": False, "error": "rejected test-private-key"}
         harness = HermesHarness(HermesConfig(api_key_env="ROLLER_TEST_KEY"), 0, self.runtime)
@@ -383,6 +427,9 @@ class HermesSessionTests(unittest.TestCase):
 
 
 class HermesCliTests(unittest.TestCase):
+    def setUp(self):
+        isolate_gateway_ports(self)
+
     def test_openclaw_simulator_model_config_changes_invalidate_hermes_run_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

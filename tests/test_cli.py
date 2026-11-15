@@ -7,15 +7,37 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from roller.cli import _build_parser, _collect, _docker_preflight, _jsonl_equivalent, _validate_thinking_requests
+from roller.cli import _build_parser, _collect, _docker_preflight, _init, _jsonl_equivalent, _validate_thinking_requests
+from roller.tasks import load_tasks
 from roller.models import RunRequest, Task, UserSimulatorSpec
 from roller.thinking_capabilities import ThinkingCapabilities, ThinkingCapability
 from roller.harnesses.codex import codex_effort
 
+from test_gateway_ports import isolate_gateway_ports
+
 
 class CliTests(unittest.TestCase):
+    def test_init_writes_examples_and_keeps_existing_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            models = root / "examples" / "config" / "openclaw" / "models.json"
+            models.parent.mkdir(parents=True)
+            models.write_text("edited")
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(_init(_build_parser().parse_args(["init", str(root)])), 0)
+            self.assertEqual(models.read_text(), "edited")
+            self.assertTrue((root / "examples" / "tasks" / "tasks.jsonl").is_file())
+            self.assertTrue((root / "examples" / "env" / "api.env.example").is_file())
+            self.assertEqual(list((root / "examples").rglob("*.env")), [])
+            self.assertIn("1 existing files kept", output.getvalue())
+            args = _build_parser().parse_args([
+                "collect", "--tasks", str(root / "examples" / "tasks" / "tasks.jsonl"),
+                "--model", "provider/model", "--dry-run",
+            ])
+            self.assertEqual(len(load_tasks(Path(args.tasks))), 4)
+
     def test_review_preflight_matrix_uses_runtime_endpoint_and_codex_rules(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -119,6 +141,7 @@ class CliTests(unittest.TestCase):
             ]
         )
         self.assertEqual((collect.samples, collect.grader_parallel), (3, 2))
+        self.assertEqual(collect.gateway_startup_timeout, 240.0)
         self.assertEqual(export.timeout_multiplier, 2.5)
 
     def test_contextual_skillsbench_defaults_are_applied(self) -> None:
@@ -498,6 +521,64 @@ def grade(transcript, workspace_path):
 
         with self.assertRaisesRegex(RuntimeError, "pull or load it first"):
             _docker_preflight("docker", "missing:test")
+
+
+class LaunchIntervalCliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        isolate_gateway_ports(self)
+        self.tasks = self.root / "tasks.jsonl"
+        self.tasks.write_text(json.dumps({"id": "task", "prompt": "hi"}) + "\n")
+        self.intervals = []
+        patches = contextlib.ExitStack()
+        self.addCleanup(patches.close)
+        patches.enter_context(patch("roller.cli._docker_preflight", return_value="image-id"))
+        patches.enter_context(patch("roller.cli.Collector", side_effect=self._collector))
+
+    def _collector(self, config, harness_factory):
+        self.intervals.append(config.launch_interval)
+        collector = MagicMock()
+        collector.collect.return_value = []
+        return collector
+
+    def invoke(self, *extra: str) -> int:
+        args = [
+            "collect", "--tasks", str(self.tasks), "--model", "provider/model",
+            "--output", str(self.root / "runs"), "--run-name", "run", *extra,
+        ]
+        with contextlib.redirect_stdout(io.StringIO()):
+            return _collect(_build_parser().parse_args(args))
+
+    def test_defaults_to_no_spacing(self) -> None:
+        args = _build_parser().parse_args(["collect", "--tasks", "t.jsonl"])
+        self.assertEqual(args.launch_interval, 0.0)
+
+    def test_rejects_negative_or_non_finite_values(self) -> None:
+        for value in ("-1", "inf", "nan"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "--launch-interval"):
+                    self.invoke("--launch-interval", value)
+
+    def test_dry_run_reports_the_interval(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            _collect(_build_parser().parse_args(
+                ["collect", "--tasks", str(self.tasks), "--model", "provider/model",
+                 "--dry-run", "--launch-interval", "5"]
+            ))
+        self.assertEqual(json.loads(output.getvalue())["launch_interval"], 5.0)
+
+    def test_recorded_in_info_but_not_locked_so_resume_may_change_it(self) -> None:
+        self.invoke("--launch-interval", "5")
+        run = self.root / "runs" / "run"
+        info = json.loads((run / "info.json").read_text())
+        self.assertEqual(info["configuration"]["launch_interval"], 5.0)
+        self.assertNotIn("launch_interval", (run / "lock.json").read_text())
+
+        self.invoke("--launch-interval", "12", "--resume")
+        self.assertEqual(self.intervals, [5.0, 12.0])
 
 
 if __name__ == "__main__":
