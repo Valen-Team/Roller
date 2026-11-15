@@ -112,6 +112,7 @@ These flags control the result directory and whether Roller validates, starts, o
 | `--run-name NAME` | UTC timestamp | Sets the directory name for this run |
 | `--dry-run` | Off | Checks tasks, files, and the run plan without starting Docker or writing files. Each planned rollout lists the bundle digests a real run would record |
 | `--resume` | Off | Continues the same run and skips complete successful samples, see section 6 |
+| `--resume-verify-outputs` | Off | With `--resume`, rereads every recorded output file and reruns a sample whose content no longer matches its SHA-256. Without it Resume compares path and size only |
 
 ### 3.4 Compatibility and debugging
 

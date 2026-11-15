@@ -263,6 +263,7 @@ _EXECUTION_VALUES = {
 _EXECUTION_BOOLS = {"keep_thinking": "--keep-thinking"}
 _EXECUTION_SWITCHES = {
     "resume": "--resume",
+    "resume_verify_outputs": "--resume-verify-outputs",
     "capture_calls": "--capture-calls",
     "keep_container_on_error": "--keep-container-on-error",
     "rebuild_task_images": "--rebuild-task-images",

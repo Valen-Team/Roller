@@ -14,6 +14,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 - `--retry-backoff`, `--claude-unique-tool-ids` and `--codex-image-detail` (#76).
 - `capture=full` Context is kept in the run directory under `context/`, addressed by content and readable by the owner only (#73).
 - A dry run lists `task_bundle_digest`, `input_tree_digest` and `context_manifest_digest` for every planned rollout (#106).
+- `--resume-verify-outputs` rereads recorded output files on Resume and reruns a sample whose content no longer matches its SHA-256.
 - Python 3.13 is tested and declared, and the package ships a `py.typed` marker.
 - `scripts/test_multimodal_e2e.py` checks image inputs against a real Harness and model.
 

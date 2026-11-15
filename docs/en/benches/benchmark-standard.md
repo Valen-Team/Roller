@@ -140,7 +140,7 @@ multiplies the number of trajectories.
 | `output`, `run_name` | `--output`, `--run-name` |
 | `parallel`, `launch_interval`, `grader_parallel` | `--parallel`, `--launch-interval`, `--grader-parallel` |
 | `samples`, `retries`, `retry_backoff`, `timeout` | `--samples`, `--retries`, `--retry-backoff`, `--timeout` |
-| `start_index`, `limit`, `resume` | `--start-index`, `--limit`, `--resume` |
+| `start_index`, `limit`, `resume`, `resume_verify_outputs` | `--start-index`, `--limit`, `--resume`, `--resume-verify-outputs` |
 | `wire_trace`, `keep_thinking` | `--wire-trace`, `--keep-thinking` / `--no-keep-thinking` |
 | `capture_calls`, `capture_debug` | `--capture-calls`, `--capture-debug` |
 | `thinking_capabilities` | `--thinking-capabilities` |

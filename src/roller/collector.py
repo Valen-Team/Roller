@@ -156,6 +156,8 @@ class CollectionConfig:
     launch_interval: float = 0.0
     # Seconds to wait before the first retry of a sample; doubles per retry.
     retry_backoff: float = 0.0
+    # On Resume, reread recorded output files and compare their SHA-256.
+    verify_outputs: bool = False
 
     def __post_init__(self) -> None:
         if self.parallel < 1:
@@ -284,6 +286,7 @@ class Collector:
                 require_cache_trace=(
                     self.config.keep_aux_traces and self.config.capture_cache_trace
                 ),
+                verify_output_sha256=self.config.verify_outputs,
             )
         except ValueError as exc:
             logger.info(

@@ -311,7 +311,7 @@ After the run lock matches, only samples that meet all of the following conditio
 4. Normally, `trace_SFT.json` matches the current ACTF's canonical SFT projection exactly. A structured `trajectory_conversion` downgrade may instead omit ACTF/SFT or only SFT; Resume validates every retained layer and the explicit marker.
 5. The current Task Bundle digest matches the old sample, and Context did not use `capture=none`.
 6. Recorded output files are still under `results/`, exist, and have the same size. The stored SHA-256 is computed while
-   the bytes are copied into `results/` and can be used for deep audit; Resume checks only path, existence, and size so that large files are not reread.
+   the bytes are copied into `results/` and can be used for deep audit; Resume checks only path, existence, and size so that large files are not reread; `--resume-verify-outputs` rereads them and compares the digest as well.
 7. A User Simulator task must also have a valid `conversation.json`, participant info, and Simulator
    raw/ACTF/SFT.
 8. `--wire-trace full` also requires the `wire_trace.jsonl` of both participants to exist. When cache trace is enabled,

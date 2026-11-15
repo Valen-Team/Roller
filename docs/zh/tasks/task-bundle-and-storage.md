@@ -312,7 +312,7 @@ credential 与 pass-through environment 的值不会保存到锁，也不会触�
 4. 通常 `trace_SFT.json` 与当前 ACTF 的 canonical SFT 投影完全一致。存在结构化 `trajectory_conversion` 降级时可以缺少 ACTF/SFT 或仅缺少 SFT；Resume 会校验所有已保留层以及该显式标记。
 5. 当前 Task Bundle digest 与旧 sample 一致，且 Context 没有使用 `capture=none`。
 6. 已记录的输出文件仍位于 `results/` 内，文件存在且大小一致。保存的 SHA-256 在文件复制到
-   `results/` 的同时计算，可用于深度审计；Resume 为避免重新读取大文件，只做路径、存在性和大小检查。
+   `results/` 的同时计算，可用于深度审计；Resume 为避免重新读取大文件，只做路径、存在性和大小检查；加上 `--resume-verify-outputs` 会重新读取文件并比对摘要。
 7. User Simulator task 还必须有有效的 `conversation.json`、participant info 和 Simulator
    raw/ACTF/SFT。
 8. `--wire-trace full` 还要求双方的 `wire_trace.jsonl` 存在；同时启用 cache trace 时，

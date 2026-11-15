@@ -351,6 +351,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--resume", action="store_true", help="skip completed task/model pairs"
     )
     collect.add_argument(
+        "--resume-verify-outputs",
+        action="store_true",
+        help="with --resume, reread recorded output files and rerun a sample whose "
+        "content no longer matches its SHA-256 (default: check path and size only)",
+    )
+    collect.add_argument(
         "--dry-run", action="store_true", help="validate and print the execution plan"
     )
     collect.add_argument(
@@ -1089,6 +1095,8 @@ def _collect(args: argparse.Namespace) -> int:
         raise ValueError("--samples must be at least 1")
     if args.retries < 0:
         raise ValueError("--retries cannot be negative")
+    if args.resume_verify_outputs and not args.resume:
+        raise ValueError("--resume-verify-outputs requires --resume")
     if not math.isfinite(args.retry_backoff) or args.retry_backoff < 0:
         raise ValueError("--retry-backoff must be a finite number of seconds >= 0")
     if args.timeout <= 0:
@@ -2135,6 +2143,7 @@ def _collect(args: argparse.Namespace) -> int:
                     retries=args.retries,
                     retry_backoff=args.retry_backoff,
                     resume=lock_decision.reuse_existing_samples,
+                    verify_outputs=args.resume_verify_outputs,
                     keep_aux_traces=keep_aux_traces,
                     capture_cache_trace=(
                         args.cache_trace if "openclaw" in selected_harnesses else False
