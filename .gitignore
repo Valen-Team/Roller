@@ -8,6 +8,5 @@ build/
 runs/
 .env
 examples/env/*.env
-docs/_build/
 .benchmarks/
 .codebuddy/

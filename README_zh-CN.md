@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="README.md">English</a> · <strong>简体中文</strong><br>
-  <a href="docs/zh/index.md">文档</a> · <a href="docs/zh/start/getting-started.md">快速上手</a> · <a href="docs/zh/start/cli-reference.md">CLI 参数</a> · <a href="examples/README.md">示例</a>
+  <a href="https://valen-team.github.io/zh-Hans/roller/">文档</a> · <a href="https://valen-team.github.io/zh-Hans/roller/start/getting-started/">快速上手</a> · <a href="https://valen-team.github.io/zh-Hans/roller/start/cli-reference/">CLI 参数</a> · <a href="examples/README.md">示例</a>
 </p>
 
 <p align="center">
@@ -180,7 +180,7 @@ roller view runs/quickstart
 
 打开终端输出的地址（默认 `http://127.0.0.1:17865`）。Viewer 展示每个 task 的消息、reasoning、工具调用、工具结果和最终回复。
 
-[快速上手指南 →](docs/zh/start/getting-started.md)
+[快速上手指南 →](https://valen-team.github.io/zh-Hans/roller/start/getting-started/)
 
 <a id="harnesses"></a>
 
@@ -200,7 +200,7 @@ Harness 是容器内的 Agent 运行时，负责启动 Agent、提供工具并�
 
 OpenClaw 通过 `--model-config` 读取模型定义，其余六种 Harness 使用 `--api-base` 与 `--api-key-env`。同一次运行组合多种 Harness 时，各 Harness 使用带前缀的参数，例如 `--hermes-api-base` 与 `--hermes-api-key-env`。
 
-所有 Harness 均可作为 Task Agent 或 User Simulator。各 Harness 的 Docker 镜像、API 配置和 reasoning 参数不同，详见对应指南：[OpenClaw](docs/zh/harnesses/openclaw-configuration.md) · [Codex](docs/zh/harnesses/codex-configuration.md) · [Claude Code](docs/zh/harnesses/claude-code-configuration.md) · [Hermes](docs/zh/harnesses/hermes-configuration.md) · [OpenCode](docs/zh/harnesses/opencode-configuration.md) · [DeepSeek](docs/zh/harnesses/deepseek-configuration.md) · [Pi Agent](docs/zh/harnesses/pi-configuration.md)。
+所有 Harness 均可作为 Task Agent 或 User Simulator。各 Harness 的 Docker 镜像、API 配置和 reasoning 参数不同，详见对应指南：[OpenClaw](https://valen-team.github.io/zh-Hans/roller/harnesses/openclaw-configuration/) · [Codex](https://valen-team.github.io/zh-Hans/roller/harnesses/codex-configuration/) · [Claude Code](https://valen-team.github.io/zh-Hans/roller/harnesses/claude-code-configuration/) · [Hermes](https://valen-team.github.io/zh-Hans/roller/harnesses/hermes-configuration/) · [OpenCode](https://valen-team.github.io/zh-Hans/roller/harnesses/opencode-configuration/) · [DeepSeek](https://valen-team.github.io/zh-Hans/roller/harnesses/deepseek-configuration/) · [Pi Agent](https://valen-team.github.io/zh-Hans/roller/harnesses/pi-configuration/)。
 
 <a id="outputs"></a>
 
@@ -238,7 +238,7 @@ runs/quickstart/
 - `wire_trace.jsonl`：启用 `--wire-trace full` 时生成，包含 Roller 代理转发给模型 API 的全部请求体。Harness 压缩、截断或改写上下文时，其内容可能与原生 session 不一致。
 - `conversation.json`：User Simulator task 生成，包含双方可见的对话内容。
 
-各文件的生成与缺省规则见[轨迹产出文件指南](docs/zh/traces/trajectory-outputs.md)。
+各文件的生成与缺省规则见[轨迹产出文件指南](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/)。
 
 ### Reasoning
 
@@ -250,7 +250,7 @@ runs/quickstart/
 | Claude 系列 | 服务返回的可见 thinking 或 summary |
 | Qwen、GLM 等开源模型 | 服务返回的明文 reasoning |
 
-服务仅返回 reasoning token 数或加密状态时，`reasoning_content` 为空。`reasoning_content` 仅包含服务返回的 reasoning 文本，工具参数保留在 `tool_calls` 中。OpenClaw 各模型支持的档位见 [Thinking 配置](docs/zh/harnesses/openclaw-configuration.md#6-thinking-配置)。
+服务仅返回 reasoning token 数或加密状态时，`reasoning_content` 为空。`reasoning_content` 仅包含服务返回的 reasoning 文本，工具参数保留在 `tool_calls` 中。OpenClaw 各模型支持的档位见 [Thinking 配置](https://valen-team.github.io/zh-Hans/roller/harnesses/openclaw-configuration/#6-thinking-配置)。
 
 <a id="tasks"></a>
 
@@ -274,7 +274,7 @@ task 列表可以是 `.jsonl` 文件、JSON 数组或 `{"tasks": [...]}` 形式�
 | `harness` | 该 task 使用的 Harness（也可使用 `agent_harness` 或 `task_agent.harness`），可被 `--harness` 覆盖 |
 | `user_simulator` | 扮演用户并生成用户消息的 Harness 与模型 |
 
-`messages` 与 `user_simulator` 不可同时使用。字段定义见 [Task 格式参考](docs/zh/tasks/task-format.md)，动态对话见 [User Simulator 指南](docs/zh/tasks/user-simulator.md)。
+`messages` 与 `user_simulator` 不可同时使用。字段定义见 [Task 格式参考](https://valen-team.github.io/zh-Hans/roller/tasks/task-format/)，动态对话见 [User Simulator 指南](https://valen-team.github.io/zh-Hans/roller/tasks/user-simulator/)。
 
 <a id="benchmarks"></a>
 
@@ -284,11 +284,11 @@ Bench 适配器将 Benchmark 任务转换为 Roller task，并在各 sample 的�
 
 | Bench | 默认 Harness | 范围 |
 | --- | --- | --- |
-| [WildClawBench](docs/zh/benches/wildclawbench.md) | `openclaw` | 6 个类别的 60 个真实场景任务 |
-| [SkillsBench](docs/zh/benches/skillsbench.md) | `opencode` | 每个任务构建独立环境；分 with-skill 与 no-skill 两组运行，由官方 verifier 评分 |
-| [PinchBench](docs/zh/benches/pinchbench.md) | `openclaw` | 自动评分、LLM judge、混合评分与多 session 任务 |
-| [QwenClawBench](docs/zh/benches/qwenclawbench.md) | `openclaw` | 8 个领域的 100 个任务，支持单题多次运行 |
-| [SWE-Bench Pro](docs/zh/benches/swebench-pro.md) | `openclaw` | 11 个仓库的 731 个软件工程任务，在官方实例镜像中用隐藏测试评分 |
+| [WildClawBench](https://valen-team.github.io/zh-Hans/roller/benches/wildclawbench/) | `openclaw` | 6 个类别的 60 个真实场景任务 |
+| [SkillsBench](https://valen-team.github.io/zh-Hans/roller/benches/skillsbench/) | `opencode` | 每个任务构建独立环境；分 with-skill 与 no-skill 两组运行，由官方 verifier 评分 |
+| [PinchBench](https://valen-team.github.io/zh-Hans/roller/benches/pinchbench/) | `openclaw` | 自动评分、LLM judge、混合评分与多 session 任务 |
+| [QwenClawBench](https://valen-team.github.io/zh-Hans/roller/benches/qwenclawbench/) | `openclaw` | 8 个领域的 100 个任务，支持单题多次运行 |
+| [SWE-Bench Pro](https://valen-team.github.io/zh-Hans/roller/benches/swebench-pro/) | `openclaw` | 11 个仓库的 731 个软件工程任务，在官方实例镜像中用隐藏测试评分 |
 
 以下以 WildClawBench 为例。检出上游仓库并加载其 `.env` 后，执行以下命令即可完成任务转换、轨迹采集和逐个评分，并将 `tasks.jsonl` 与 `bench-report.json` 写入运行目录：
 
@@ -299,29 +299,29 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
   --parallel 4 --output runs --run-name wildclaw
 ```
 
-同一次运行也可以写成 YAML 文件，并通过 `roller bench run --config ...` 启动，见 [Benchmark 运行配置](docs/zh/benches/benchmark-standard.md)。
+同一次运行也可以写成 YAML 文件，并通过 `roller bench run --config ...` 启动，见 [Benchmark 运行配置](https://valen-team.github.io/zh-Hans/roller/benches/benchmark-standard/)。
 
-各 bench 指南列出了须与上游保持一致的配置，以及评分程序所需的环境变量。仅当这些配置与上游一致时，分数才具有直接可比性。接入新的 bench 见 [Bench 接入与评分](docs/zh/benches/bench-format.md#6-加一个新-bench)。
+各 bench 指南列出了须与上游保持一致的配置，以及评分程序所需的环境变量。仅当这些配置与上游一致时，分数才具有直接可比性。接入新的 bench 见 [Bench 接入与评分](https://valen-team.github.io/zh-Hans/roller/benches/bench-format/#6-加一个新-bench)。
 
 <a id="documentation"></a>
 
 ## 文档
 
-建议首先阅读[快速上手](docs/zh/start/getting-started.md)，编写 task 时参考 [Task 格式参考](docs/zh/tasks/task-format.md)。完整手册位于 [`docs/zh`](docs/zh/index.md)。如需构建文档站，请执行 `python -m pip install -r docs/requirements-docs.txt`，然后执行 `cd docs && make html`。
+建议首先阅读[快速上手](https://valen-team.github.io/zh-Hans/roller/start/getting-started/)，编写 task 时参考 [Task 格式参考](https://valen-team.github.io/zh-Hans/roller/tasks/task-format/)。完整手册见 [valen-team.github.io/zh-Hans/roller](https://valen-team.github.io/zh-Hans/roller/)。
 
 | 指南 | 内容 |
 | --- | --- |
-| [Roller 简介](docs/zh/start/introduction.md) | 核心概念：task、Harness、rollout、run 和 trace |
-| [快速上手](docs/zh/start/getting-started.md) | 安装、dry-run、首次采集和结果验证 |
-| [CLI 参数参考](docs/zh/start/cli-reference.md) | 全部参数及其默认值和适用的 Harness |
-| [Docker 构建与镜像源](docs/zh/start/docker-builds.md) | 构建 Docker 镜像时使用的 apt、npm、Python 软件源与代理 |
-| [Task 格式参考](docs/zh/tasks/task-format.md) | prompt、多轮消息、输入文件、Context 和输出目录 |
-| [文件、Task Bundle 与结果存储](docs/zh/tasks/task-bundle-and-storage.md) | 输入快照、运行目录结构、重试和 Resume |
-| [User Simulator](docs/zh/tasks/user-simulator.md) | 由另一个模型驱动的动态对话 |
-| [轨迹产出文件指南](docs/zh/traces/trajectory-outputs.md) | 各产出文件及其生成条件；原生轨迹、统一轨迹、SFT 与 wire trace 的对比 |
-| [SFT 数据格式](docs/zh/traces/sft-format.md) | 记录结构、图片和压缩分段 |
-| [Viewer](docs/zh/traces/viewer.md) | 启动、端口和远程访问 |
-| [Bench 接入与评分](docs/zh/benches/bench-format.md) | bench 运行、评分和新 bench 的接入 |
+| [Roller 简介](https://valen-team.github.io/zh-Hans/roller/start/introduction/) | 核心概念：task、Harness、rollout、run 和 trace |
+| [快速上手](https://valen-team.github.io/zh-Hans/roller/start/getting-started/) | 安装、dry-run、首次采集和结果验证 |
+| [CLI 参数参考](https://valen-team.github.io/zh-Hans/roller/start/cli-reference/) | 全部参数及其默认值和适用的 Harness |
+| [Docker 构建与镜像源](https://valen-team.github.io/zh-Hans/roller/start/docker-builds/) | 构建 Docker 镜像时使用的 apt、npm、Python 软件源与代理 |
+| [Task 格式参考](https://valen-team.github.io/zh-Hans/roller/tasks/task-format/) | prompt、多轮消息、输入文件、Context 和输出目录 |
+| [文件、Task Bundle 与结果存储](https://valen-team.github.io/zh-Hans/roller/tasks/task-bundle-and-storage/) | 输入快照、运行目录结构、重试和 Resume |
+| [User Simulator](https://valen-team.github.io/zh-Hans/roller/tasks/user-simulator/) | 由另一个模型驱动的动态对话 |
+| [轨迹产出文件指南](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/) | 各产出文件及其生成条件；原生轨迹、统一轨迹、SFT 与 wire trace 的对比 |
+| [SFT 数据格式](https://valen-team.github.io/zh-Hans/roller/traces/sft-format/) | 记录结构、图片和压缩分段 |
+| [Viewer](https://valen-team.github.io/zh-Hans/roller/traces/viewer/) | 启动、端口和远程访问 |
+| [Bench 接入与评分](https://valen-team.github.io/zh-Hans/roller/benches/bench-format/) | bench 运行、评分和新 bench 的接入 |
 | [Examples](examples/README.md) | 各 Harness 的可运行命令 |
 | [Coverage 功能测试](examples/coverage/README.md) | 覆盖全部 7 种 Harness 的 1624 个功能测试任务 |
 
@@ -335,7 +335,7 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
 - `wire_trace.jsonl` 保存完整请求文本，包括 prompt、reasoning 和工具结果，应作为敏感数据处理。
 - Viewer 默认仅监听 `127.0.0.1`，远程访问应通过 SSH 端口转发。
 
-完整规则见[安全与隐私边界](docs/zh/tasks/task-bundle-and-storage.md#8-安全与隐私边界)。
+完整规则见[安全与隐私边界](https://valen-team.github.io/zh-Hans/roller/tasks/task-bundle-and-storage/#8-安全与隐私边界)。
 
 <a id="contributing"></a>
 

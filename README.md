@@ -19,7 +19,7 @@
 
 <p align="center">
   <strong>English</strong> · <a href="README_zh-CN.md">简体中文</a><br>
-  <a href="docs/en/index.md">Documentation</a> · <a href="docs/en/start/getting-started.md">Getting started</a> · <a href="docs/en/start/cli-reference.md">CLI reference</a> · <a href="examples/README.md">Examples</a>
+  <a href="https://valen-team.github.io/roller/">Documentation</a> · <a href="https://valen-team.github.io/roller/start/getting-started/">Getting started</a> · <a href="https://valen-team.github.io/roller/start/cli-reference/">CLI reference</a> · <a href="examples/README.md">Examples</a>
 </p>
 
 <p align="center">
@@ -180,7 +180,7 @@ roller view runs/quickstart
 
 Open the URL printed in the terminal (default `http://127.0.0.1:17865`). The Viewer shows the messages, reasoning, tool calls, tool results and final reply of each task.
 
-[Getting started guide →](docs/en/start/getting-started.md)
+[Getting started guide →](https://valen-team.github.io/roller/start/getting-started/)
 
 <a id="harnesses"></a>
 
@@ -200,7 +200,7 @@ A Harness is the agent runtime inside the container. It starts the agent, provid
 
 OpenClaw reads model definitions from `--model-config`. The other six Harnesses use `--api-base` and `--api-key-env`. In runs that combine several Harnesses, each Harness takes its own prefixed pair, for example `--hermes-api-base` and `--hermes-api-key-env`.
 
-Every Harness can serve as the Task Agent or the User Simulator. Docker images, API settings and reasoning options differ per Harness and are described in the Harness guides: [OpenClaw](docs/en/harnesses/openclaw-configuration.md) · [Codex](docs/en/harnesses/codex-configuration.md) · [Claude Code](docs/en/harnesses/claude-code-configuration.md) · [Hermes](docs/en/harnesses/hermes-configuration.md) · [OpenCode](docs/en/harnesses/opencode-configuration.md) · [DeepSeek](docs/en/harnesses/deepseek-configuration.md) · [Pi Agent](docs/en/harnesses/pi-configuration.md).
+Every Harness can serve as the Task Agent or the User Simulator. Docker images, API settings and reasoning options differ per Harness and are described in the Harness guides: [OpenClaw](https://valen-team.github.io/roller/harnesses/openclaw-configuration/) · [Codex](https://valen-team.github.io/roller/harnesses/codex-configuration/) · [Claude Code](https://valen-team.github.io/roller/harnesses/claude-code-configuration/) · [Hermes](https://valen-team.github.io/roller/harnesses/hermes-configuration/) · [OpenCode](https://valen-team.github.io/roller/harnesses/opencode-configuration/) · [DeepSeek](https://valen-team.github.io/roller/harnesses/deepseek-configuration/) · [Pi Agent](https://valen-team.github.io/roller/harnesses/pi-configuration/).
 
 <a id="outputs"></a>
 
@@ -238,7 +238,7 @@ The following files are produced only under specific conditions:
 - `wire_trace.jsonl`: written with `--wire-trace full`. It contains every request body that Roller's proxy forwarded to the model API. Its content can differ from the native session when a Harness compacts, truncates or rewrites context.
 - `conversation.json`: written for User Simulator tasks. It contains the dialogue visible to both participants.
 
-The [trajectory output guide](docs/en/traces/trajectory-outputs.md) specifies when each file is written or omitted.
+The [trajectory output guide](https://valen-team.github.io/roller/traces/trajectory-outputs/) specifies when each file is written or omitted.
 
 ### Reasoning
 
@@ -250,7 +250,7 @@ The [trajectory output guide](docs/en/traces/trajectory-outputs.md) specifies wh
 | Claude | Visible thinking or summary returned by the service |
 | Open models such as Qwen and GLM | Plain-text reasoning returned by the service |
 
-When a service returns only reasoning token counts or encrypted state, `reasoning_content` is empty. `reasoning_content` contains only reasoning text returned by the service; tool arguments remain in `tool_calls`. The reasoning levels available for each OpenClaw model are listed in [Thinking configuration](docs/en/harnesses/openclaw-configuration.md#6-thinking-configuration).
+When a service returns only reasoning token counts or encrypted state, `reasoning_content` is empty. `reasoning_content` contains only reasoning text returned by the service; tool arguments remain in `tool_calls`. The reasoning levels available for each OpenClaw model are listed in [Thinking configuration](https://valen-team.github.io/roller/harnesses/openclaw-configuration/#6-thinking-configuration).
 
 <a id="tasks"></a>
 
@@ -274,7 +274,7 @@ A task list can be a `.jsonl` file, a JSON array or an object of the form `{"tas
 | `harness` | Harness for this task (also `agent_harness` or `task_agent.harness`); overridden by `--harness` |
 | `user_simulator` | Harness and model that act as the user and generate user turns |
 
-`messages` and `user_simulator` are mutually exclusive. All fields are specified in the [task format reference](docs/en/tasks/task-format.md); dynamic conversations are described in the [User Simulator guide](docs/en/tasks/user-simulator.md).
+`messages` and `user_simulator` are mutually exclusive. All fields are specified in the [task format reference](https://valen-team.github.io/roller/tasks/task-format/); dynamic conversations are described in the [User Simulator guide](https://valen-team.github.io/roller/tasks/user-simulator/).
 
 <a id="benchmarks"></a>
 
@@ -284,11 +284,11 @@ Bench adapters convert benchmark tasks into Roller tasks and grade each sample i
 
 | Bench | Default Harness | Scope |
 | --- | --- | --- |
-| [WildClawBench](docs/en/benches/wildclawbench.md) | `openclaw` | 60 real-scenario tasks in 6 categories |
-| [SkillsBench](docs/en/benches/skillsbench.md) | `opencode` | One built environment per task; with-skill and no-skill runs scored by official verifiers |
-| [PinchBench](docs/en/benches/pinchbench.md) | `openclaw` | Automated, LLM-judge, hybrid and multi-session tasks |
-| [QwenClawBench](docs/en/benches/qwenclawbench.md) | `openclaw` | 100 tasks in 8 domains, with repeated runs per task |
-| [SWE-Bench Pro](docs/en/benches/swebench-pro.md) | `openclaw` | 731 software-engineering tasks in 11 repositories, scored by hidden tests in official instance images |
+| [WildClawBench](https://valen-team.github.io/roller/benches/wildclawbench/) | `openclaw` | 60 real-scenario tasks in 6 categories |
+| [SkillsBench](https://valen-team.github.io/roller/benches/skillsbench/) | `opencode` | One built environment per task; with-skill and no-skill runs scored by official verifiers |
+| [PinchBench](https://valen-team.github.io/roller/benches/pinchbench/) | `openclaw` | Automated, LLM-judge, hybrid and multi-session tasks |
+| [QwenClawBench](https://valen-team.github.io/roller/benches/qwenclawbench/) | `openclaw` | 100 tasks in 8 domains, with repeated runs per task |
+| [SWE-Bench Pro](https://valen-team.github.io/roller/benches/swebench-pro/) | `openclaw` | 731 software-engineering tasks in 11 repositories, scored by hidden tests in official instance images |
 
 The following example runs WildClawBench. With the upstream repository checked out and its `.env` loaded, one command converts the tasks, collects trajectories, grades every sample and writes `tasks.jsonl` and `bench-report.json` to the run directory:
 
@@ -299,29 +299,29 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
   --parallel 4 --output runs --run-name wildclaw
 ```
 
-The same run can also be described in a YAML file and started with `roller bench run --config ...`; see [Benchmark run configuration](docs/en/benches/benchmark-standard.md).
+The same run can also be described in a YAML file and started with `roller bench run --config ...`; see [Benchmark run configuration](https://valen-team.github.io/roller/benches/benchmark-standard/).
 
-Each bench guide lists the settings that must match the upstream configuration and the environment variables required by its graders. Scores are directly comparable only when these settings match upstream. To add a bench, see [Bench integration and scoring](docs/en/benches/bench-format.md#6-adding-a-new-bench).
+Each bench guide lists the settings that must match the upstream configuration and the environment variables required by its graders. Scores are directly comparable only when these settings match upstream. To add a bench, see [Bench integration and scoring](https://valen-team.github.io/roller/benches/bench-format/#6-adding-a-new-bench).
 
 <a id="documentation"></a>
 
 ## Documentation
 
-New users should start with [Getting started](docs/en/start/getting-started.md) and refer to [Task format](docs/en/tasks/task-format.md) when writing tasks. The complete handbook is in [`docs/en`](docs/en/index.md). To build it as a website, run `python -m pip install -r docs/requirements-docs.txt` followed by `cd docs && make html`.
+New users should start with [Getting started](https://valen-team.github.io/roller/start/getting-started/) and refer to [Task format](https://valen-team.github.io/roller/tasks/task-format/) when writing tasks. The complete handbook is at [valen-team.github.io/roller](https://valen-team.github.io/roller/).
 
 | Guide | Contents |
 | --- | --- |
-| [Introduction](docs/en/start/introduction.md) | Core concepts: task, Harness, rollout, run and trace |
-| [Getting started](docs/en/start/getting-started.md) | Installation, dry run, first collection and result verification |
-| [CLI reference](docs/en/start/cli-reference.md) | All flags, their defaults and the Harnesses they apply to |
-| [Docker builds and package mirrors](docs/en/start/docker-builds.md) | apt, npm and Python mirrors and proxies for image builds |
-| [Task format](docs/en/tasks/task-format.md) | Prompts, multi-turn messages, inputs, Context and output directories |
-| [Files, Task Bundles and result storage](docs/en/tasks/task-bundle-and-storage.md) | Input snapshots, run layout, retries and Resume |
-| [User Simulator](docs/en/tasks/user-simulator.md) | Dynamic conversations driven by a second model |
-| [Trajectory outputs](docs/en/traces/trajectory-outputs.md) | Output files and their conditions; comparison of raw, normalized, SFT and wire traces |
-| [SFT format](docs/en/traces/sft-format.md) | Record structure, images and compaction segments |
-| [Viewer](docs/en/traces/viewer.md) | Startup, ports and remote access |
-| [Bench integration and scoring](docs/en/benches/bench-format.md) | Bench runs, grading and new bench adapters |
+| [Introduction](https://valen-team.github.io/roller/start/introduction/) | Core concepts: task, Harness, rollout, run and trace |
+| [Getting started](https://valen-team.github.io/roller/start/getting-started/) | Installation, dry run, first collection and result verification |
+| [CLI reference](https://valen-team.github.io/roller/start/cli-reference/) | All flags, their defaults and the Harnesses they apply to |
+| [Docker builds and package mirrors](https://valen-team.github.io/roller/start/docker-builds/) | apt, npm and Python mirrors and proxies for image builds |
+| [Task format](https://valen-team.github.io/roller/tasks/task-format/) | Prompts, multi-turn messages, inputs, Context and output directories |
+| [Files, Task Bundles and result storage](https://valen-team.github.io/roller/tasks/task-bundle-and-storage/) | Input snapshots, run layout, retries and Resume |
+| [User Simulator](https://valen-team.github.io/roller/tasks/user-simulator/) | Dynamic conversations driven by a second model |
+| [Trajectory outputs](https://valen-team.github.io/roller/traces/trajectory-outputs/) | Output files and their conditions; comparison of raw, normalized, SFT and wire traces |
+| [SFT format](https://valen-team.github.io/roller/traces/sft-format/) | Record structure, images and compaction segments |
+| [Viewer](https://valen-team.github.io/roller/traces/viewer/) | Startup, ports and remote access |
+| [Bench integration and scoring](https://valen-team.github.io/roller/benches/bench-format/) | Bench runs, grading and new bench adapters |
 | [Examples](examples/README.md) (Chinese) | Runnable commands for each Harness |
 | [Coverage suite](examples/coverage/README.en.md) | 1,624 functional test tasks across all seven Harnesses |
 
@@ -335,7 +335,7 @@ New users should start with [Getting started](docs/en/start/getting-started.md) 
 - `wire_trace.jsonl` stores full request text, including prompts, reasoning and tool results. Treat it as sensitive data.
 - The Viewer listens on `127.0.0.1` by default. Use SSH port forwarding for remote access.
 
-The complete rules are specified in [Security and privacy boundaries](docs/en/tasks/task-bundle-and-storage.md#8-security-and-privacy-boundaries).
+The complete rules are specified in [Security and privacy boundaries](https://valen-team.github.io/roller/tasks/task-bundle-and-storage/#8-security-and-privacy-boundaries).
 
 <a id="contributing"></a>
 
