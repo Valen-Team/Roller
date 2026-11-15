@@ -75,13 +75,13 @@ OpenClaw 的具体路径为：
 
 `capture` 决定 Task Bundle 如何记录 Context 内容：
 
-| 策略 | 记录 hash | digest 包含旧版 blob 标识 | 允许安全 Resume |
+| 策略 | 记录 hash | 在 run 中保存原文 | 允许安全 Resume |
 | --- | --- | --- | --- |
 | `full` | 是 | 是 | 是 |
 | `hash` | 是 | 否 | 是 |
 | `none` | 否 | 否 | 否 |
 
-三种策略都会将 Context 直接复制到运行期 context 目录，复制时同步计算 hash 并与扫描结果对比，不再额外保存 blob 或重新读取目标文件计算 hash。区别仅影响内存中的 digest 数据和之后的 Resume 判断；最终 sample 不保存 Context 原文。输入和 `full` Context 的 digest 数据仍保留旧版 blob 标识，仅用于兼容已有 run lock，不代表磁盘上存在对应文件。
+三种策略都会将 Context 直接复制到运行期 context 目录，复制时同步计算 hash 并与扫描结果对比，不再额外保存 blob 或重新读取目标文件计算 hash。`full` 还会在 run 目录的 `context/sha256/<sha256>` 为每个文件保存一份原文，内容相同的 task 和模型共用同一份，并写入 `context/manifests/<context_manifest_digest>.json`，记录每个 Context target 对应的内容。sample 的 `info.json` 记录了 `context_manifest_digest`，因此可以从 run 中读回 Agent 实际看到的 Context。Resume 会补回缺失的副本，不会重跑 sample。输入和 `full` Context 的 digest 数据中的 `blobs/sha256/...` 标识仅用于兼容已有 run lock，不代表磁盘上存在对应文件。
 
 默认情况下，`user` 和 `memory` 使用 `hash`，其他 role 使用 `full`。若内容涉及隐私但仍需可靠检测变化，可使用 `hash`；若不希望记录任何内容 hash，则使用 `none`，此时该 task 无法安全 Resume。
 
@@ -159,6 +159,7 @@ sample 的 `info.json` 为每个结果文件记录：
 ├── info.json
 ├── lock.json
 ├── sft.jsonl
+├── context/                 # capture=full 的 Context 原文，按内容寻址
 └── samples/
     └── <model>/
         └── <index>_<task>/
@@ -286,7 +287,7 @@ task/model、usage、时间戳或其他运行 metadata。Run 根目录的 `sft.j
 
 ### 8.3 Context
 
-`capture=hash` 仍会保存不可逆的内容 hash；若 hash 也不得保留，应使用 `capture=none`。此设置将关闭该 task 的安全 Resume，因为 Roller 无法确认 Context 是否发生变化。
+`capture=full` 会在 run 目录的 `context/` 下保存 Context 原文，run 目录应按包含这些内容来管理。`capture=hash` 仍会保存不可逆的内容 hash；若 hash 也不得保留，应使用 `capture=none`。此设置将关闭该 task 的安全 Resume，因为 Roller 无法确认 Context 是否发生变化。
 
 ## 9. Retry 与 Resume
 
