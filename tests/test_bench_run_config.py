@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import argparse
+import ast
 import contextlib
 import io
 import json
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,8 +14,10 @@ from unittest.mock import patch
 
 import yaml
 
+from roller.benches import run_config
 from roller.benches.run_config import (
     BENCH_RUN_SCHEMA,
+    COLLECT_ONLY_FLAGS,
     load_bench_run_plan,
     temporary_environment,
 )
@@ -42,6 +47,84 @@ class BenchRunConfigTests(unittest.TestCase):
                 "wire_trace": "actf",
             },
         }
+
+    def test_every_collect_option_is_mapped_or_excluded(self) -> None:
+        subparsers = next(
+            action
+            for action in _build_parser()._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        collect = {
+            action.option_strings[0]
+            for action in subparsers.choices["collect"]._actions
+            if action.option_strings
+        } - {"-h"} | {"--help"}
+        module = ast.parse(Path(run_config.__file__).read_text(encoding="utf-8"))
+        mapped = {
+            node.value
+            for statement in module.body
+            if not (
+                isinstance(statement, ast.Assign)
+                and statement.targets[0].id == "COLLECT_ONLY_FLAGS"
+            )
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and re.fullmatch(r"--[a-z][a-z0-9-]*[a-z0-9]", node.value)
+        }
+
+        self.assertEqual(collect - mapped - COLLECT_ONLY_FLAGS, set())
+        self.assertEqual(mapped & COLLECT_ONLY_FLAGS, set())
+        self.assertEqual((mapped | COLLECT_ONLY_FLAGS) - collect, set())
+
+    def test_maps_capture_launch_and_config_set_options(self) -> None:
+        cases = {
+            "openclaw": (
+                {"config_set": ["diagnostics.stuckSessionAbortMs=2700000", "a.b=1"]},
+                [
+                    "--openclaw-config-set",
+                    "diagnostics.stuckSessionAbortMs=2700000",
+                    "--openclaw-config-set",
+                    "a.b=1",
+                ],
+            ),
+            "codex": (
+                {"config_set": ['model_verbosity="low"']},
+                ["--codex-config-set", 'model_verbosity="low"'],
+            ),
+            "claude-code": ({"capture_calls": True}, ["--claude-capture-calls"]),
+            "pi": ({"input_modalities": "text"}, ["--pi-input-modalities", "text"]),
+        }
+        for harness, (extra, expected) in cases.items():
+            with self.subTest(harness=harness), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                payload = self._base()
+                payload["benchmark"] = {"id": "pinchbench", "root": "/bench/pinch"}
+                payload["harness"] = {"id": harness, "extra": extra}
+                payload["execution"] = {
+                    "launch_interval": 2.5,
+                    "capture_debug": "full",
+                    "capture_calls": True,
+                    "thinking_capabilities": "capabilities.json",
+                }
+                plan = load_bench_run_plan(
+                    self._write(root, "run.yaml", payload),
+                    environ={
+                        "MODEL_BASE_URL": "https://api.example.com/v1",
+                        "MODEL_API_KEY": "secret",
+                    },
+                    temporary_root=root,
+                )
+                argv = list(plan.collect_argv)
+                joined = " ".join(argv)
+                self.assertIn(" ".join(expected), joined)
+                self.assertIn("--launch-interval 2.5", joined)
+                self.assertIn("--capture-debug full", joined)
+                self.assertIn("--thinking-capabilities capabilities.json", joined)
+                self.assertIn("--capture-calls", argv)
+                parsed = _build_parser().parse_args(argv)
+                self.assertEqual(parsed.launch_interval, 2.5)
+                self.assertTrue(parsed.capture_calls)
 
     def test_layers_config_and_maps_common_model_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

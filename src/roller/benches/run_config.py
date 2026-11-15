@@ -160,6 +160,13 @@ def _append_bool(argv: list[str], flag: str, value: Any, label: str) -> None:
     argv.append(flag if value else f"--no-{flag.removeprefix('--')}")
 
 
+def _append_switch(argv: list[str], flag: str, value: Any, label: str) -> None:
+    if not isinstance(value, bool):
+        raise ValueError(f"{label} must be boolean")
+    if value:
+        argv.append(flag)
+
+
 _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
     "openclaw": {
         "model_config": ("--model-config", "value"),
@@ -173,18 +180,21 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "collect_paths": ("--collect-path", "repeat"),
         "set_image_model": ("--set-image-model", "bool"),
         "cache_trace": ("--cache-trace", "bool"),
+        "config_set": ("--openclaw-config-set", "repeat"),
     },
     "codex": {
         "config": ("--codex-config", "value"),
         "reasoning_summary": ("--reasoning-summary", "value"),
         "web_search": ("--codex-web-search", "value"),
         "websockets": ("--codex-websockets", "bool"),
+        "config_set": ("--codex-config-set", "repeat"),
     },
     "claude-code": {
         "settings": ("--claude-settings", "value"),
         "max_turns": ("--claude-max-turns", "value"),
         "max_thinking_tokens": ("--claude-max-thinking-tokens", "value"),
         "permission_mode": ("--claude-permission-mode", "value"),
+        "capture_calls": ("--claude-capture-calls", "switch"),
     },
     "hermes": {
         "max_iterations": ("--hermes-max-iterations", "value"),
@@ -206,6 +216,7 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "max_steps": ("--pi-max-steps", "value"),
         "context_length": ("--pi-context-length", "value"),
         "output_tokens": ("--pi-output-tokens", "value"),
+        "input_modalities": ("--pi-input-modalities", "value"),
     },
 }
 
@@ -217,6 +228,74 @@ _HARNESS_API_PROTOCOL = {
     "deepseek": "openai-completions",
     "pi": "openai-completions",
 }
+
+_EXECUTION_VALUES = {
+    "output": "--output",
+    "run_name": "--run-name",
+    "parallel": "--parallel",
+    "launch_interval": "--launch-interval",
+    "grader_parallel": "--grader-parallel",
+    "samples": "--samples",
+    "retries": "--retries",
+    "timeout": "--timeout",
+    "start_index": "--start-index",
+    "limit": "--limit",
+    "wire_trace": "--wire-trace",
+    "capture_debug": "--capture-debug",
+    "thinking_capabilities": "--thinking-capabilities",
+    "container_user": "--container-user",
+    "network": "--network",
+    "docker_binary": "--docker-binary",
+    "max_input_file_bytes": "--max-input-file-bytes",
+    "max_task_input_bytes": "--max-task-input-bytes",
+}
+_EXECUTION_BOOLS = {"keep_thinking": "--keep-thinking"}
+_EXECUTION_SWITCHES = {
+    "resume": "--resume",
+    "capture_calls": "--capture-calls",
+    "keep_container_on_error": "--keep-container-on-error",
+    "rebuild_task_images": "--rebuild-task-images",
+}
+
+# ``collect`` options a run configuration does not set. tests/test_bench_run_config.py
+# requires every other ``collect`` option to appear in this module.
+COLLECT_ONLY_FLAGS = frozenset(
+    {
+        "--help",
+        # ``bench run --dry-run`` appends it.
+        "--dry-run",
+        # A run configuration always selects tasks through ``benchmark``.
+        "--tasks",
+        "--prompt-key",
+        "--id-key",
+        "--workspace",
+        # ``--bench`` always honours task-declared timeouts.
+        "--task-timeouts",
+        # Logging is configured from the ``bench run`` arguments before the file is read.
+        "--log-level",
+        # Per-Harness overrides for mixed-Harness task files. A run configuration has one
+        # Harness, set through ``harness.image``, ``model.base_url`` and ``model.api_key_env``.
+        "--openclaw-image",
+        "--codex-image",
+        "--claude-code-image",
+        "--hermes-image",
+        "--opencode-image",
+        "--deepseek-image",
+        "--pi-image",
+        "--codex-api-base",
+        "--claude-api-base",
+        "--hermes-api-base",
+        "--opencode-api-base",
+        "--deepseek-api-base",
+        "--pi-api-base",
+        "--codex-api-key-env",
+        "--claude-api-key-env",
+        "--hermes-api-key-env",
+        "--opencode-api-key-env",
+        "--deepseek-api-key-env",
+        "--pi-api-key-env",
+    }
+)
 
 _BENCHMARK_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
     "qwenclawbench": {
@@ -244,6 +323,8 @@ def _append_harness_extra(
         flag, kind = supported[name]
         if kind == "bool":
             _append_bool(argv, flag, value, f"harness.extra.{name}")
+        elif kind == "switch":
+            _append_switch(argv, flag, value, f"harness.extra.{name}")
         elif kind == "repeat":
             if not isinstance(value, list) or not all(
                 isinstance(item, str) and item for item in value
@@ -409,28 +490,7 @@ def load_bench_run_plan(
     _reject_unknown(harness, {"id", "image", "extra"}, "harness")
     _reject_unknown(
         execution,
-        {
-            "output",
-            "run_name",
-            "parallel",
-            "grader_parallel",
-            "samples",
-            "retries",
-            "timeout",
-            "start_index",
-            "limit",
-            "resume",
-            "wire_trace",
-            "keep_thinking",
-            "pass_env",
-            "keep_container_on_error",
-            "rebuild_task_images",
-            "container_user",
-            "network",
-            "docker_binary",
-            "max_input_file_bytes",
-            "max_task_input_bytes",
-        },
+        {*_EXECUTION_VALUES, *_EXECUTION_BOOLS, *_EXECUTION_SWITCHES, "pass_env"},
         "execution",
     )
 
@@ -537,43 +597,15 @@ def load_bench_run_plan(
     _append_value(argv, "--docker-image", _optional_string(harness, "image", "harness"))
     _append_harness_extra(argv, harness_id, harness_extra)
 
-    value_flags = {
-        "output": "--output",
-        "run_name": "--run-name",
-        "parallel": "--parallel",
-        "grader_parallel": "--grader-parallel",
-        "samples": "--samples",
-        "retries": "--retries",
-        "timeout": "--timeout",
-        "start_index": "--start-index",
-        "limit": "--limit",
-        "wire_trace": "--wire-trace",
-        "container_user": "--container-user",
-        "network": "--network",
-        "docker_binary": "--docker-binary",
-        "max_input_file_bytes": "--max-input-file-bytes",
-        "max_task_input_bytes": "--max-task-input-bytes",
-    }
-    for name, flag in value_flags.items():
+    for name, flag in _EXECUTION_VALUES.items():
         if name in execution:
             _append_value(argv, flag, execution[name])
-    bool_flags = {
-        "keep_thinking": "--keep-thinking",
-        "resume": "--resume",
-        "keep_container_on_error": "--keep-container-on-error",
-        "rebuild_task_images": "--rebuild-task-images",
-    }
-    for name, flag in bool_flags.items():
-        if name not in execution:
-            continue
-        value = execution[name]
-        if name in {"resume", "keep_container_on_error", "rebuild_task_images"}:
-            if not isinstance(value, bool):
-                raise ValueError(f"execution.{name} must be boolean")
-            if value:
-                argv.append(flag)
-        else:
-            _append_bool(argv, flag, value, f"execution.{name}")
+    for name, flag in _EXECUTION_BOOLS.items():
+        if name in execution:
+            _append_bool(argv, flag, execution[name], f"execution.{name}")
+    for name, flag in _EXECUTION_SWITCHES.items():
+        if name in execution:
+            _append_switch(argv, flag, execution[name], f"execution.{name}")
     for name in _string_list(execution, "pass_env", "execution"):
         if not ENV_NAME_RE.fullmatch(name):
             raise ValueError(f"execution.pass_env contains invalid name: {name}")
@@ -641,6 +673,7 @@ def temporary_environment(values: Mapping[str, str]) -> Iterator[None]:
 
 __all__ = [
     "BENCH_RUN_SCHEMA",
+    "COLLECT_ONLY_FLAGS",
     "BenchRunPlan",
     "load_bench_run_plan",
     "temporary_environment",

@@ -100,6 +100,9 @@
             "collect_paths": {"$ref": "#/$defs/stringList"},
             "set_image_model": {"type": "boolean"},
             "cache_trace": {"type": "boolean"},
+            "config_set": {"$ref": "#/$defs/stringList"},
+            "capture_calls": {"type": "boolean"},
+            "input_modalities": {"enum": ["text", "text,image"]},
             "config": {"$ref": "#/$defs/nonEmptyString"},
             "reasoning_summary": {"enum": ["auto", "concise", "detailed", "none"]},
             "web_search": {"enum": ["disabled", "cached", "live"]},
@@ -134,6 +137,7 @@
         "output": {"$ref": "#/$defs/nonEmptyString"},
         "run_name": {"$ref": "#/$defs/nonEmptyString"},
         "parallel": {"$ref": "#/$defs/positiveIntegerOrEnv"},
+        "launch_interval": {"$ref": "#/$defs/nonNegativeNumberOrEnv"},
         "grader_parallel": {"$ref": "#/$defs/positiveIntegerOrEnv"},
         "samples": {"$ref": "#/$defs/positiveIntegerOrEnv"},
         "retries": {"$ref": "#/$defs/nonNegativeIntegerOrEnv"},
@@ -142,6 +146,9 @@
         "limit": {"$ref": "#/$defs/positiveIntegerOrEnv"},
         "resume": {"type": "boolean"},
         "wire_trace": {"enum": ["off", "actf", "full"]},
+        "capture_debug": {"enum": ["off", "on-error", "full"]},
+        "capture_calls": {"type": "boolean"},
+        "thinking_capabilities": {"$ref": "#/$defs/nonEmptyString"},
         "keep_thinking": {"type": "boolean"},
         "pass_env": {
           "type": "array",
@@ -184,6 +191,12 @@
     "positiveIntegerOrEnv": {
       "anyOf": [
         {"type": "integer", "minimum": 1},
+        {"$ref": "#/$defs/environmentReference"}
+      ]
+    },
+    "nonNegativeNumberOrEnv": {
+      "anyOf": [
+        {"type": "number", "minimum": 0},
         {"$ref": "#/$defs/environmentReference"}
       ]
     },
