@@ -1,49 +1,37 @@
 # DeepSeek Harness guide
 
-This page covers only DeepSeek-Harness-specific images, the API, the native session, and troubleshooting. Roller drives the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) native `dsh` runtime through its Python SDK. Both SDK and runtime are pinned to **0.1.5rc1**, using the official full `sdk` profile by default. For Task fields see [Task format reference](../tasks/task-format.md). For output semantics shared by all Harnesses see [Trajectory output file guide](../traces/trajectory-outputs.md).
+The DeepSeek Harness runs text and file tasks through the official DeepSeek Harness. It connects to a Chat Completions service with streaming, tool calls, and DeepSeek thinking fields. This guide follows the order needed for a first run: image, API, Harness-specific flags, sessions, and outputs.
 
-## 1. Supported scope
+Roller currently pins the official [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 0.1.5rc1 and uses the `sdk-minimal` tool configuration, which provides Bash only. For Task fields, see [Task format reference](../tasks/task-format.md). For shared outputs, see [Trajectory output file guide](../traces/trajectory-outputs.md).
 
-The DeepSeek Harness supports:
+For a first run, complete sections 1 through 3 and run the example command. Read the later sections on Harness-specific flags, tool limits, and trajectories when those features are needed.
 
-- single-turn `prompt` and predefined multi-turn `messages` (one SDK/runtime process and native Bash PTY persist across turns, retaining conversation history, files, shell variables, and working directory).
-- Task Agents and User Simulators, both accepting `"harness": "deepseek"`.
-- Task Bundle, read-only inputs, Context, `runtime.setup`, task environment variables, custom `output_dir`, artifact collection, and in-container grading.
-- streaming Chat Completions, tool calls, and DeepSeek thinking fields.
-- native tools from the full `sdk` profile; `--deepseek-profile sdk-minimal` selects shell-only.
-- ACTF, SFT, provenance, and usage.
-- `--wire-trace actf|full|off`.
-- native `--thinking off/low/high/max` mapping.
+## 1. Scope
 
-Not currently supported:
+Use the DeepSeek Harness when a task needs:
 
-- direct multimodal messages and visual acceptance.
-- interactive login.
-- arbitrary profiles/plugins.
-- cross-task memory.
-- the OpenClaw cache trace (Resume does not require it).
+- a Chat Completions endpoint compatible with DeepSeek thinking fields.
+- one persistent Bash environment for text and ordinary file work.
+- single-turn, multi-turn, Task Agent, or User Simulator execution.
+- ACTF, SFT, token usage, and result-file export.
 
-## 2. Image preparation and first run
+This tool configuration has no image viewer, so it is not suitable for tasks that require visual understanding. Interactive login, custom plugins, and memory across tasks are also not supported.
+
+## 2. Image preparation
+
+Build the DeepSeek image from the Roller repository root:
 
 ```bash
 docker build -t roller-deepseek:0.1.5rc1 docker/deepseek
-export DEEPSEEK_API_KEY='your-key'
-# Optional compatible gateway. The default is https://api.deepseek.com.
-export DEEPSEEK_BASE_URL='https://api.example.com/v1'
-python -m roller collect \
-  --tasks examples/coverage/cases/formats/jsonl/deepseek.jsonl \
-  --harness deepseek --model deepseek-v4-flash \
-  --thinking off --parallel 2 --timeout 180 --retries 0 \
-  --output runs/deepseek --run-name smoke
 ```
 
-The endpoint must support streaming Chat Completions, tools, and DeepSeek thinking fields. Model IDs, including gateway prefixes, are sent unchanged. The host needs Python 3.10+ and Docker. SDK dependencies and the official runtime wheel are isolated inside the image. The default base is `python:3.12-slim`. `BASE_IMAGE` can select a Debian/Ubuntu image with Python 3.10+. Official wheels provide Linux x86_64 and aarch64 runtimes.
+The image contains the official SDK and runtime. The host does not need a separate DeepSeek Harness installation. After the build, configure the API address, API key, and model ID in section 3.
 
-For `DEBIAN_MIRROR` and `DEBIAN_SECURITY_MIRROR`, see [Docker builds and package mirrors](../start/docker-builds.md).
+The default base image is `python:3.12-slim`, with Linux x86_64 and aarch64 support. For another base image or Debian mirror, see [Docker builds and package mirrors](../start/docker-builds.md).
 
 ## 3. Environment variables and API
 
-The DeepSeek Harness connects to a Chat Completions service that supports streaming, tool calls, and DeepSeek thinking fields. A first run needs an API address, an API key, and a model ID.
+The DeepSeek Harness connects to a Chat Completions service that supports streaming, tool calls, and DeepSeek thinking fields. A first run requires an API address, an API key, and a model ID.
 
 | Setting | Default source | CLI override |
 | --- | --- | --- |
@@ -53,6 +41,23 @@ The DeepSeek Harness connects to a Chat Completions service that supports stream
 
 The value of `--deepseek-api-key-env` or `--api-key-env` is the name of a host environment variable, not the key itself. The key is read at execution time and is not written to the task, run configuration, or public outputs.
 
+Replace `...`, the API address, and `model-id` with values from the model service. The following command runs a single task so that the configuration can be checked before a larger run:
+
+```bash
+export ROLLER_DEEPSEEK_KEY='...'
+
+roller collect \
+  --harness deepseek \
+  --tasks examples/tasks/tasks.jsonl \
+  --model model-id \
+  --api-base https://api.example.com/v1 \
+  --api-key-env ROLLER_DEEPSEEK_KEY \
+  --docker-image roller-deepseek:0.1.5rc1 \
+  --limit 1 \
+  --output runs \
+  --run-name deepseek-demo
+```
+
 (deepseek-cli-flags)=
 ## 4. DeepSeek-specific flags
 
@@ -60,46 +65,77 @@ This table lists DeepSeek-specific runtime flags only. See section 3 for API add
 
 | Option | Default / behavior |
 | --- | --- |
-| `--deepseek-image` | Precedes `--docker-image`, `ROLLER_DEEPSEEK_IMAGE`, then `roller-deepseek:0.1.5rc1` |
+| `--deepseek-image` | Takes precedence over `--docker-image`. If neither is set, `ROLLER_DEEPSEEK_IMAGE` is used, with `roller-deepseek:0.1.5rc1` as the fallback |
+| `--deepseek-profile NAME` | `sdk-minimal` by default, which provides Bash only. `sdk` selects the full native profile with its file, search, and shell tools |
+| `--deepseek-permission-mode MODE` | Unset by default, so the profile's own permission mode applies. Accepts `read-only`, `workspace-write`, or `danger-full-access`, and applies inside the task container only |
 | `--deepseek-max-steps` | 12 model requests per user turn. Task and conversation deadlines also apply |
-| `--deepseek-context-length` | 128000 tokens, minimum 1024, match the endpoint |
-| `--deepseek-output-tokens` | 8192, positive and smaller than the context window |
-| `--thinking` / `runtime.thinking` | Native `off/low/high/max`. `none` aliases `off`. Omission uses the native adapter default |
-| `--wire-trace` | All modes retain native requests and schemas. `full` adds HTTP capture and requires an explicit base URL and host networking |
-| `--no-keep-thinking` | Removes reasoning from ACTF/SFT only, preserving native history |
+| `--deepseek-context-length` | 128000 tokens by default, minimum 1024. Set it to match the endpoint |
+| `--deepseek-output-tokens` | 8192 by default. Must be positive and smaller than the context window |
+| `--thinking` / `runtime.thinking` | Natively supports `off/low/high/max`. `none` is an alias of `off`. If omitted, the DeepSeek Harness default applies |
+| `--wire-trace` | Controls request recording. `full` also saves complete HTTP requests and requires an explicit API address with `--network host` |
+| `--no-keep-thinking` | Removes reasoning from ACTF/SFT only. Native history is retained |
 
-Options apply to both roles. The run lock records image digest, version, profile, tools, endpoint, key variable name, step limit, and token limits. Credentials are read at execution time.
+The same settings apply when DeepSeek is the Task Agent or User Simulator. After changing the image, API address, profile, permission mode, step limit, or token limits, use a new `--run-name` to avoid a conflict with the previous run configuration.
 
-## 5. Sessions, workspace, and traces
+## 5. Multimodal capabilities
 
-Each participant owns a container and an isolated `DSH_HOME`. One SDK/runtime process persists across turns, retaining conversation history and files. Only sdk-minimal retains a shell PTY and shell variables. Roller supports read-only inputs, copied Context files listed in the system prompt, setup commands, selected environment variables, custom outputs, and container grading.
+The DeepSeek Harness currently uses the official `sdk-minimal` tool configuration. It provides one persistent `bash` tool and no image viewer, so it supports text and ordinary file tasks but not tasks that require visual understanding.
 
-The default full `sdk` profile exposes native filesystem, search, shell and other tools. Select `--deepseek-profile sdk-minimal` explicitly for the former bash-only behavior. Tool availability and permissions belong to the selected profile. Roller retains request logging, model budgets and retry controls.
+Image files can enter the workspace through `files.inputs`, but they remain ordinary files and are not sent to the model as image content. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. For vision tasks, use another Harness that provides an image tool.
 
-`trace.jsonl` uses `roller.deepseek-events/v1`, retaining serialized requests and native SDK notifications. ACTF/SFT preserve actual system prompts, schemas, reasoning, calls, and results. Errors, truncated or empty replies, incomplete tool calls, and content that cannot be represented losslessly as text are rejected. Timeouts stop the container and recover available artifacts. Resume validates each participant's artifacts. DeepSeek does not produce OpenClaw cache traces.
+## 6. Sessions and workspace
 
-Provider compatibility must be checked for each model. Long tasks need sufficient context because compaction is disabled.
+Each Agent or Simulator runs in an isolated container. Inputs are read-only, Context files are copied to their declared task paths, and output files are collected into the sample `results/` directory.
 
-## 6. Validation
+Multi-turn messages for the same participant reuse one DeepSeek session and Bash environment. Conversation history, workspace files, shell variables, and the current working directory persist, so later turns can continue from earlier state.
 
-```bash
-python examples/coverage/suite.py validate --case '*/deepseek'
-python examples/coverage/suite.py run --case '*/deepseek' \
-  --exclude-case 'vision/*' --dry-run
-ROLLER_DEEPSEEK_DOCKER_TEST=1 PYTHONPATH=src \
-  python -m unittest discover -s tests -p test_deepseek_docker.py -v
-```
+## 7. Tools and capability limits
 
-Docker tests execute real SDK tools against a deterministic local API with a fake key. Coverage includes 204 input tasks (200 nonvision) and 52 tasks across all 13 pairings involving DeepSeek. Select pairings with `--case 'simulators/pair/deepseek--*' --case 'simulators/pair/*--deepseek'`. See [coverage instructions](https://github.com/Liuziyu77/Roller/blob/main/examples/coverage/README.en.md).
+The current `sdk-minimal` configuration provides one persistent `bash` tool. File operations and content search also use Bash commands. Separate image, Web, MCP, and subagent tools are not available.
 
-## 7. Common issues
+`--deepseek-profile sdk` selects the full native profile instead. Its tools come from the SDK, and its Bash tool starts a separate process for each call, so shell variables do not persist between calls while files and the session do. Pair it with `--deepseek-permission-mode danger-full-access` to let tools run without approval prompts inside the disposable container. See [Harness tool availability](tool-availability.md).
 
-Common errors:
+Automatic compaction is disabled. Long tasks need a sufficiently large `--deepseek-context-length`, and the selected endpoint must support the DeepSeek request format and thinking fields.
 
-- a trajectory is rejected: errors, truncated or empty replies, incomplete tool calls, and content that cannot be represented losslessly as text are all rejected. Inspect `trace.jsonl` to locate the cause.
-- long tasks exceed the context window: automatic compaction is disabled. Raise `--deepseek-context-length` to match the real service.
-- rollout timeout: the container is stopped and available artifacts recovered. Adjust `--timeout` or `--deepseek-max-steps` as needed.
-- Resume refused: the image digest, version, profile, tools, endpoint, step limit, or token limits recorded in the run lock changed. Use a fresh run directory.
-- `--wire-trace full` fails to start: an explicit base URL and host networking are required.
+## 8. Trajectories and request recording
 
-`--deepseek-permission-mode` defaults to `danger-full-access` inside the disposable container, avoiding an unavailable nested sandbox. `read-only` and `workspace-write` require a native sandbox backend; unanswered approvals fail closed. Host inputs remain read-only mounts. Full sdk bash uses separate processes (shell variables do not persist); sdk-minimal uses a persistent PTY. Both retain files and sessions.
+A run produces three main trajectory files:
+
+| File | Purpose |
+| --- | --- |
+| `trace.jsonl` | Records native DeepSeek SDK events and actual model requests for troubleshooting |
+| `trace_ACTF.json` | Normalizes the conversation, reasoning, Bash calls, and results |
+| `trace_SFT.json` | Converts a successful trajectory into training-data format |
+
+Errors, truncation, empty replies, incomplete tool calls, or content that cannot be preserved completely are not marked successful. A timeout stops the container and preserves available trajectories and result files when possible.
+
+## 9. First-run check
+
+For a first run, use one simple task and then check:
+
+1. `info.json` in the run directory has `state` set to `finished`.
+2. The sample `info.json` has `status` set to `ok`.
+3. The sample contains `trace.jsonl`, `trace_ACTF.json`, and `trace_SFT.json`.
+4. If the task creates files, the expected files exist under `results/`.
+
+## 10. Common issues
+
+**(1) A trajectory is rejected**
+
+Errors, truncated or empty replies, incomplete tool calls, and content that cannot be represented losslessly as text are all rejected. Inspect `trace.jsonl` to locate the cause.
+
+**(2) Long tasks exceed the context window**
+
+Automatic compaction is disabled. Raise `--deepseek-context-length` to match the actual service.
+
+**(3) Task execution times out**
+
+The container is stopped and the available artifacts are recovered. Adjust `--timeout` or `--deepseek-max-steps` as needed.
+
+**(4) An existing run cannot be resumed**
+
+An old run cannot be resumed safely after the image, API address, or runtime settings change. Use a new `--run-name`.
+
+**(5) `--wire-trace full` fails to start**
+
+Set an explicit API address and keep `--network host` enabled.

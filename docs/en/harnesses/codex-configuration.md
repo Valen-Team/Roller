@@ -1,26 +1,21 @@
 # Codex Harness guide
 
-This guide covers Codex-specific images, the Responses API, reasoning, native session, and troubleshooting. For Task fields, see [Task format reference](../tasks/task-format.md). For the outputs shared by all Harnesses, see [Trajectory output file guide](../traces/trajectory-outputs.md).
+The Codex Harness runs tasks through the Codex CLI when they require terminal, file, or image tools. It connects to a model service that supports the Responses API. This guide follows the order needed for a first run: image, API, Harness-specific flags, sessions, and outputs.
 
-## 1. Supported scope
+Roller currently pins Codex 0.149.0. For Task fields, see [Task format reference](../tasks/task-format.md). For shared outputs, see [Trajectory output file guide](../traces/trajectory-outputs.md).
 
-The Codex Harness supports:
+For a first run, complete sections 1 through 3 and run the example command. Read the later sections on Harness-specific flags, thinking, and trajectories when those features are needed.
 
-- single-turn `prompt`.
-- predefined multi-turn `messages`, with later messages continuing the same session via `codex exec resume --last`.
-- Task Bundle, read-only inputs, Context, `runtime.setup`, and full `output_dir` collection.
-- parallelism, retry, run lock, and Resume integrity checks.
-- Codex native session JSONL, `ACTF_v1.0`, one SFT record, and run-level `sft.jsonl`.
-- original request-side tool capture in default `--wire-trace actf`, plus full requests with `--wire-trace full`.
-- dynamic User Simulator and Task Agent. The Simulator can be selected independently via `user_simulator.harness`
-  and can use a different model.
-- Viewer display of visible reasoning, tool calls, tool results, and the final reply.
+## 1. Scope
 
-Not currently supported:
+Use the Codex Harness when a task needs:
 
-- OpenClaw-specific cache trace.
-- internal reasoning that the API does not return as plaintext or a visible summary.
-- model services that only provide Chat Completions and lack the Responses interface Codex needs.
+- a model service that implements the Responses API.
+- shell commands, file editing, or local-image inspection through `view_image`.
+- single-turn, multi-turn, Task Agent, or User Simulator execution.
+- the native Codex session plus ACTF, SFT, and token-usage export.
+
+An endpoint that only supports Chat Completions cannot be used directly. Task messages also cannot contain image blocks directly. Roller can preserve only the visible reasoning or summaries returned by the API; hidden reasoning cannot be recovered.
 
 ## 2. Image preparation
 
@@ -43,7 +38,7 @@ docker build \
 Offline base image:
 
 ```bash
-docker load -i /path/to/node-22-bookworm-slim-linux-amd64.tar.gz
+docker load -i node-22-bookworm-slim-linux-amd64.tar.gz
 docker build \
   --platform linux/amd64 \
   --build-arg CODEX_VERSION=0.149.0 \
@@ -54,7 +49,7 @@ docker build \
 
 For `DEBIAN_MIRROR` and `DEBIAN_SECURITY_MIRROR`, see [Docker builds and package mirrors](../start/docker-builds.md). Set `NPM_REGISTRY` to override npm downloads, or leave it unset to keep the existing npm configuration.
 
-If the default Debian mirrors are slow on the current network, override the mirror URLs at build time without
+If the default Debian mirrors are slow on the current network, override the mirror URLs at build time instead of
 editing the Dockerfile:
 
 ```bash
@@ -68,7 +63,7 @@ docker build \
   .
 ```
 
-Verify:
+Verify the result:
 
 ```bash
 docker run --rm roller-codex:0.149.0 codex --version
@@ -81,28 +76,27 @@ docker save -o roller-codex-0.149.0-linux-amd64.tar roller-codex:0.149.0
 docker load -i roller-codex-0.149.0-linux-amd64.tar
 ```
 
-You can select another already-built image via CLI or environment variable:
+Another already-built image can be selected through a command-line option or environment variable:
 
 ```bash
 export ROLLER_CODEX_IMAGE=roller-codex:0.149.0
 # Or: roller collect ... --docker-image roller-codex:0.149.0
 ```
 
-Do not use an unlocked `@openai/codex@latest` in a production dataset. Codex native events evolve with the
-CLI. Roller writes the actual `codex_version`, image tag, and image ID into run/sample info and the run lock.
+Do not use the automatically changing `@openai/codex@latest` for a production collection. Roller writes the
+actual `codex_version`, image tag, and image ID to the run and sample `info.json` files, so the environment can be verified later.
 
 ## 3. Environment variables and API
 
-The Codex Harness uses a Responses-style agentic API. The service must correctly handle Responses streaming, reasoning, tool calls, and tool results. A successful `/v1/chat/completions` request does not show that a service can run Codex.
+The Codex Harness requires a model service that implements the Responses API. A first run requires an API address, an API key, and a model ID. A working `/v1/chat/completions` route alone does not mean that Codex can run.
 
 | Setting | Default source | CLI override |
 | --- | --- | --- |
 | API address | `OPENAI_BASE_URL` | `--codex-api-base`, or `--api-base` for a single-Harness run |
 | API key | `OPENAI_API_KEY` | `--codex-api-key-env`, or `--api-key-env` for a single-Harness run |
-| Model ID | The task `model` or `--model` | Passed to Codex unchanged |
-| API transport | Codex built-in policy | A custom API address uses Responses HTTP streaming by default |
+| Model ID | The task `model` or `--model` | Sent to Codex unchanged |
 
-Store the key in a custom host environment variable and pass its name to Roller:
+Store the key in a host environment variable and pass its name to Roller:
 
 ```bash
 export ROLLER_CODEX_KEY='...'
@@ -110,190 +104,185 @@ export ROLLER_CODEX_KEY='...'
 roller collect \
   --harness codex \
   --tasks examples/tasks/tasks.jsonl \
-  --model gpt-5.6-sol \
-  --api-base http://your-api.example/v1 \
+  --model model-id \
+  --api-base https://api.example.com/v1 \
   --api-key-env ROLLER_CODEX_KEY \
   --docker-image roller-codex:0.149.0 \
+  --limit 1 \
   --output runs \
-  --run-name codex-gpt
+  --run-name codex-demo
 ```
 
-When `--api-base` is omitted, Roller reads `OPENAI_BASE_URL` from the host. The value of `--api-key-env` is an environment variable name, not the key itself. The key is not written to `info.json` or `lock.json`. The run lock records only the variable name, and provenance removes query data and credentials from the API address.
+`--api-key-env` accepts an environment-variable name, not the key itself. With a custom API address, Roller uses Responses HTTP streaming by default. Keep the default `--no-codex-websockets` unless the service explicitly supports Responses WebSocket.
 
-With a custom API address, Roller creates an isolated Codex provider with `wire_api="responses"` and `supports_websockets=false` by default. This works with compatible services that implement Responses HTTP streaming only. Enable `--codex-websockets` only when the service supports Responses WebSocket.
-
-`--wire-trace actf` (default) and `full` capture tools through a rollout-local HTTP proxy when an API address is configured. Capture requires `--network host` and the default `--no-codex-websockets`. Without an API address, Codex uses its built-in provider; native raw/ACTF remain available, but SFT is unavailable because the original tool definitions cannot be captured. `full` rejects missing API addresses or WebSocket transport.
+Keep the default `--wire-trace actf` and `--network host` in the example command so that Roller can record the tool definitions required for ACTF/SFT. If request recording is disabled, Roller still produces the native Codex trace and ACTF, but it does not export SFT without complete tool definitions.
 
 (codex-cli-flags)=
 ## 4. Codex-specific flags
 
-This table lists Codex-specific runtime flags only. See section 3 for API addresses and keys. See the [CLI reference](../start/cli-reference.md) for flags shared by all Harnesses.
+This table lists Codex-specific runtime flags only. API addresses and keys are described in section 3. For the flags shared by all Harnesses, see the [CLI reference](../start/cli-reference.md).
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `--docker-image` / `--codex-image` | `ROLLER_CODEX_IMAGE` or `roller-codex:0.149.0` | Override the Codex image |
 | `--codex-config` | None | Inject a native `config.toml` into the isolated container |
+| `--codex-config-set KEY=VALUE` | None | Append `-c KEY=VALUE` to every `codex exec`. Repeatable |
 | `--reasoning-summary` | Codex default | `auto`, `concise`, `detailed`, or `none` |
 | `--codex-web-search` | `disabled` | `disabled`, `cached`, or `live` |
 | `--codex-websockets` / `--no-codex-websockets` | Off | Whether a custom provider uses Responses WebSocket |
 
-A single Codex run can use the shared flag forms. In a mixed-Harness run, use dedicated forms such as `--codex-image`, `--codex-api-base`, and `--codex-api-key-env` so the settings apply only to the intended participant.
+A single Codex run can use the shared flag forms. In a mixed-Harness run, use the dedicated forms such as `--codex-image`, `--codex-api-base`, and `--codex-api-key-env` so that the settings apply only to the intended participant.
 
-For a custom model provider, MCP server, or another native Codex setting, provide:
+For a custom model provider, an MCP server, or another native Codex setting, provide a configuration file:
 
 ```bash
 roller collect ... \
   --codex-config examples/config/codex/config.toml.example
 ```
 
-The file is copied unchanged to `$CODEX_HOME/config.toml` in the rollout container. The Resume lock stores its SHA-256 instead of copying potentially sensitive TOML content into the run. Explicit CLI values for the API address, model, effort, summary, and web search still override matching runtime settings. The example includes `model_verbosity`, which Roller does not override, and a commented MCP server template. Do not store API keys in this file.
+Roller copies this file into the task container. Command-line values for the API address, model, thinking effort, reasoning summary, and Web Search take priority over the matching file settings. The example also contains `model_verbosity` and a disabled MCP server template. Use a new `--run-name` after changing the file, and do not store API keys in it.
 
-## 5. Reasoning configuration
+To change individual settings without a file, use `--codex-config-set`:
 
-In the Codex Harness, `--thinking LEVEL` maps to:
-
-```toml
-model_reasoning_effort = "LEVEL"
+```bash
+roller collect ... \
+  --codex-config-set 'model_verbosity="low"' \
+  --codex-config-set model_providers.roller_api.stream_idle_timeout_ms=1800000
 ```
 
-For example:
+- Each setting is appended as `-c KEY=VALUE` after Roller's own overrides, on every turn. Values are parsed as TOML and fall back to a plain string; therefore, string values must be quoted.
+- Codex silently ignores keys it does not recognize. Verify the spelling: a misspelled key has no effect, and only a value of the wrong type is reported as an error.
+- With `--api-base` or `--codex-api-base`, the model provider that Roller defines is named `roller_api`. Its `stream_idle_timeout_ms` (300000 ms by default), `stream_max_retries` (5 by default), `request_max_retries` (4 by default), and similar keys can be changed. Without either flag, `model_providers.roller_api.*` keys are rejected. Keys that Roller manages, such as `base_url`, `wire_api`, and `env_key`, are rejected with a reference to the Roller flag to use instead, and settings must not overlap each other.
+- Settings are recorded in `lock.json` and `info.json`. A value is redacted only when its own key name resembles a credential (`token`, `api_key`, `password`, `secret`, ...); inline TOML table values are recorded verbatim. Use a new `--run-name` after changing them, and do not pass secrets this way.
+
+## 5. Multimodal capabilities
+
+The Codex Harness supports both text-only models and vision-capable Responses models. Images enter the workspace through `files.inputs`, and Codex can open local images with its native `view_image` tool. Image tool results are preserved in the native trace, ACTF, and multimodal SFT, where SFT uses `<image>` placeholders and the top-level `images` field.
+
+Vision tasks also require the Codex version, the selected model, and the Responses API service to support image input. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. Text-only models can continue to process text and ordinary files, but they cannot complete tasks that require understanding image content.
+
+## 6. Thinking configuration
+
+`--thinking` sets Codex reasoning effort. If it is omitted, Codex, the model, and the service use their defaults.
+
+Example:
 
 ```bash
 roller collect ... \
   --harness codex \
-  --thinking xhigh \
+  --thinking high \
   --reasoning-summary detailed
 ```
 
-The task's `runtime.thinking` wins over the CLI. Roller forwards
-`minimal/low/medium/high/xhigh` to Codex. The model and API service then validate them. `xhigh` depends on
-whether the model supports it. Codex CLI 0.149.0 does not accept `max`/`ultra`. Roller errors early. The OpenClaw-only
-`adaptive` is also rejected early. `off`/`none` are rejected as well, because the Codex Harness has no
-single switch that turns off reasoning for every reasoning model. To use the model/CLI default,
-omit `--thinking`.
+The Codex Harness passes `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` to Codex as reasoning effort. Actual support depends on the model and the API service. `off`, `none`, and the OpenClaw-specific `adaptive` value are not supported. For a new model, omit `--thinking` or begin with a level explicitly supported by the service.
 
-`--reasoning-summary` accepts:
+`--reasoning-summary` controls visible reasoning summaries and accepts `auto`, `concise`, `detailed`, or `none`. If the service returns plaintext reasoning, Roller gives priority to that content. Encrypted-only reasoning does not appear in ACTF/SFT.
 
-- `auto`
-- `concise`
-- `detailed`
-- `none`
+`--no-keep-thinking` clears ACTF/SFT `reasoning_content` only. It does not change the native Codex session or the continuation context.
 
-A Codex native session may store plaintext `response_item.reasoning.content`, a visible
-`response_item.reasoning.summary`, and non-public encrypted reasoning. Roller prefers whatever plaintext
-content actually exists and keeps the summary when plaintext is absent. Non-public content remains only in native raw. OpenAI reasoning
-models usually expose only a summary. Open-source Responses services may return plaintext reasoning content
-directly. Choosing `none` means a missing summary is expected, but if the service still returns plaintext content, Roller
-saves it according to `--keep-thinking`.
+## 7. Web Search
 
-If an open-source Responses model returns plaintext reasoning content, the default `--keep-thinking` projects it
-directly into ACTF/SFT `reasoning_content`.
+Codex disables Web Search by default. Change this setting only for tasks that require online information:
 
-`--no-keep-thinking` clears `reasoning_content` during native raw→ACTF. The Codex native
-`trace.jsonl` stays as-is, and this option currently does not rewrite the context Codex itself uses for later `resume`.
-It is therefore an export control, not a raw-redaction or two-way context-stripping switch.
+| Value | Behavior |
+| --- | --- |
+| `disabled` | Do not use Web Search. This is the default |
+| `cached` | Prefer existing search results |
+| `live` | Allow live web queries |
 
-## 6. Web Search
-
-To reduce unreproducible external dependencies, the Codex Harness defaults to:
+Example:
 
 ```text
---codex-web-search disabled
+--codex-web-search live
 ```
 
-You can set it explicitly to `cached` or `live`. When a native session contains `web_search_end`, Roller turns
-the query/action and recorded results into a `web_search` tool call/result for ACTF, SFT, and
-the Viewer.
+Searches are stored as tool calls in the trajectory; therefore, the query and the returned results can be inspected in Viewer.
 
-## 7. Context and workspace
+## 8. Sessions and workspace
 
-The Codex container working directory is `/roller/workspace`:
+Each Agent or Simulator runs in an isolated disposable container and does not read host Codex accounts, configuration, or session history.
 
-- inputs keep their relative paths from the Task Bundle and are mounted read-only.
-- Context files are copied into the workspace. `AGENTS.md` takes effect under Codex's normal discovery rules.
-- `skills/` content with `role=skill` is also copied to `$HOME/.agents/skills/`.
-- `runtime.setup` runs in the workspace before the first Codex turn.
-- `files.output_dir` stays writable inside the workspace and is safely collected into the sample `results/` at the end.
+- Inputs are read-only and keep their Task Bundle relative paths.
+- Context files are copied to their declared task paths. `AGENTS.md` follows the normal Codex discovery rules.
+- `runtime.setup` runs before the first turn.
+- The output directory remains writable and is collected into the sample `results/` directory.
 
-The first predefined `messages` call uses `codex exec`. Later messages use `codex exec resume --last` and share
-the same isolated `$CODEX_HOME`. Each rollout uses its own container and Codex home and does not read host
-`~/.codex` accounts, sessions, or global config.
+Predefined multi-turn messages continue one Codex session, so conversation history and workspace files remain available in later turns.
 
-## 8. Trajectory outputs
+### 8.1 User Simulator
 
-The default Codex sample layout matches OpenClaw:
+Codex can act as either the Task Agent or the User Simulator. Configure the Harness and model separately at the task top level and under `user_simulator`. Each role keeps its own session in an isolated container.
+
+## 9. Trajectories and request recording
+
+A run produces the following main files:
+
+| File | Purpose |
+| --- | --- |
+| `trace.jsonl` | Records native Codex session events for troubleshooting |
+| `trace_ACTF.json` | Normalizes reasoning, replies, tool calls, and results |
+| `tools_capture.jsonl` | Preserves the tool definitions used in actual model requests |
+| `trace_SFT.json` | Converts a successful trajectory into training-data format |
+
+### 9.1 `trace.jsonl`
+
+This file preserves native Codex events, context, and token usage for troubleshooting. It is not the complete HTTP request sent to the model service, and its format may change with Codex versions.
+
+### 9.2 `trace_ACTF.json`
+
+ACTF groups reasoning, text, and tool calls from one response and pairs each result with its call. The system prompt and tool definitions come from the actual run.
+
+### 9.3 `trace_SFT.json` and `sft.jsonl`
+
+SFT keeps the Responses tool format used by Codex. Image samples add an `images` field. If tool definitions are missing, corrupt, or change across requests, Roller keeps the native trajectory but does not generate a potentially inaccurate SFT record.
+
+### 9.4 Complete request records
+
+The default `--wire-trace actf` keeps only the tool information required for ACTF/SFT. To inspect the complete request received by the model, use the following setting temporarily:
 
 ```text
-<sample>/
-├── trace.jsonl
-├── trace_ACTF.json
-├── tools_capture.jsonl      # Original per-request tool definitions
-├── trace_SFT.json
-├── info.json
-└── results/                 # When output exists
+--wire-trace full
 ```
 
-### `trace.jsonl`
+The sample then retains complete request records. They can contain message text, tool arguments, and reasoning settings; therefore, they should be used only for troubleshooting or auditing. `--wire-trace off` records no request tool definitions. Codex still produces its native trace and ACTF, but it does not generate SFT without complete tool definitions.
 
-This is the newest native session file under `$CODEX_HOME/sessions/<date>/rollout-*.jsonl`. It keeps
-the Codex event structure, including `session_meta`, `turn_context`, `response_item`, `event_msg`, compaction events,
-and token usage. It is a Codex-private schema. It is not promised to be stable across CLI versions, and it is not a per-request HTTP wire
-trace.
+## 10. First-run check
 
-### `trace_ACTF.json`
+Keep `--limit 1` in the example command for the first run. After it finishes, check the following:
 
-The converter uses `token_count` as the boundary of one model request, combines separate reasoning, assistant message,
-and multiple function/custom tool calls into one ACTF step, then pairs later tool
-output by `call_id`. The top-level system prompt comes from `session_meta.base_instructions`, native developer/system
-messages, and the `<environment_context>` Codex injects before the first turn. User messages from the task are matched by
-content to avoid treating environment events as user messages or assigning them to the wrong turn.
+1. `info.json` in the run directory has `state` set to `finished`.
+2. The sample `info.json` has `status` set to `ok`.
+3. The sample contains `trace.jsonl`, `trace_ACTF.json`, and `trace_SFT.json`.
+4. If the task creates files, the expected files exist under `results/`.
 
-Tool definitions come from the actual outgoing Responses requests, including tools never called by the model. Roller does not infer schemas from arguments. ACTF records `tools_format: "responses"`, the unmodified `tools` list, and `tools_capture` provenance with every request snapshot. Definitions, descriptions, required fields, enums, custom grammars, namespaces, and original ordering are preserved.
+## 11. Common issues
 
-`tools_capture.jsonl` survives normal sample pruning. It contains only tool-related fields (`tools`, `tool_choice`, `parallel_tool_calls`, and any `input` items of type `additional_tools`), without ordinary messages or HTTP headers. Schema contents are preserved verbatim as JSON values, including properties named `token`; they are not subjected to the generic sensitive-key redactor. Treat descriptions and defaults as original harness-provided content.
+**(1) `Codex requires a non-empty API key`**
 
-On shutdown, capture ends with a `codex_tools_complete` record containing the Responses `request_count`. SFT requires this final record and a matching snapshot count. Truncated captures and older captures without completion evidence retain raw/ACTF and the available snapshots, but cannot produce SFT.
+The host variable referenced by `--api-key-env` is missing or empty. Verify the variable name. Do not put the key directly in the task.
 
-### `trace_SFT.json` and `sft.jsonl`
-
-A text-only SFT record contains `messages` and `tools`; image records also contain `images`. Codex `tools` retains the native Responses format, including namespace/custom/built-in entries, instead of normalizing everything to nested Chat Completions functions. Custom calls retain their string `input` under a `type: "custom"` call; namespace fields are preserved. The assistant always includes
-`reasoning_content`, `content`, and `tool_calls`. Tool results become `role=tool`. Run-level `sft.jsonl`
-only aggregates successful or trusted Resume samples.
-
-Missing or invalid captures, changing tool definitions across requests, or programmatic `additional_tools` input items make SFT explicitly unavailable. The raw trajectory and exact request snapshots remain available. A single top-level SFT `tools` list cannot faithfully represent these changing or alternative definitions. Even a trajectory without tool calls needs capture; only a recorded request with empty/omitted tools proves that its tool list was empty. `--wire-trace off` therefore produces no Codex SFT.
-
-## 9. Native raw and wire trace
-
-Codex may insert instructions, compact history, selectively replay
-tool results, or convert internal events into Responses input between the native session and the real model request. `trace.jsonl` and the ACTF/SFT generated from it can only
-prove what the Codex session recorded, not the full JSON context each model call finally received.
-
-The Codex Harness supports `--wire-trace full`: Roller temporarily points the custom provider's API base at a
-rollout-local proxy and saves a redacted full JSON request body before forwarding to the real `--api-base`.
-Tool definitions can appear in an `additional_tools` item of `input`. The file is request-side evidence. It does not save
-the upstream response body, and it cannot say how the model service later truncates, routes, or tokenizes internally.
-
-Default `--wire-trace actf` keeps `tools_capture.jsonl` and removes the temporary wire file after conversion. It captures original tool definitions without storing full message bodies. To inspect the full request context for a model call, use `--wire-trace full` and appropriate log access controls. Tool capture observes the request sent to the API; it cannot verify any transformations inside the upstream service.
-
-## 10. Common issues
-
-### `Codex requires a non-empty API key`
-
-The host variable pointed to by `--api-key-env` is missing or empty. Check the variable name. Do not put the key directly in the task.
-
-### `/responses` returns 404 or a protocol error
+**(2) `/responses` returns 404 or a protocol error**
 
 The API service only has Chat Completions, or its Responses streaming/tool protocol is incompatible. Switch to a
-Responses-capable service. The OpenClaw Harness can still be used for model services that only support Chat Completions.
+Responses-capable service. For model services that support only Chat Completions, the OpenClaw Harness remains available.
 
-### `Codex native trace produced no assistant steps`
+**(3) `Codex native trace produced no assistant steps`**
 
-The CLI exited before producing a valid model event, or the native event schema of the Codex version in use has changed. First inspect
-the error kept on the sample and the `--keep-container-on-error` container, then check `codex_version`. When upgrading the CLI,
-update the converter tests as well.
+Codex exited before producing a valid reply. Inspect the sample `info.json` and `trace.jsonl` first. For further troubleshooting, use `--keep-container-on-error` to retain the failed container and verify the `codex_version` recorded in `info.json`.
 
-### User Simulator
+**(4) `invalid_encrypted_content` / `Encrypted content could not be decrypted or parsed`**
 
-Codex can be the Task Agent or the User Simulator. Set
-`"harness": "codex"` at the task top level for the Task Agent, and set `user_simulator.harness` for the Simulator. The two
-`model` values can also be specified separately. Dynamic sessions keep context with Codex `resume --last`.
+Codex always sends Responses requests with `store: false` and replays earlier `reasoning.encrypted_content` items, and Codex does not expose a setting to turn this off. Some relayed endpoints intermittently fail to verify reasoning they issued themselves. When the request recording proxy is active (the default `--wire-trace actf` with `--no-codex-websockets`), Roller resends the identical request up to 3 times when a 400 response has JSON `error.code` equal to `invalid_encrypted_content`, including gzip/deflate responses. Each retry is recorded as an `upstream_retry` entry in `--wire-trace full` records. Stopping the proxy cancels pending retries. If every attempt fails, the error still ends the rollout. Persistent failures require a fix on the endpoint side.
+
+**(5) `apply_patch: command not found`**
+
+Codex adds its `apply_patch` alias to `PATH` at runtime, but Debian's `/etc/profile` resets `PATH` in the login shells that Codex uses to run commands. The current `docker/codex/Dockerfile` installs a fixed `/usr/local/bin/apply_patch` alias; images built before this change must be rebuilt.
+
+**(6) `idle timeout waiting for SSE` or `stream disconnected before completion`**
+
+Codex drops a streaming response after 5 minutes without data (`stream_idle_timeout_ms`, 300000 ms by default) and retries up to 5 times, each retry making the model generate again. Services that do not stream tool-call arguments trip this timeout when the model writes long arguments. With `--api-base` or `--codex-api-base`, raise the idle timeout of Roller's provider:
+
+```bash
+roller collect ... \
+  --codex-config-set model_providers.roller_api.stream_idle_timeout_ms=1800000
+```

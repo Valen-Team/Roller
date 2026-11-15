@@ -56,11 +56,11 @@ def serve(config):
     os.environ["ROLLER_DEEPSEEK_MODEL"] = config["model"]
     os.environ["ROLLER_DEEPSEEK_OUTPUT_TOKENS"] = str(config["output_tokens"])
     journal({"type": "metadata", "schema": "roller.deepseek-events/v1", "version": VERSION,
-             "profile": config.get("profile", "sdk"), "session_id": config["session_id"], "model": config["model"]})
-    # Full sdk builds its native prompt; append the task contract rather than
-    # replacing native tool instructions. Minimal reads DSH_SYSTEM_PROMPT itself.
+             "profile": config["profile"], "session_id": config["session_id"], "model": config["model"]})
+    # sdk-minimal reads DSH_SYSTEM_PROMPT itself. Other profiles build a native
+    # prompt with their tool instructions; append the task contract to it.
     patches = [str(STATE / "roller.patch.yml")]
-    if config.get("profile", "sdk") != "sdk-minimal":
+    if config["profile"] != "sdk-minimal":
         prompt_patch = STATE / "task-prompt.patch.yml"
         prompt_patch.write_text(json.dumps([{"id": "system-prompt", "config": {
             "personaSuffix": "Your working directory is {{cwd}}.\n\n" + config["system_prompt"]
@@ -69,7 +69,7 @@ def serve(config):
     # Keep initialization errors reviewable even when there is no native turn.
     with DeepSeekHarness(
         model=config["model"], provider="deepseek-official", cwd=os.getcwd(),
-        profile=config.get("profile", "sdk"), dsh_home="/roller/deepseek-home",
+        profile=config["profile"], dsh_home="/roller/deepseek-home",
         patches=tuple(patches),
         reasoning_effort=config["thinking"], max_tokens=config["output_tokens"],
         initialize_timeout_seconds=min(60, config["timeout_seconds"]),

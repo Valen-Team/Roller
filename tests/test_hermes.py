@@ -13,10 +13,14 @@ import unittest
 from unittest.mock import Mock, patch
 
 from roller.cli import _build_parser, _collect
+from roller.collector import CollectionConfig, Collector
 from roller.harnesses.hermes import HermesConfig, HermesHarness, RUNNER_PATH
 from roller.hermes_actf import convert_hermes_trace, extract_hermes_usage, hermes_events_to_actf
-from roller.models import RunRequest, Task
+from roller.models import HarnessResult, RunRequest, Task
 from roller.sft import actf_to_sft
+from roller.trajectory_audit import sft_exclusion_reason
+
+from test_gateway_ports import isolate_gateway_ports
 
 
 TOOL = {"type": "function", "function": {"name": "terminal", "description": "Run a command", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}}
@@ -70,8 +74,13 @@ class HermesTraceTests(unittest.TestCase):
         calls = events[2]["message"]["tool_calls"]
         calls.append({**deepcopy(calls[0]), "id": "call-2"})
         events.insert(3, event("tool", "SECOND", tool_call_id="call-2"))
-        sft = actf_to_sft(hermes_events_to_actf(events))
-        self.assertEqual([m["tool_call_id"] for m in sft["messages"] if m["role"] == "tool"], ["call-2", "call-1"])
+        trajectory = hermes_events_to_actf(events)
+        original = deepcopy(trajectory)
+        sft = actf_to_sft(trajectory)
+        results = [m for m in sft["messages"] if m["role"] == "tool"]
+        self.assertEqual([m["tool_call_id"] for m in results], ["call-1", "call-2"])
+        self.assertEqual([m["content"] for m in results], ["TOKEN", "SECOND"])
+        self.assertEqual(trajectory, original)
 
     def test_invalid_native_tools_are_rejected(self):
         for mutation in ("missing_schema", "bad_json", "nonobject", "duplicate_call", "orphan_result"):
@@ -163,6 +172,53 @@ class HermesTraceTests(unittest.TestCase):
 
 
 class HermesBridgeTests(unittest.TestCase):
+    def test_actual_journal_request_controls_reach_collector_audit(self):
+        spec = importlib.util.spec_from_file_location("roller_hermes_runner_test", RUNNER_PATH)
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+
+        class FakeAgent:
+            def _interruptible_api_call(self, kwargs):
+                self.forwarded = kwargs
+                return {"choices": [{"message": {"role": "assistant", "content": "answer"},
+                                     "finish_reason": "stop"}]}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            sample_dir = Path(temporary) / "sample"
+            sample_dir.mkdir()
+            raw = sample_dir / "trace.jsonl"
+            journal = runner.Journal(raw)
+            journal.write("message", message={"role": "user", "content": "prompt"})
+            agent = runner.journaled_agent(FakeAgent, journal)()
+            agent._interruptible_api_call({
+                "model": "model", "messages": [{"role": "user", "content": "prompt"}],
+                "tools": [], "reasoning_effort": "high",
+                "extra_body": {"reasoning": {"enabled": True, "effort": "high"},
+                               "unrelated": "not needed for effort audit"},
+            })
+            request_row = next(row for row in (json.loads(line) for line in raw.read_text().splitlines())
+                               if row["type"] == "request")
+            self.assertEqual(agent.forwarded["reasoning_effort"], "high")
+            self.assertEqual(request_row["reasoning_effort"], "high")
+            self.assertEqual(request_row["extra_body"],
+                             {"reasoning": {"enabled": True, "effort": "high"}})
+            trajectory = sample_dir / "trace_ACTF.json"
+            convert_hermes_trace(raw, trajectory)
+            request = RunRequest(0, Task("task", ("prompt",), 0, thinking="low"), "model", 30)
+            result = HarnessResult(
+                status="ok", elapsed_seconds=0.01,
+                trace_path="trace.jsonl", trajectory_path="trace_ACTF.json",
+                metadata={"raw_trace_schema": "roller.hermes-events/v1",
+                          "reasoning_effort": "low", "keep_thinking": True},
+            )
+            collector = Collector(CollectionConfig(run_dir=Path(temporary)), lambda slot: None)
+            info = collector._finalize_sample(request, sample_dir, "hermes", result, [], "test")
+            self.assertEqual(info["runtime"]["wire_effort_audit"]["source"], "native")
+            self.assertEqual(info["runtime"]["wire_effort_audit"]["status"], "mismatch")
+            self.assertEqual(sft_exclusion_reason(info), "wire_effort_mismatch")
+            collector._write_sft_dataset([info])
+            self.assertEqual((Path(temporary) / "sft.jsonl").read_text(), "")
+
     def test_tool_images_are_moved_to_following_user_message_on_wire(self):
         spec = importlib.util.spec_from_file_location("roller_hermes_runner_test", RUNNER_PATH)
         runner = importlib.util.module_from_spec(spec)
@@ -187,7 +243,7 @@ class HermesBridgeTests(unittest.TestCase):
         self.assertEqual(rewritten[2]["content"][1]["image_url"]["url"], data_url)
         self.assertIsInstance(messages[1]["content"], list)
 
-    def test_runner_uses_native_toolsets_and_explicit_vision_opt_out(self):
+    def test_runner_passes_the_selected_toolsets(self):
         import sys
         from types import SimpleNamespace
         spec = importlib.util.spec_from_file_location("hermes_tool_selection", RUNNER_PATH)
@@ -211,11 +267,16 @@ class HermesBridgeTests(unittest.TestCase):
             config = {"model": "test", "message": "hello", "session_id": "s", "max_iterations": 2,
                       "system_prompt": "test", "timeout_seconds": 10}
             runner.run_turn(config, tmp)
+            self.assertEqual(captured[-1]["enabled_toolsets"], ["terminal", "file", "vision"])
+            self.assertNotIn("disabled_toolsets", captured[-1])
+            runner.run_turn({**config, "vision": False}, tmp)
+            self.assertEqual(captured[-1]["enabled_toolsets"], ["terminal", "file"])
+            runner.run_turn({**config, "toolsets": None, "disabled_toolsets": ["delegation"]}, tmp)
             self.assertIsNone(captured[-1]["enabled_toolsets"])
+            self.assertEqual(captured[-1]["disabled_toolsets"], ["delegation"])
+            runner.run_turn({**config, "toolsets": ["web"], "disabled_toolsets": []}, tmp)
+            self.assertEqual(captured[-1]["enabled_toolsets"], ["web"])
             self.assertIsNone(captured[-1]["disabled_toolsets"])
-            runner.run_turn({**config, "toolsets": ["web", "vision"], "vision": False}, tmp)
-            self.assertEqual(captured[-1]["enabled_toolsets"], ["web", "vision"])
-            self.assertEqual(captured[-1]["disabled_toolsets"], ["vision"])
 
     def test_persistence_hook_keeps_tools_before_compaction_and_across_processes(self):
         spec = importlib.util.spec_from_file_location("roller_hermes_runner_test", RUNNER_PATH)
@@ -290,6 +351,33 @@ class HermesSessionTests(unittest.TestCase):
         harness = HermesHarness(HermesConfig(api_key_env="ROLLER_TEST_KEY", **kwargs), 0, self.runtime)
         return harness.create_session(RunRequest(0, Task("task", ("read",), 0, harness="hermes"), "test-model", 120), self.root, 1)
 
+    def test_default_settings_and_turn_options_are_unchanged(self):
+        session = self.session()
+        self.assertEqual(session.settings(), {"max_iterations": 12, "context_length": None, "vision": True, "toolsets": ["terminal", "file", "vision"]})
+        self.assertEqual(session.turn_options(60), {"max_iterations": 12, "context_length": None, "vision": True})
+        self.assertEqual(self.session(vision=False).settings()["toolsets"], ["terminal", "file"])
+        captured = self.session(capture_calls=True, api_base="http://localhost:1234/v1")
+        self.assertEqual(captured.settings()["toolsets"], ["terminal", "file", "delegation", "vision"])
+        self.assertNotIn("toolsets", captured.turn_options(60))
+
+    def test_selected_toolsets_keep_delegation_behind_call_capture(self):
+        for capture in (False, True):
+            with self.subTest(capture_calls=capture):
+                session = self.session(toolsets=("native",), capture_calls=capture, api_base="http://localhost:1234/v1")
+                disabled = [] if capture else ["delegation"]
+                self.assertEqual({key: session.turn_options(60)[key] for key in ("toolsets", "disabled_toolsets")},
+                                 {"toolsets": None, "disabled_toolsets": disabled})
+                self.assertEqual({key: session.settings()[key] for key in ("toolsets", "disabled_toolsets")},
+                                 {"toolsets": None, "disabled_toolsets": disabled})
+        session = self.session(toolsets=("terminal", "web"), vision=False)
+        self.assertEqual(session.turn_options(60)["toolsets"], ["terminal", "web"])
+        self.assertEqual(session.turn_options(60)["disabled_toolsets"], ["delegation", "vision"])
+        captured = self.session(toolsets=("terminal", "delegation"), capture_calls=True, api_base="http://localhost:1234/v1")
+        self.assertEqual(captured.turn_options(60)["toolsets"], ["terminal", "delegation"])
+        for toolsets in ((), ("",), ("native", "web"), ("terminal", "delegation")):
+            with self.subTest(toolsets=toolsets), self.assertRaises(ValueError):
+                HermesConfig(toolsets=toolsets)
+
     def test_start_two_turns_collect_and_idempotent_finish(self):
         session = self.session()
         session.start()
@@ -304,6 +392,53 @@ class HermesSessionTests(unittest.TestCase):
         self.assertIs(session.finish("error"), result)
         self.assertEqual(len([c for c in self.runtime.calls if c[:2] == ["rm", "-f"]]), 1)
         self.assertNotIn("test-private-key", json.dumps(result.metadata))
+
+    def test_warns_if_image_changes_after_preflight(self):
+        session = self.session(preflight_image_digest="sha256:preflight")
+
+        with self.assertLogs("roller.harnesses.bridge", level="WARNING") as captured:
+            session.start()
+
+        self.assertIn("changed after preflight", captured.output[0])
+        self.assertEqual(session.image_digest, "sha256:test")
+        session.finish("error", "test cleanup")
+
+    def test_finish_sums_child_usage_before_capture_cleanup(self):
+        session = self.session(capture_calls=True, api_base="http://localhost:1234/v1")
+        session.container_started = True
+
+        def copy_children(*args):
+            children = session.capture.recorder.directory / "native" / "children"
+            children.mkdir(parents=True)
+            for name, tokens in (("a", 11), ("b", 17)):
+                rows = [event("assistant", "child only")]
+                rows[0]["usage"] = {"prompt_tokens": tokens, "completion_tokens": 2,
+                                    "prompt_tokens_details": {"cached_tokens": 3}}
+                # The same provider response is also retained as evidence;
+                # it must not count as a second call.
+                rows.append({"type": "response", "response": {"usage": rows[0]["usage"]}})
+                (children / (name + ".jsonl")).write_text(
+                    "".join(json.dumps(row) + "\n" for row in rows))
+
+        import shutil
+        def finish_capture(status):
+            shutil.rmtree(session.capture.recorder.directory / "native")
+            return {}
+
+        with patch.object(session.capture, "copy_native", side_effect=copy_children), \
+             patch.object(session.capture, "finish", side_effect=finish_capture):
+            result = session.finish("ok")
+        self.assertEqual(result.status, "ok", result.error)
+        # Root: 2 calls, 10 input / 3 output / 4 cached. Children: 2 calls.
+        self.assertEqual(result.usage["request_count"], 4)
+        self.assertEqual(result.usage["input_tokens"], 38)
+        self.assertEqual(result.usage["output_tokens"], 7)
+        self.assertEqual(result.usage["total_tokens"], 45)
+        self.assertEqual(result.usage["cache_read_tokens"], 10)
+        sft = actf_to_sft(json.loads((self.root / "rollout/trace_ACTF.json").read_text()))
+        self.assertNotIn("child only", json.dumps(sft))
+        self.assertIs(session.finish("ok"), result)
+        self.assertEqual(result.usage["request_count"], 4)
 
     def test_native_failure_is_error_and_key_is_redacted(self):
         self.runtime.turn_result = {"ok": False, "error": "rejected test-private-key"}
@@ -365,6 +500,9 @@ class HermesSessionTests(unittest.TestCase):
 
 
 class HermesCliTests(unittest.TestCase):
+    def setUp(self):
+        isolate_gateway_ports(self)
+
     def test_openclaw_simulator_model_config_changes_invalidate_hermes_run_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -401,6 +539,9 @@ class HermesCliTests(unittest.TestCase):
                 self.assertEqual(configurations[0].api_base, "https://hermes.example/v1")
                 self.assertEqual(configurations[0].api_key_env, "HERMES_KEY")
                 self.assertEqual(configurations[0].max_iterations, 5)
+                self.assertEqual(
+                    configurations[0].preflight_image_digest, "sha256:test"
+                )
                 self.assertEqual(_collect(_build_parser().parse_args(command + ["--resume"])), 0)
                 self.assertEqual(len(configurations), 1)
                 with self.assertRaisesRegex(Exception, "lock|configuration|mismatch"):
@@ -408,6 +549,30 @@ class HermesCliTests(unittest.TestCase):
             info = json.loads((root / "runs/case/info.json").read_text())
             self.assertEqual(info["configuration"]["hermes"]["docker_image_digest"], "sha256:test")
             self.assertNotIn("test-key", (root / "runs/case/lock.json").read_text())
+
+    def test_toolset_selection_is_locked_and_default_lock_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "tasks.json"
+            path.write_text(json.dumps([{"harness": "hermes", "model": "model", "prompt": "OK"}]))
+            command = ["collect", "--tasks", str(path), "--api-base", "https://hermes.example/v1", "--api-key-env", "HERMES_KEY", "--output", str(root / "runs")]
+            with patch.dict("os.environ", {"HERMES_KEY": "test-key"}), patch("roller.cli._docker_preflight", return_value="sha256:test"), patch("roller.cli.Collector") as collector, contextlib.redirect_stdout(io.StringIO()):
+                collector.return_value.collect.return_value = []
+                self.assertEqual(_collect(_build_parser().parse_args(command + ["--run-name", "default"])), 0)
+                self.assertEqual(_collect(_build_parser().parse_args(command + ["--run-name", "native", "--hermes-toolset", "native"])), 0)
+                with self.assertRaisesRegex(Exception, "lock|configuration|mismatch"):
+                    _collect(_build_parser().parse_args(command + ["--run-name", "default", "--resume", "--hermes-toolset", "native"]))
+            default, native = (json.loads((root / "runs" / name / "lock.json").read_text())["execution"]["hermes"] for name in ("default", "native"))
+        self.assertEqual(default, {
+            "docker_image": "roller-hermes:d15ed4445207", "container_user": "0", "network": "host",
+            "api_base": "https://hermes.example/v1", "api_key_env": "HERMES_KEY", "reasoning_effort": None,
+            "max_iterations": 12, "hermes_revision": "d15ed4445207dda418b984e8bda0f68f48b8c6f3",
+            "context_length": None, "vision": True, "toolsets": ["terminal", "file", "vision"],
+            "api_mode": "chat_completions", "wire_trace": "actf", "keep_thinking": True,
+            "pass_env_names": ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"],
+            "docker_image_digest": "sha256:test",
+        })
+        self.assertEqual(native, {**default, "toolsets": None, "disabled_toolsets": ["delegation"]})
 
     def test_mixed_dry_run_accepts_hermes_on_both_sides_without_docker_or_key(self):
         with tempfile.TemporaryDirectory() as tmp:

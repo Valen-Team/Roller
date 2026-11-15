@@ -8,10 +8,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from roller.harnesses.codex import (
+    CODEX_ENCRYPTED_CONTENT_RETRIES,
     CodexConfig,
     CodexHarness,
     redact_api_base,
-    validate_codex_thinking,
 )
 from roller.models import RunRequest, Task
 
@@ -73,6 +73,93 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertIn("disable_response_storage=true", command)
         self.assertEqual(command[-2:], ["--", "hello"])
 
+    def test_config_set_follows_roller_overrides_on_every_turn(self) -> None:
+        harness = CodexHarness(
+            CodexConfig(
+                api_base="http://example.test/v1",
+                config_set=(
+                    ("model_providers.roller_api.stream_idle_timeout_ms", "1800000"),
+                    ("model_verbosity", '"low"'),
+                ),
+            ),
+            0,
+        )
+        harness._root_thread_id = "thread"
+        for resume in (False, True):
+            with self.subTest(resume=resume):
+                command = harness._codex_command(
+                    "container", self._request(), "hello", resume=resume
+                )
+                overrides = [
+                    command[index + 1]
+                    for index, argument in enumerate(command)
+                    if argument == "-c"
+                ]
+                self.assertEqual(
+                    overrides[-2:],
+                    [
+                        "model_providers.roller_api.stream_idle_timeout_ms=1800000",
+                        'model_verbosity="low"',
+                    ],
+                )
+                self.assertIn('model_provider="roller_api"', overrides)
+                self.assertEqual(command[-2:], ["--", "hello"])
+
+    def test_config_set_rejects_paths_roller_manages(self) -> None:
+        for key, hint in (
+            ("model_provider", "--codex-api-base"),
+            ("model_providers.roller_api", "--codex-api-base"),
+            ("model_providers.roller_api.base_url", "--codex-api-base"),
+            ("model_reasoning_effort", "--thinking"),
+            ("web_search", "--codex-web-search"),
+            ("features", "Roller enables it"),
+        ):
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, hint):
+                    CodexConfig(config_set=((key, "1"),))
+        with self.assertRaisesRegex(ValueError, "overlaps 'model_verbosity'"):
+            CodexConfig(config_set=(("model_verbosity", "1"), ("model_verbosity", "2")))
+
+    def test_config_set_may_disable_multi_agent_only_without_capture(self) -> None:
+        setting = (("features.multi_agent", "false"),)
+        self.assertEqual(CodexConfig(config_set=setting).config_set, setting)
+        with self.assertRaisesRegex(ValueError, "--capture-calls"):
+            CodexConfig(
+                api_base="http://example.test/v1", capture_calls=True, config_set=setting
+            )
+
+    def test_config_set_roller_provider_requires_api_base(self) -> None:
+        setting = (("model_providers.roller_api.stream_idle_timeout_ms", "1800000"),)
+        with self.assertRaisesRegex(ValueError, "--api-base / --codex-api-base"):
+            CodexConfig(config_set=setting)
+        config = CodexConfig(api_base="http://example.test/v1", config_set=setting)
+        self.assertEqual(config.config_set, setting)
+
+    def test_every_path_roller_passes_is_managed(self) -> None:
+        options = {"api_base": "http://example.test/v1", "capture_calls": True}
+        harness = CodexHarness(
+            CodexConfig(**options, reasoning_effort="high", reasoning_summary="auto"), 0
+        )
+        command = harness._codex_command(
+            "container", self._request(), "hello", resume=False
+        )
+        keys = [
+            command[index + 1].split("=", 1)[0]
+            for index, argument in enumerate(command)
+            if argument == "-c"
+        ] + [
+            f"features.{command[index + 1]}"
+            for index, argument in enumerate(command)
+            if argument == "--enable"
+        ]
+        self.assertLessEqual(
+            {"model_providers.roller_api.base_url", "features.multi_agent"}, set(keys)
+        )
+        for key in keys:
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, "Roller sets itself"):
+                    CodexConfig(**options, config_set=((key, "1"),))
+
     def test_task_effort_overrides_cli_and_rejects_openclaw_profiles(self) -> None:
         harness = CodexHarness(CodexConfig(reasoning_effort="low"), 0)
         self.assertEqual(harness._effective_effort(self._request("xhigh")), "xhigh")
@@ -82,10 +169,16 @@ class CodexHarnessTests(unittest.TestCase):
             harness._effective_effort(self._request("adaptive"))
         self.assertEqual(harness._effective_effort(self._request("max")), "max")
 
-    def test_default_cli_rejects_unsupported_advanced_effort(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "does not accept"):
-            validate_codex_thinking("codex-cli 0.149.0", "max")
-        validate_codex_thinking("codex-cli 0.150.0", "max")
+    def test_forwards_advanced_effort_to_codex_for_runtime_validation(self) -> None:
+        for effort in ("max", "ultra"):
+            with self.subTest(effort=effort):
+                harness = CodexHarness(CodexConfig(reasoning_effort=effort), 0)
+                command = harness._codex_command(
+                    "container", self._request(), "hello", resume=False
+                )
+                self.assertIn(
+                    f'model_reasoning_effort="{effort}"', command
+                )
 
     def test_requires_absolute_http_api_base(self) -> None:
         with self.assertRaisesRegex(ValueError, "absolute http"):
@@ -101,6 +194,19 @@ class CodexHarnessTests(unittest.TestCase):
                 wire_trace_mode="full",
                 network=None,
             )
+
+    def test_wire_proxy_retries_encrypted_content_rejections(self) -> None:
+        harness = CodexHarness(CodexConfig(api_base="http://example.test/v1"), 0)
+        with tempfile.TemporaryDirectory() as temporary, patch(
+            "roller.harnesses.codex.WireTraceProxy"
+        ) as proxy:
+            harness._start_wire_proxy(Path(temporary))
+        self.assertEqual(
+            proxy.call_args.kwargs["encrypted_content_retries"],
+            CODEX_ENCRYPTED_CONTENT_RETRIES,
+        )
+        self.assertGreater(CODEX_ENCRYPTED_CONTENT_RETRIES, 0)
+        proxy.return_value.start.assert_called_once_with()
 
 
     def test_wire_proxy_shutdown_redacts_sensitive_body_fields(self) -> None:

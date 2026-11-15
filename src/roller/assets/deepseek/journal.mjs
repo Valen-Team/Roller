@@ -10,9 +10,12 @@ export function apply(ctx) {
   // dsh scrubs credential-shaped ambient names. Restore only environment
   // entries the Roller task or --pass-env explicitly requested, using the
   // native subprocess service's deliberate env override seam.
+  // sdk-minimal runs tools in its terminal; other profiles also spawn plain
+  // subprocesses.
   const service = ctx.subprocess;
+  const {profile} = JSON.parse(readFileSync('/roller/deepseek-state/turn.json', 'utf8'));
   const originals = new Map();
-  for (const method of ['spawn', 'spawnTerminal']) {
+  for (const method of profile === 'sdk-minimal' ? ['spawnTerminal'] : ['spawn', 'spawnTerminal']) {
     const original = service[method];
     originals.set(method, original);
     service[method] = function (spec) {
@@ -36,6 +39,11 @@ export function apply(ctx) {
       if (typeof init?.body !== 'string') throw new Error('DeepSeek request body is not serialized JSON');
       const body = JSON.parse(init.body);
       appendFileSync(journal, JSON.stringify({type: 'request', turn, body}) + '\n');
+      if (config.capture_calls) {
+        const headers = new Headers(init.headers ?? (typeof input === 'object' ? input.headers : undefined));
+        headers.set('x-roller-native-session-id', config.session_id);
+        init = {...init, headers};
+      }
     }
     return original.call(globalThis, input, init);
   };

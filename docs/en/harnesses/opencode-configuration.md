@@ -1,50 +1,37 @@
 # OpenCode Harness guide
 
-This page covers only OpenCode-specific images, the API, sessions, and troubleshooting. Roller runs pinned [OpenCode](https://opencode.ai/docs/cli/) **1.18.30** in a disposable Docker container, using native noninteractive runs, session continuation, and exports. For Task fields see [Task format reference](../tasks/task-format.md). For output semantics shared by all Harnesses see [Trajectory output file guide](../traces/trajectory-outputs.md).
+The OpenCode Harness runs tasks through OpenCode Agent when they need file editing, shell commands, or local-image inspection. It connects to an OpenAI Chat Completions service with streaming and tool-call support. This guide follows the order needed for a first run: image, API, Harness-specific flags, sessions, and outputs.
 
-## 1. Supported scope
+Roller currently pins [OpenCode](https://opencode.ai/docs/cli/) 1.18.30. For Task fields, see [Task format reference](../tasks/task-format.md). For shared outputs, see [Trajectory output file guide](../traces/trajectory-outputs.md).
 
-The OpenCode Harness supports:
+For a first run, complete sections 1 through 3 and run the example command. Read the later sections on Harness-specific flags, sessions, and trajectories when those features are needed.
 
-- single-turn `prompt` and predefined multi-turn `messages` (resuming the same native session with `opencode run --session`).
-- Task Agents and User Simulators, both accepting `"harness": "opencode"`.
-- Task Bundle, read-only inputs, Context, setup, task environment variables, custom `output_dir`, and in-container grading.
-- streaming **OpenAI Chat Completions** with tool calls.
-- Native tool discovery, with explicit exclusions through `--opencode-deny-tool NAME`.
-- image attachments produced by OpenCode's `read` tool for image-capable models.
-- ACTF, SFT, reasoning export, and usage.
-- `--wire-trace actf|full|off`.
-- parallelism, retry, run lock, and mixed Resume.
+## 1. Scope
 
-Not currently supported:
+Use the OpenCode Harness when a task needs:
 
-- direct multimodal task messages.
-- native account/OAuth login.
-- custom provider SDKs, MCP, subagents, and persistent memory.
-- automatic compaction (long tasks need enough configured context. Exceeding the window fails).
+- an OpenAI Chat Completions endpoint with streaming and tool calls.
+- shell commands, content search, or file editing.
+- local-image inspection with a vision-capable model.
+- single-turn, multi-turn, Task Agent, or User Simulator execution.
 
-## 2. Image preparation and first run
+The OpenCode Harness does not accept images directly in task messages. Account login, MCP, subagents, persistent memory, and automatic compaction are also disabled. Long tasks need a sufficiently large model context window.
+
+## 2. Image preparation
+
+Build the OpenCode image from the Roller repository root:
 
 ```bash
 docker build -t roller-opencode:1.18.30 docker/opencode
-export OPENAI_API_KEY='your-key'
-export OPENAI_BASE_URL='https://api.example.com/v1'
-python -m roller collect \
-  --tasks examples/coverage/cases/formats/jsonl/opencode.jsonl \
-  --model your-model-id --harness opencode \
-  --parallel 2 --timeout 180 --retries 0 \
-  --output runs/opencode --run-name smoke
 ```
 
-The initial adapter requires OpenAI-compatible **streaming Chat Completions with tools**. The model ID reaches the API unchanged. The internal `roller/` provider prefix is added by the adapter. The image installs a versioned standalone binary with npm SHA-512 verification. The default base is `python:3.12-slim-bookworm`. `BASE_IMAGE` may select another Linux image with Python 3.10+ and apt-get. Linux x86_64 and aarch64 packages are supported. `NPM_REGISTRY` selects a compatible download mirror.
+The image contains the pinned OpenCode release and its runtime dependencies. The host does not need Node.js, Bun, or OpenCode. After the build, configure the API address, API key, and model ID in section 3.
 
-The image also prepares native plugin dependencies at build time. Each isolated container uses the image dependencies with its own configuration directory, avoiding package downloads during task startup. The host does not need Node.js, Bun, or OpenCode.
-
-For `DEBIAN_MIRROR` and `DEBIAN_SECURITY_MIRROR`, see [Docker builds and package mirrors](../start/docker-builds.md).
+The default base image is `python:3.12-slim-bookworm`, with Linux x86_64 and aarch64 support. For another base image, npm registry, or Debian mirror, see [Docker builds and package mirrors](../start/docker-builds.md).
 
 ## 3. Environment variables and API
 
-The OpenCode Harness connects to an OpenAI Chat Completions service with streaming and tool-call support. A first run needs an API address, an API key, and a model ID.
+The OpenCode Harness connects to an OpenAI Chat Completions service with streaming and tool-call support. A first run requires an API address, an API key, and a model ID.
 
 | Setting | Default source | CLI override |
 | --- | --- | --- |
@@ -54,6 +41,23 @@ The OpenCode Harness connects to an OpenAI Chat Completions service with streami
 
 The value of `--opencode-api-key-env` or `--api-key-env` is the name of a host environment variable, not the key itself. The key is read at execution time and is not written to public configuration.
 
+Replace `...`, the API address, and `model-id` with values from the model service. The following command runs a single task so that the configuration can be checked before a larger run:
+
+```bash
+export ROLLER_OPENCODE_KEY='...'
+
+roller collect \
+  --harness opencode \
+  --tasks examples/tasks/tasks.jsonl \
+  --model model-id \
+  --api-base https://api.example.com/v1 \
+  --api-key-env ROLLER_OPENCODE_KEY \
+  --docker-image roller-opencode:1.18.30 \
+  --limit 1 \
+  --output runs \
+  --run-name opencode-demo
+```
+
 (opencode-cli-flags)=
 ## 4. OpenCode-specific flags
 
@@ -61,49 +65,76 @@ This table lists OpenCode-specific runtime flags only. See section 3 for API add
 
 | Option | Default / behavior |
 | --- | --- |
-| `--opencode-image` | Overrides `--docker-image`, then `ROLLER_OPENCODE_IMAGE`, then `roller-opencode:1.18.30` |
-| `--opencode-max-steps` | 100 for SkillsBench and 12 otherwise, also bounded by the rollout timeout |
-| `--opencode-context-length` | 128000 tokens by default, minimum 1024, match the actual model |
-| `--opencode-output-tokens` | 32768 for SkillsBench and 8192 otherwise, positive and smaller than the context window |
-| `--opencode-vision` / `--no-opencode-vision` | Declares image-input support to OpenCode. Enabled by default and explicitly disableable for text-only models |
+| `--opencode-image` | Takes precedence over `--docker-image`. If neither is set, `ROLLER_OPENCODE_IMAGE` is used, with `roller-opencode:1.18.30` as the fallback |
+| `--opencode-max-steps` | 100 for SkillsBench and 12 otherwise, also bounded by the task timeout |
+| `--opencode-context-length` | 128000 tokens by default, minimum 1024. Set it to match the actual model |
+| `--opencode-output-tokens` | 32768 for SkillsBench and 8192 otherwise. Must be positive and smaller than the context window |
+| `--opencode-vision` / `--no-opencode-vision` | Declares image-input support to OpenCode. Enabled by default; can be disabled explicitly for text-only models |
+| `--opencode-native-tools` | Off. Permits every tool in the native OpenCode registry instead of the fixed `bash/read/write/edit/apply_patch/glob/grep/skill` list. The `task` tool is permitted only with `--capture-calls` |
+| `--opencode-deny-tool NAME` | Denies one native tool or permission under `--opencode-native-tools`. Repeat it as needed |
 | `--thinking` / `runtime.thinking` | `off/minimal/low/medium/high/xhigh`. `off` maps to `none`. Provider support is required |
-| `--wire-trace` | Native requests and schemas are captured in every mode. `full` adds HTTP records and requires an explicit API base and host networking |
+| `--wire-trace` | Native requests and tool definitions are captured in every mode. `full` adds HTTP records and requires an explicit API address with `--network host` |
 | `--no-keep-thinking` | Removes reasoning from ACTF/SFT only. Native logs and continuation history are retained |
 
-Dedicated options apply to both participants. The run lock includes the binary version, image digest, endpoint, key variable name, tools, token limits, step limit, and export settings. Credentials are read during execution and are not included in public configuration.
+The same settings apply when OpenCode is the Task Agent or User Simulator. After changing the image, API address, context window, step limit, or tool selection, use a new `--run-name` to avoid a conflict with the previous run configuration.
 
-## 5. Sessions and workspace
+## 5. Multimodal capabilities
 
-Each participant gets an independent container and HOME/XDG directories. Inputs are mounted read-only. Context files are copied to declared paths and listed in the prompt. Setup, selected environment variables, output collection, and in-container grading use the shared Roller task contract.
+OpenCode can use `bash`, `read`, `write`, `edit`, `apply_patch`, `glob`, and `grep`. Vision-capable models and services can open local images through `read`. For a text-only model, disable the image-input declaration with `--no-opencode-vision`.
 
-Native model selection and the registry determine which tools are exposed. Roller permits native tools for noninteractive execution; `--opencode-deny-tool NAME` adds explicit exclusions. Each turn resumes the same session/workspace. Auto-sharing, updates, model refresh, LSP, formatters, compaction, pruning and implicit project configuration remain disabled. Optional integrations still require dependencies and credentials in the container.
+Images enter the workspace through `files.inputs`, and `read` produces image attachments. Image results are preserved in the native trace, ACTF, and multimodal SFT. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly.
 
-## 6. Trace outputs and Resume
+## 6. Sessions and workspace
 
-A local plugin records the serialized provider request without rewriting it. `trace.jsonl` contains requests, native message/part updates, and session exports. ACTF merges native IDs and captures actual tool schemas, visible reasoning, tool calls, and results. Inline image attachments are retained as image blocks and exported to SFT. Bounded attachment metadata and a content hash remain in ACTF details for audit. Non-image attachments keep the bounded summary behavior.
+Each Agent or Simulator runs in an isolated container and does not read the host OpenCode configuration. Inputs are read-only, Context files are copied to their declared task paths, and output files are collected into the sample `results/` directory.
 
-Incomplete or empty replies, API errors, truncated replies, invalid journals, and changing/missing schemas fail explicitly. Timeout recovery preserves available artifacts and removes the container.
+Multi-turn messages for the same participant resume one OpenCode session, so conversation history and workspace files remain available. Each turn starts a new CLI process, so background process handles do not persist.
 
-OpenCode emits no OpenClaw cache trace. Resume validates each participant separately. Full mode still requires HTTP traces, and `capture: none` remains non-reusable.
+Collection does not automatically share sessions, update OpenCode, or enable MCP, subagents, and network tools. Context and skill files remain readable by path.
 
-## 7. Validation
+`--opencode-native-tools` permits the remaining tools of the native registry, including network tools. Subagents stay tied to `--capture-calls`, and the Explore subagent keeps its `bash/read/glob/grep` profile. See [Harness tool availability](tool-availability.md).
 
-```bash
-python examples/coverage/suite.py validate --case '*/opencode'
-python examples/coverage/suite.py run --case '*/opencode' --exclude-case 'vision/*' --dry-run
-PYTHONPATH=src python -m unittest discover -s tests
-ROLLER_OPENCODE_DOCKER_TEST=1 PYTHONPATH=src \
-  python -m unittest discover -s tests -p test_opencode_docker.py -v
-```
+## 7. Trajectories and request recording
 
-Docker tests use a deterministic local streaming API and a fake key while executing real OpenCode tools. No external model charges are incurred. The suite adds 204 input tasks and 36 simulator tasks, four per group. Select 200 nonvision inputs with `--case '*/opencode' --exclude-case 'vision/*'`. Select the nine relevant pairings with `--case 'simulators/pair/opencode--*' --case 'simulators/pair/*--opencode'`. Overlaps are deduplicated. See the {download}`coverage guide <../../../examples/coverage/README.en.md>`.
+A run produces three main trajectory files:
 
-## 8. Common issues
+| File | Purpose |
+| --- | --- |
+| `trace.jsonl` | Records the native OpenCode session and actual model requests for troubleshooting |
+| `trace_ACTF.json` | Normalizes the conversation, reasoning, tool calls, and results |
+| `trace_SFT.json` | Converts a successful trajectory into training-data format |
 
-Common errors:
+Image attachments are preserved in ACTF and multimodal SFT. Tool definitions are taken from the actual model request and are not inferred from call arguments.
 
-- the endpoint does not support streaming or tool calls: the initial adapter requires streaming Chat Completions with tools. Use a compatible service.
-- a trajectory fails: incomplete sessions, empty replies, API errors, truncated replies, missing or changed tool schemas, and corrupt JSONL all fail. Inspect raw to locate the cause.
-- long tasks exceed the context window: automatic compaction is disabled. Raise `--opencode-context-length` to match the real service capability.
-- rollout timeout: the container is stopped and available artifacts recovered. Adjust `--timeout` or `--opencode-max-steps` as needed.
-- `--wire-trace full` fails to start: an explicit API base and host networking are required.
+Incomplete sessions, empty replies, API errors, truncated replies, corrupt traces, or tool definitions that change unexpectedly are not marked successful. A timeout stops the container and preserves available trajectories and files when possible.
+
+## 8. First-run check
+
+For a first run, use one simple task and then check:
+
+1. `info.json` in the run directory has `state` set to `finished`.
+2. The sample `info.json` has `status` set to `ok`.
+3. The sample contains `trace.jsonl`, `trace_ACTF.json`, and `trace_SFT.json`.
+4. If the task creates files, the expected files exist under `results/`.
+
+## 9. Common issues
+
+**(1) The endpoint does not support streaming or tool calls**
+
+The OpenCode Harness requires streaming Chat Completions with tool calls. Use a compatible model service.
+
+**(2) A trajectory fails**
+
+Incomplete sessions, empty replies, API errors, truncated replies, missing or changed tool definitions, and corrupt JSONL all fail. Inspect `trace.jsonl` to locate the cause.
+
+**(3) Long tasks exceed the context window**
+
+Automatic compaction is disabled. Raise `--opencode-context-length` to match the actual capability of the service.
+
+**(4) Task execution times out**
+
+The container is stopped and the available artifacts are recovered. Adjust `--timeout` or `--opencode-max-steps` as needed.
+
+**(5) `--wire-trace full` fails to start**
+
+Set an explicit API address and keep `--network host` enabled.

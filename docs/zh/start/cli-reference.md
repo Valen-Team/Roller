@@ -1,15 +1,15 @@
 # CLI 参数参考
 
-本页用于查询 Roller 命令行参数。第一次使用 Roller 时，建议先完成[快速上手](getting-started.md)。需要调整任务、并行数、输出目录或 Harness 行为时，再回到本页查找对应参数。
+本页用于查询 Roller 命令行参数。首次使用 Roller 时，建议先完成[快速上手](getting-started.md)。如需调整 task、并行数、输出目录或 Harness 行为，再回到本页查找对应参数。
 
-第一次查看参数时，可以先记住四件事：
+首次查阅时，可先了解以下四点：
 
 - `--tasks` 指定要运行的任务。
 - `--model` 和 `--harness` 指定使用哪个模型和 Agent 运行环境。
-- `--output` 和 `--run-name` 决定结果保存在哪里。
-- `--dry-run` 可以在不启动容器的情况下检查配置。
+- `--output` 和 `--run-name` 决定结果的保存位置。
+- `--dry-run` 可在不启动容器的情况下检查配置。
 
-当前 checkout 支持的完整参数始终以命令输出为准：
+当前使用的 Roller 版本支持的参数，始终以以下命令的输出为准：
 
 ```bash
 roller --help
@@ -24,11 +24,12 @@ roller view --help
 | 命令 | 用途 |
 | --- | --- |
 | `roller collect [OPTIONS]` | 读取 task，运行 Harness 并采集轨迹 |
+| `roller init [DIRECTORY]` | 将示例 task 和配置模板写入 `DIRECTORY/examples`（默认当前目录），已存在的文件保持不变 |
 | `roller view RUN_DIR` | 在 Viewer 中浏览已有 run |
 | `roller bench ...` | 列出、导出或汇总 benchmark，采集参数见第 8 节 |
 | `roller --version` | 查看当前安装的 Roller 版本 |
 
-最小的 collect 命令需要 task 清单。模型可以通过 `--model` 指定，也可以写在每条 task 的 `model` 字段中：
+最小的 collect 命令需要 task 清单。模型可通过 `--model` 指定，也可写在每条 task 的 `model` 字段中：
 
 ```bash
 roller collect --tasks tasks.jsonl --model provider/model
@@ -49,11 +50,11 @@ roller collect --tasks tasks.jsonl --model provider/model
 
 ## 3. 通用采集参数
 
-这些参数决定运行哪些 task、运行多少次，以及把结果保存到哪里。它们适用于所有 Harness。
+这些参数决定运行哪些 task、运行多少次，以及结果的保存位置。这些参数适用于所有 Harness。
 
-### 输入与运行对象
+### 3.1 输入与运行对象
 
-这组参数告诉 Roller 从哪里读取任务，以及由哪个模型和 Harness 执行。
+这组参数指定 Roller 读取 task 的位置，以及执行 task 的模型和 Harness。
 
 | 参数 | 默认值 | 用途 |
 | --- | --- | --- |
@@ -62,13 +63,14 @@ roller collect --tasks tasks.jsonl --model provider/model
 | `--model-label LABEL` | 实际服务模型 ID | 为 sample 目录和容器设置安全的本地名称，不改变发送给模型服务的 ID，只适用于最终只有一个模型的运行 |
 | `--harness NAME` | task `harness` 或 `openclaw` | 选择 `openclaw`、`codex`、`claude-code`、`hermes`、`opencode`、`deepseek` 或 `pi` |
 
-### 执行规模与任务范围
+### 3.2 执行规模与任务范围
 
 这组参数控制并行数、重复次数、重试和本次选取的 task 范围。
 
 | 参数 | 默认值 | 用途 |
 | --- | --- | --- |
 | `--parallel N` | `1` | 设置同时运行的最大 rollout 数 |
+| `--launch-interval SECONDS` | `0` | 两次 rollout 启动之间的最小间隔，见下文 |
 | `--grader-parallel N` | `--parallel` | 单独限制同时运行的 grader 数，避免 judge 服务过载 |
 | `--samples N` | SkillsBench 为 `3`，其他为 `1` | 为每个 task/model 组合创建 N 个独立 sample |
 | `--retries N` | `0` | 设置首次失败后的额外尝试次数 |
@@ -77,7 +79,18 @@ roller collect --tasks tasks.jsonl --model provider/model
 | `--start-index N` | `0` | 从规范化 task 列表的第 N 条开始 |
 | `--limit N` | 不限制 | 最多选择 N 条 task |
 
-### 输出、检查与续跑
+默认情况下，run 开始时同时启动 `--parallel` 个 rollout。启动阶段的内存占用远高于稳定运行阶段（OpenClaw 容器约为两倍），同时启动的 rollout 会叠加内存峰值。`--launch-interval` 使每次启动（包括重试）与上一次启动至少间隔指定秒数：
+
+```bash
+roller collect ... --parallel 24 --launch-interval 8
+```
+
+- 该间隔对整个 run 生效，包括第一批之后的启动。N 次启动至少需要 (N − 1) × `--launch-interval` 秒；rollout 时长短于约 `--parallel × --launch-interval` 时，实际并发数低于 `--parallel`。
+- `--resume` 跳过的 sample 不占用启动间隔。
+- 中断时，仍在等待启动的 rollout 直接取消，不留下 sample 目录；无论间隔为何值，待执行的重试同样取消，sample 保留上次失败的结果，由 `--resume` 重新运行。
+- 该值记录在 `info.json`，不写入 `lock.json`，因此 `--resume` 时可更改该值。
+
+### 3.3 输出、检查与续跑
 
 这组参数控制结果目录，并决定是预检查、开始新 run 还是继续原 run。
 
@@ -88,7 +101,7 @@ roller collect --tasks tasks.jsonl --model provider/model
 | `--dry-run` | 关闭 | 检查 task、文件和运行计划，不启动 Docker |
 | `--resume` | 关闭 | 继续同一个 run，并跳过产物完整的成功 sample，详见第 6 节 |
 
-### 兼容与调试
+### 3.4 兼容与调试
 
 这组参数主要用于旧数据格式或排查运行日志。新 task 通常不需要修改前三项。
 
@@ -99,7 +112,7 @@ roller collect --tasks tasks.jsonl --model provider/model
 | `--id-key NAME` | `id` | 指定旧数据中的 ID 字段名 |
 | `--log-level LEVEL` | `INFO` | 设置 `DEBUG`、`INFO`、`WARNING` 或 `ERROR` 日志级别 |
 
-### 输入文件限制
+### 3.5 输入文件限制
 
 这组参数限制 task 可以带入容器的文件大小，主要用于防止误传过大的输入。
 
@@ -112,7 +125,7 @@ roller collect --tasks tasks.jsonl --model provider/model
 
 这些参数控制 Harness 容器如何启动、如何连接模型服务，以及轨迹中保留哪些信息。具体支持范围仍由所选 Harness 决定。
 
-### 容器与连接
+### 4.1 容器与连接
 
 这组参数用于选择镜像、Docker 运行方式和模型服务连接信息。
 
@@ -127,17 +140,18 @@ roller collect --tasks tasks.jsonl --model provider/model
 | `--pass-env NAME` | 无 | 额外向 Harness 容器传入一个非空环境变量，可重复 |
 | `--keep-container-on-error` | 关闭 | 失败后保留已停止的容器，便于检查现场 |
 
-### Reasoning 与轨迹
+### 4.2 Reasoning 与轨迹
 
-这组参数控制推理档位和轨迹保留方式，不同 Harness 对档位和 wire trace 的支持并不相同。
+`--thinking` 用于设置模型的 reasoning 或 thinking 强度。同一设置也可以写在 task 的 `runtime.thinking` 中。Task 设置优先于命令行，两处都省略时使用 Harness 或模型的默认值。
+
+Roller CLI 识别下列逻辑档位，但每个 Harness 仅支持其中一部分，并可能采用不同的默认值和映射方式。具体范围见对应的 Harness 指南。
 
 | 参数 | 默认值 | 用途 |
 | --- | --- | --- |
 | `--thinking LEVEL` | 未设置 | 设置 Harness 的 reasoning 或 thinking 档位 |
+| `--thinking-capabilities PATH` | 未设置 | 加载带版本的模型/端点能力声明，在运行前校验档位 |
 | `--keep-thinking` / `--no-keep-thinking` | 开启 | 决定 ACTF 和 SFT 是否导出可见 reasoning |
 | `--wire-trace MODE` | `actf` | 选择 `off`、`actf` 或 `full` 请求记录模式 |
-
-CLI 可以解析以下 thinking 逻辑值。每个 Harness 实际支持的子集、默认值和映射见对应指南。
 
 ```text
 off | minimal | low | medium | high | xhigh | adaptive | max | ultra
@@ -145,7 +159,35 @@ off | minimal | low | medium | high | xhigh | adaptive | max | ultra
 
 输入 `none` 会先规范化为 `off`。不受支持的值会在启动 rollout 前报错。
 
-### Wire trace 模式
+七种 Harness 均可通过配置声明 provider/model 能力，无需在
+Roller 代码中添加模型名规则：
+
+```json
+{
+  "schema_version": "roller.thinking-capabilities/v1",
+  "profiles": [
+    {
+      "harness": "hermes",
+      "model": "served-model-id",
+      "api_base": "https://gateway.example/v1",
+      "supported_efforts": ["low", "medium", "high"]
+    }
+  ]
+}
+```
+
+使用 `--thinking-capabilities` 传入该文件。Harness 与实际请求的 model ID 必须精确
+匹配；`api_base` 可省略，端点专用条目优先于通用条目。命中 profile 后，请求不受支持的
+档位会在启动容器和模型请求前失败。未命中的模型仍由 provider 校验，Roller 不会静默替换
+档位。文件 SHA-256 会写入 run lock。
+
+profile 支持注册的七种 harness，并检查主 Agent 与 user simulator。未知 harness、JSON 字段
+和 model/端点两侧的空白会报错。声明使用 Roller 的逻辑档位，而非协议转换后的字段值
+（例如 Claude 的 `ultra` 不写成 `ultracode`）。OpenClaw 的 model 写完整 `provider/model`，
+端点从该 provider 的 model-config `baseUrl` 解析。无法解析端点时只匹配不带端点的通用条目；
+能力声明不覆盖原生不支持的档位，也不改写请求。
+
+### 4.3 Wire trace 模式
 
 Wire trace 用于决定是否记录模型服务的实际 HTTP 请求，常规采集使用默认的 `actf` 即可。
 
@@ -157,7 +199,7 @@ Wire trace 用于决定是否记录模型服务的实际 HTTP 请求，常规采
 
 `full` 可能保存 prompt、reasoning、工具参数和结果等完整请求文本，因此文件更大，也更敏感。不同 Harness 的支持范围与网络要求见对应 Harness 指南，文件格式见 {ref}`轨迹产出文件指南 <wire-trace-jsonl>`。
 
-### 兼容性提示
+### 4.4 兼容性提示
 
 `--external-thinking` 已移除。旧命令应改用 `--thinking`，不再需要的参数应直接删除。
 
@@ -175,7 +217,7 @@ Wire trace 用于决定是否记录模型服务的实际 HTTP 请求，常规采
 | DeepSeek | {ref}`DeepSeek Harness 指南 <deepseek-cli-flags>` |
 | Pi Agent | {ref}`Pi Agent Harness 指南 <pi-cli-flags>` |
 
-需要核对当前 checkout 的完整参数列表时，运行：
+如需核对当前使用的 Roller 版本支持的完整参数列表，请运行：
 
 ```bash
 roller collect --help
@@ -191,7 +233,7 @@ roller collect [原命令] --resume
 
 Resume 会先比较 `lock.json` 中影响运行行为的配置和输入摘要，再检查成功 sample 的必需产物。配置和输入一致且产物完整时，该 sample 会被跳过。产物损坏时会重新运行，配置或输入改变时会拒绝继续。
 
-只有继续原实验时才使用 `--resume`。如果改变模型、镜像、thinking、wire 或其他影响运行语义的设置，应使用新的 `--run-name`。
+只有继续原实验时才使用 `--resume`。若改变模型、镜像、thinking、wire 或其他影响运行语义的设置，应使用新的 `--run-name`。
 
 ## 7. Viewer 参数
 
@@ -205,19 +247,19 @@ roller view RUN_DIR [--host HOST] [--port PORT]
 | --- | --- | --- |
 | `RUN_DIR` | 必填 | 指定包含 `info.json` 和 `samples/` 的 Roller run |
 | `--host` | `127.0.0.1` | 设置监听地址 |
-| `--port` | `8765` | 设置监听端口 |
+| `--port` | `17865` | 设置监听端口；未指定且默认端口被占用时改用空闲端口 |
 
 监听 `0.0.0.0` 会向网络暴露轨迹内容。远程访问时应保留默认地址，并使用 SSH 端口转发。
 
 ## 8. Bench 参数
 
-Bench 参数用于把外部 benchmark 转换为 Roller task、运行采集、执行评分并汇总结果。
+Bench 参数用于将外部 benchmark 转换为 Roller task、运行采集、执行评分并汇总结果。
 
 | 命令 | 用途 |
 | --- | --- |
 | `roller bench list` | 查看当前可用的 benchmark adapter |
 | `roller collect --bench ...` | 转换、运行、评分并汇总 benchmark，推荐大多数用户使用 |
-| `roller bench export ...` | 只把 benchmark 转换为 task JSONL，不运行任务 |
+| `roller bench export ...` | 仅将 benchmark 转换为 task JSONL，不运行 task |
 | `roller bench report RUN_DIR` | 为已有 run 重新生成评分汇总 |
 
 常用命令形式如下：
@@ -233,7 +275,7 @@ roller bench report RUN_DIR [--output REPORT.json]
 | 参数 | 默认值 | 用途 |
 | --- | --- | --- |
 | `--bench NAME` / `NAME` | 必填 | 指定 `roller bench list` 中的 adapter |
-| `--bench-root ROOT` / `ROOT` | 必填 | 指定已经 checkout 的 benchmark 目录 |
+| `--bench-root ROOT` / `ROOT` | 必填 | 指定已检出的 benchmark 目录 |
 | `--bench-category CAT` / `--category CAT` | 不限制 | 只选择指定类别，可重复 |
 | `--bench-task-id ID` / `--task-id ID` | 不限制 | 只选择指定 task，可重复，错误 ID 会直接报错 |
 | `--bench-variant NAME` / `--variant NAME` | adapter 默认值 | 选择 benchmark 条件，例如 SkillsBench 的 `with-skill` 或 `no-skill` |
@@ -242,7 +284,7 @@ roller bench report RUN_DIR [--output REPORT.json]
 | `RUN_DIR` | report 时必填 | 指定已完成的 run，属于位置参数 |
 | `--rebuild-task-images` | 关闭 | 即使 task-specific benchmark 镜像已经存在也重新构建 |
 
-`collect --bench` 会自动使用每条 benchmark task 的 timeout。手工采用 export 再 collect 的流程时，需要为 collect 添加 `--task-timeouts`。两种流程都可以用 `--pass-env` 传入 grader 需要的环境变量。
+`collect --bench` 会自动使用每条 benchmark task 的 timeout。采用先 export 再 collect 的手动流程时，须为 collect 添加 `--task-timeouts`。两种流程均可使用 `--pass-env` 传入 grader 所需的环境变量。
 
 字段语义、评分时序、`stage` 防泄漏规则和聚合口径见 [Bench 接入与评分](../benches/bench-format.md)。
 

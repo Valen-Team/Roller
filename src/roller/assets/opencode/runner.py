@@ -9,11 +9,35 @@ import subprocess
 import time
 
 VERSION = "1.18.30"
-def tool_permissions(denied=()):
-    # Batch execution cannot answer approval prompts. Let the native registry
-    # expose its tools; only an explicit user selection removes a tool.
-    return {"*": "allow", **{name: "deny" for name in denied}}
+TOOLS = ("bash", "read", "write", "edit", "apply_patch", "glob", "grep", "skill")
+EXPLORE_TOOLS = ("bash", "read", "glob", "grep")
 
+
+def tool_permissions(config):
+    """Root permission rules; OpenCode applies the last matching rule."""
+    capture = bool(config.get("capture_calls"))
+    if not config.get("native_tools"):
+        return {"*": "deny", **{name: "allow" for name in TOOLS}, "external_directory": "allow",
+                **({"task": "allow"} if capture else {})}
+    # Batch execution cannot answer approval prompts, so the native registry is
+    # allowed as a whole. Sub-agents still run only when their calls are captured.
+    return {"*": "allow", **({} if capture else {"task": "deny"}),
+            **{name: "deny" for name in config["deny_tools"]}}
+
+
+def agent_profiles(config):
+    agents = {"build": {"steps": config["max_steps"]}, "title": {"disable": True}, "summary": {"disable": True}}
+    if config.get("capture_calls"):
+        # Global task permissions otherwise override Explore's native tool
+        # restrictions. Retain a distinct child tool profile when delegating.
+        if config.get("native_tools"):
+            explore = {"*": "deny", **{name: "allow" for name in EXPLORE_TOOLS}, "external_directory": "allow",
+                       **{name: "deny" for name in config["deny_tools"]}}
+        else:
+            explore = {"write": "deny", "edit": "deny", "apply_patch": "deny", "task": "deny", "skill": "deny"}
+        agents["general"] = {"steps": config["max_steps"]}
+        agents["explore"] = {"steps": config["max_steps"], "permission": explore}
+    return agents
 
 
 def atomic_json(path, value):
@@ -93,8 +117,8 @@ def run_turn(config, state):
         "share": "disabled", "autoupdate": False, "snapshot": False,
         "compaction": {"auto": False, "prune": False},
         "lsp": False, "formatter": False,
-        "permission": tool_permissions(config.get("deny_tools", [])),
-        "agent": {"build": {"steps": config["max_steps"]}, "title": {"disable": True}, "summary": {"disable": True}},
+        "permission": tool_permissions(config),
+        "agent": agent_profiles(config),
     }
     atomic_json(state / "opencode.json", native_config)
     session_file = state / "session.json"
@@ -136,6 +160,33 @@ def run_turn(config, state):
         raise ValueError("OpenCode exported a different session")
     with (state / "trace.jsonl").open("a", encoding="utf-8") as journal:
         journal.write(json.dumps({"type": "session_export", "data": export}, ensure_ascii=False) + "\n")
+    if config.get("capture_calls"):
+        # Preserve child sessions too. Read exact native IDs from task metadata
+        # and session events; never infer ownership from CLI output ordering.
+        ids = set()
+        for line in (state / "trace.jsonl").read_text(encoding="utf-8").split("\n"):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            event = row.get("event", {})
+            if event.get("type") in {"session.created", "session.updated"}:
+                info = event.get("properties", {}).get("info", {})
+                if info.get("id"):
+                    ids.add(info["id"])
+            if event.get("type") == "message.part.updated":
+                child = event.get("properties", {}).get("part", {}).get("state", {}).get("metadata", {}).get("sessionId")
+                if child:
+                    ids.add(child)
+        for child_id in sorted(ids - {session_id}):
+            try:
+                child_export = export_session(state, child_id, remaining())
+                record = {"type": "session_export", "data": child_export}
+            except Exception as exc:
+                # Evidence failures do not change the completed root turn.
+                record = {"type": "capture_error", "session_id": child_id,
+                          "error": "child session export failed: " + type(exc).__name__}
+            with (state / "trace.jsonl").open("a", encoding="utf-8") as journal:
+                journal.write(json.dumps(record, ensure_ascii=False) + "\n")
     errors = [e.get("error") for e in events if e.get("type") == "error"]
     if process.returncode or errors:
         raise RuntimeError("OpenCode CLI failed: " + json.dumps(errors, ensure_ascii=False)[:2000])

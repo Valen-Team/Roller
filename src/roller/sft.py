@@ -232,13 +232,28 @@ def _placeholder_count(message: Mapping[str, Any]) -> int:
 def validate_sft_record(record: Any) -> None:
     """Check the top-level shape and the multimodal alignment contract.
 
-    Text-only records keep exactly ``messages`` + ``tools``. Records with
+    Legacy text-only records keep exactly ``messages`` + ``tools`` and remain
+    the only records in run-level ``sft.jsonl``. Separate compaction segments
+    carry ``target_start_index``. Assistant messages at
+    or after that index are supervised targets; intervening user/tool messages
+    are context, and earlier assistant messages are preserved prompt history.
+    Records with
     images add a non-empty ``images`` list of base64 data URIs whose length
     equals the number of ``<image>`` placeholders in ``messages``.
     """
     if not isinstance(record, Mapping):
         raise ValueError("SFT record must be a JSON object")
     keys = set(record)
+    target_start = record.get("target_start_index")
+    if "target_start_index" in keys:
+        if (not isinstance(target_start, int) or isinstance(target_start, bool)
+                or target_start < 1 or not isinstance(record.get("messages"), list)
+                or target_start >= len(record["messages"])):
+            raise ValueError("target_start_index must identify a target after the prompt")
+        target = record["messages"][target_start]
+        if not isinstance(target, Mapping) or target.get("role") != "assistant":
+            raise ValueError("target_start_index must point to an assistant target")
+        keys.remove("target_start_index")
     if keys == {"messages", "tools"}:
         return
     if keys != {"messages", "tools", "images"}:
@@ -270,6 +285,16 @@ def validate_sft_record(record: Any) -> None:
 
 def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
     """Convert one ACTF trajectory to a minimal messages/tools SFT record."""
+
+    if trajectory.get("sft_unavailable_reason"):
+        raise SFTConversionError(str(trajectory["sft_unavailable_reason"]))
+    raw_steps = trajectory.get("steps")
+    for step in raw_steps if isinstance(raw_steps, list) else []:
+        extra = step.get("extra") if isinstance(step, Mapping) else None
+        if isinstance(extra, Mapping) and extra.get("is_sidechain"):
+            raise SFTConversionError("mixed subagent steps cannot be exported as one assistant")
+        if isinstance(extra, Mapping) and extra.get("model") == "<synthetic>":
+            raise SFTConversionError("synthetic assistant is not a model output")
 
     system_prompt = trajectory.get("system_prompt", "")
     if not isinstance(system_prompt, str):
@@ -366,7 +391,7 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(observations, list):
             raise SFTConversionError(f"{prefix}.observation must be a list")
         observed_ids: set[str] = set()
-        tool_messages: list[dict[str, Any]] = []
+        results_by_id: dict[str, tuple[dict[str, Any], str]] = {}
         for observation_index, observation in enumerate(observations):
             field = f"{prefix}.observation[{observation_index}]"
             if not isinstance(observation, dict):
@@ -388,19 +413,25 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
                     f"tool result name {observed_name} does not match call {call_names[call_id]}"
                 )
             observed_ids.add(call_id)
-            tool_message = (
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": _tool_result_content(
-                        observation.get("content", []), f"{field}.content", images
-                    ),
-                }
-            )
-            tool_messages.append(tool_message)
+            results_by_id[call_id] = (observation, field)
         if observed_ids != expected_ids:
             missing = sorted(expected_ids - observed_ids)
             raise SFTConversionError(f"tool calls missing results: {', '.join(missing)}")
+
+        # Parallel tools can finish in any order. Canonicalize only the SFT
+        # output, matching by ID rather than completion order or tool name.
+        # Serialize media in this same order so positional image references
+        # remain aligned with the emitted <image> placeholders.
+        tool_messages: list[dict[str, Any]] = []
+        for call in calls:
+            observation, field = results_by_id[call["id"]]
+            tool_messages.append({
+                "role": "tool",
+                "tool_call_id": call["id"],
+                "content": _tool_result_content(
+                    observation.get("content", []), f"{field}.content", images
+                ),
+            })
 
         messages.append(
             {

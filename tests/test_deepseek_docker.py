@@ -57,7 +57,7 @@ class DeepSeekDockerTests(unittest.TestCase):
                         raise AssertionError(prompt)
                     verb, token, path = match.groups()
                     command = f"mkdir -p {shlex.quote(str(Path(path).parent))}; printf %s {shlex.quote(token)} > {shlex.quote(path)}" if verb == "Write" else "cat " + shlex.quote(path)
-                    delta["tool_calls"] = [{"index": 0, "id": f"pair-call-{len(requests)}", "type": "function", "function": {"name": "bash", "arguments": json.dumps({"description": "Execute test command", "command": command, "description": "Run the local test command"})}}]
+                    delta["tool_calls"] = [{"index": 0, "id": f"pair-call-{len(requests)}", "type": "function", "function": {"name": "bash", "arguments": json.dumps({"description": "Run the local test command", "command": command})}}]
                     finish = "tool_calls"
                 chunk = {"id": f"local-{len(requests)}", "object": "chat.completion.chunk", "created": 1, "model": "roller-test"}
                 chunks = [{**chunk, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
@@ -108,7 +108,8 @@ class DeepSeekDockerTests(unittest.TestCase):
                         traces[path] = path.read_bytes()
                         events = [json.loads(line) for line in path.read_text().splitlines()]
                         native = [e["body"] for e in events if e["type"] == "request"]
-                        wire = [json.loads(line)["body"] for line in (participant / "wire_trace.jsonl").read_text().splitlines()]
+                        wire_events = [json.loads(line) for line in (participant / "wire_trace.jsonl").read_text().splitlines()]
+                        wire = [event["body"] for event in wire_events if "body" in event]
                         self.assertEqual(native, wire)
                         self.assertTrue((participant / "trace_SFT.json").is_file())
                         self.assertFalse((participant / "cache_trace.jsonl").exists())
@@ -250,7 +251,8 @@ class DeepSeekDockerTests(unittest.TestCase):
                         "code": "from pathlib import Path\ndef grade(workspace_path):\n    root = Path(workspace_path)\n    return {'overall_score': float((root/'outputs/answer.txt').read_text() == 'INPUT|CONTEXT|SETUP|ENV|READ_ONLY' and (root/'outputs/persistent.txt').read_text() == 'KEPT')}\n"}},
             }]))
             command = ["collect", "--tasks", str(tasks), "--deepseek-image", os.environ.get("ROLLER_DEEPSEEK_IMAGE", DEFAULT_DEEPSEEK_IMAGE), "--deepseek-api-base", f"http://127.0.0.1:{server.server_port}/v1", "--deepseek-api-key-env", "ROLLER_LOCAL_KEY", "--wire-trace", "full", "--timeout", "240", "--output", str(root / "runs"), "--run-name", "local"]
-            command += ["--deepseek-profile", profile]
+            if profile == "sdk":
+                command += ["--deepseek-profile", "sdk", "--deepseek-permission-mode", "danger-full-access"]
             environment = {"ROLLER_LOCAL_KEY": "test-local-secret", "ROLLER_EXAMPLE_TOKEN": "ENV", "NO_PROXY": "localhost,127.0.0.1", "no_proxy": "localhost,127.0.0.1"}
             with patch.dict(os.environ, environment), contextlib.redirect_stdout(io.StringIO()):
                 code = _collect(_build_parser().parse_args(command))
@@ -275,8 +277,9 @@ class DeepSeekDockerTests(unittest.TestCase):
                 self.assertTrue((sample / "wire_trace.jsonl").is_file())
                 native_requests = [json.loads(line)["body"] for line in raw.splitlines()
                                    if json.loads(line).get("type") == "request"]
-                wire_requests = [json.loads(line)["body"] for line in
-                                 (sample / "wire_trace.jsonl").read_text().splitlines()]
+                wire_events = [json.loads(line) for line in
+                               (sample / "wire_trace.jsonl").read_text().splitlines()]
+                wire_requests = [event["body"] for event in wire_events if "body" in event]
                 self.assertEqual(native_requests, wire_requests)
                 self.assertEqual(native_requests, requests)
                 self.assertIn("You are running a Roller task", sft["messages"][0]["content"])
