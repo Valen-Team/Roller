@@ -110,7 +110,7 @@ class PiSession(BridgeSession):
             log.parent.mkdir(parents=True, exist_ok=True)
             self.harness.runtime.run(["cp", f"{self.container}:{STATE}/runtime.log", str(log)], timeout=30)
             if log.is_file():
-                log.write_text(self.redact(log.read_text(encoding="utf-8", errors="replace")), encoding="utf-8")
+                self.redact_file(log, errors="replace")
         except Exception:
             logger.warning("Pi runtime log collection failed", exc_info=True)
 

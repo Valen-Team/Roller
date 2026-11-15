@@ -34,6 +34,7 @@ from roller.harnesses.container import (
 )
 from roller.harnesses.docker import DockerRuntime, remove_container, warn_if_image_changed
 from roller.models import HarnessResult, RunRequest
+from roller.redaction import REDACTED, redact_file_literals
 from roller.storage import atomic_write_json
 from roller.thinking import resolve_thinking
 from roller.usage import ZERO_USAGE
@@ -197,7 +198,14 @@ class BridgeSession(InteractiveSession):
 
     def redact(self, text: str) -> str:
         key = os.environ.get(self.harness.config.api_key_env)
-        return text.replace(key, "[REDACTED]") if key else text
+        return text.replace(key, REDACTED) if key else text
+
+    def redact_file(self, path: Path, *, errors: str = "strict") -> None:
+        """Redact the API key in a journal or log without loading it whole."""
+
+        redact_file_literals(
+            path, [os.environ.get(self.harness.config.api_key_env, "")], errors=errors
+        )
 
     def checked(
         self, args: Sequence[str], description: str, *, timeout: float = 60,
@@ -309,7 +317,7 @@ class BridgeSession(InteractiveSession):
             config_path.unlink(missing_ok=True)
             self.harness.runtime.close_log(process)
             if log_path.exists():
-                log_path.write_text(self.redact(log_path.read_text(encoding="utf-8", errors="replace")), encoding="utf-8")
+                self.redact_file(log_path, errors="replace")
 
     def _collect_trace(self, problems: list[str]) -> tuple[Path | None, Path | None, dict[str, int | float]]:
         runtime = self.harness.runtime
@@ -322,7 +330,7 @@ class BridgeSession(InteractiveSession):
             return None, None, usage
         try:
             if self.redact_trace:
-                trace.write_text(self.redact(trace.read_text(encoding="utf-8")), encoding="utf-8")
+                self.redact_file(trace)
             usage = self.extract_usage(trace)
             trajectory = trace.with_name("trace_ACTF.json")
             if not self.convert_trace(trace, trajectory).get("steps"):
