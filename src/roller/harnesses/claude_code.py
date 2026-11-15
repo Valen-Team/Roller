@@ -31,6 +31,7 @@ from roller.harnesses.container import (
 )
 from roller.harnesses.docker import DockerRuntime, remove_container
 from roller.models import HarnessResult, RunRequest
+from roller.native_images import claude_user_message
 from roller.storage import safe_component
 from roller.thinking import normalize_thinking, resolve_thinking
 from roller.usage import ZERO_USAGE, extract_claude_code_usage
@@ -40,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CLAUDE_CODE_IMAGE = "roller-claude-code:2.1.222"
 CLAUDE_HOME_CONTAINER_PATH = "/roller/claude-home"
+# Stream-json user message of a turn that carries images.
+CLAUDE_INPUT_CONTAINER_PATH = "/roller/claude-input.jsonl"
 
 CLAUDE_PERMISSION_MODES = (
     "default",
@@ -421,7 +424,14 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         prompt: str,
         *,
         resume: bool,
+        input_path: str | None = None,
     ) -> list[str]:
+        """Build one ``claude --print`` turn.
+
+        ``input_path`` is a stream-json user message inside the container; it
+        replaces the prompt argument when the message carries images.
+        """
+
         command = [
             "exec",
             "-e",
@@ -447,8 +457,32 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             command.extend(["--effort", effort])
         if resume:
             command.append("--continue")
-        command.extend(["--print", prompt])
+        if input_path is None:
+            command.extend(["--print", prompt])
+            return command
+        command.extend(["--print", "--input-format=stream-json"])
+        # ``docker exec`` forwards no stdin; read the message from the file.
+        index = command.index("claude")
+        command[index:] = ["/bin/sh", "-c", 'exec "$@" < "$0"', input_path, *command[index:]]
         return command
+
+    def _copy_image_input(
+        self, container: str, request: RunRequest, prompt: str, staging: Path
+    ) -> str:
+        payload_path = staging / ".claude-input.jsonl"
+        payload_path.parent.mkdir(parents=True, exist_ok=True)
+        payload_path.write_text(
+            json.dumps(claude_user_message(request, prompt)) + "\n",
+            encoding="utf-8",
+        )
+        try:
+            self._checked(
+                ["cp", str(payload_path), f"{container}:{CLAUDE_INPUT_CONTAINER_PATH}"],
+                "Claude Code image input copy",
+            )
+        finally:
+            payload_path.unlink(missing_ok=True)
+        return CLAUDE_INPUT_CONTAINER_PATH
 
     def _run_turn(
         self,
@@ -460,8 +494,13 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         timeout_seconds: float,
         log_path: Path,
     ) -> int:
+        input_path = None
+        if request.task.attach_images and not resume:
+            input_path = self._copy_image_input(container, request, prompt, log_path.parent)
         process = self.runtime.popen(
-            self._claude_command(container, request, prompt, resume=resume),
+            self._claude_command(
+                container, request, prompt, resume=resume, input_path=input_path
+            ),
             log_path,
             append=resume,
         )

@@ -7,6 +7,7 @@ from typing import Any
 from roller.harnesses.bridge import BridgeHarness, BridgeSession, validate_bridge_config, validate_step_limits
 from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
 from roller.models import RunRequest
+from roller.native_images import attached_images
 from roller.opencode_actf import convert_opencode_trace, extract_opencode_usage
 from roller.thinking import normalize_thinking, resolve_thinking
 
@@ -106,6 +107,7 @@ class OpenCodeSession(BridgeSession):
     conversion_failure_is_error = False
     redact_capture_errors = True
     supports_reset = True
+    attaches_images = True
 
     def effort(self) -> str | None:
         return opencode_effort(resolve_thinking(self.request.task.thinking, self.harness.config.reasoning_effort))
@@ -150,9 +152,13 @@ class OpenCodeSession(BridgeSession):
         # Context is present as regular workspace files for every role; OpenCode's
         # implicit host/profile discovery is disabled in the bridge.
         config = self.harness.config
+        images = attached_images(self.request, config.workspace_container_path, first_message=self.turns == 1)
+        if images and not config.vision:
+            raise ValueError("files.attach_images requires --opencode-vision")
         return {
             "max_steps": config.max_steps, "context_length": config.context_length,
             "output_tokens": config.output_tokens, "vision": config.vision,
+            **({"files": [image["path"] for image in images]} if images else {}),
         }
 
     def reset(self) -> None:

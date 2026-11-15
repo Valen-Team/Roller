@@ -118,7 +118,10 @@ async function serve(config) {
           timedOut = true;
           void session.abort();
         }, Math.max(1, payload.timeout_seconds * 1000));
-        await session.prompt(payload.message, {expandPromptTemplates: false});
+        const images = (payload.images ?? []).map((image) => (
+          {type: "image", data: fs.readFileSync(image.path).toString("base64"), mimeType: image.mime_type}
+        ));
+        await session.prompt(payload.message, {expandPromptTemplates: false, ...(images.length ? {images} : {})});
         const messages = session.messages.slice(before);
         const assistants = messages.filter((message) => message.role === "assistant");
         const last = assistants.at(-1);

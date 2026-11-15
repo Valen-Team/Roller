@@ -416,6 +416,33 @@ class OpenCodeHarnessTests(unittest.TestCase):
         self.assertEqual(environment["NO_PROXY"], expected)
         self.assertEqual(environment["no_proxy"], expected)
 
+    def test_attached_images_become_file_arguments_of_the_first_turn(self):
+        task = Task("test", ("one", "two"), 0, attach_images=("inputs/chart.png",))
+        runtime = FakeRuntime()
+        harness = OpenCodeHarness(OpenCodeConfig(api_key_env="LOCAL_TEST_KEY", wire_trace_mode="off"), 0, runtime)
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}):
+            harness.run(RunRequest(0, task, "model", 60), Path(tmp), 1)
+            self.assertEqual(
+                [turn.get("files") for turn in runtime.turn_configs],
+                [["/roller/workspace/inputs/chart.png"], None],
+            )
+            blind = OpenCodeHarness(OpenCodeConfig(api_key_env="LOCAL_TEST_KEY", wire_trace_mode="off", vision=False), 0, FakeRuntime())
+            result = blind.run(RunRequest(0, task, "model", 60), Path(tmp) / "blind", 1)
+            self.assertEqual(result.status, "error")
+            self.assertIn("--opencode-vision", result.error)
+
+        spec = importlib.util.spec_from_file_location("opencode_runner_files", RUNNER_PATH)
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"OPENAI_BASE_URL": "http://example.test/v1"}), \
+                patch.object(runner.subprocess, "Popen", side_effect=RuntimeError("stop")) as popen:
+            config = {"timeout_seconds": 30, "model": "m", "context_length": 2048, "output_tokens": 512,
+                      "max_steps": 2, "message": "one", "files": ["/roller/workspace/inputs/chart.png"]}
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                runner.run_turn(config, Path(tmp))
+        args = popen.call_args.args[0]
+        self.assertEqual(args[args.index("--file") + 1], "/roller/workspace/inputs/chart.png")
+
     def test_native_skill_tool_is_allowed(self):
         self.assertIn("skill", OPENCODE_TOOLS)
         spec = importlib.util.spec_from_file_location("opencode_runner_tools", RUNNER_PATH)

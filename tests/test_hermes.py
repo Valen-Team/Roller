@@ -315,6 +315,14 @@ class HermesSessionTests(unittest.TestCase):
         harness = HermesHarness(HermesConfig(api_key_env="ROLLER_TEST_KEY", **kwargs), 0, self.runtime)
         return harness.create_session(RunRequest(0, Task("task", ("read",), 0, harness="hermes"), "test-model", 120), self.root, 1)
 
+    def test_attached_images_are_rejected_before_the_container_starts(self):
+        harness = HermesHarness(HermesConfig(api_key_env="ROLLER_TEST_KEY"), 0, self.runtime)
+        task = Task("task", ("read",), 0, harness="hermes", attach_images=("inputs/chart.png",))
+        session = harness.create_session(RunRequest(0, task, "test-model", 120), self.root, 1)
+        with self.assertRaisesRegex(ValueError, "Hermes does not support files.attach_images"):
+            session.start()
+        self.assertEqual(self.runtime.calls, [])
+
     def test_start_two_turns_collect_and_idempotent_finish(self):
         session = self.session()
         session.start()

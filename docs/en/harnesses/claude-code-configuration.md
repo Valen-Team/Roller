@@ -122,7 +122,7 @@ A single Claude Code run can use the shared flag forms. In a mixed-Harness run, 
 
 The Claude Code Harness supports both text-only and vision-capable models. Images enter the workspace through `files.inputs`, and Claude Code can open local images with its native `Read` tool. Image tool results are preserved in the native trace, ACTF, and multimodal SFT, where SFT uses `<image>` placeholders and the top-level `images` field.
 
-Vision tasks also require the selected model and Anthropic-compatible API service to support image content blocks. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. Text-only models can still process text and ordinary files, but they cannot complete tasks that require understanding image content.
+Vision tasks also require the selected model and Anthropic-compatible API service to support image content blocks. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. To send an input image with the first user message, list it in [`files.attach_images`](../tasks/task-format.md). Text-only models can still process text and ordinary files, but they cannot complete tasks that require understanding image content.
 
 ## 6. Thinking configuration
 

@@ -684,6 +684,7 @@ def _dry_run_payload(args: argparse.Namespace, requests: list) -> dict:
                 "context_files": len(request.task.context_files),
                 "output_dir": request.task.output_dir,
                 "input_mode": request.task.input_mode,
+                "attach_images": list(request.task.attach_images),
                 "docker_image": request.task.docker_image,
                 "image_build": request.task.image_build is not None,
                 "workspace_container_path": request.task.workspace_container_path,
@@ -1137,6 +1138,22 @@ def _collect(args: argparse.Namespace) -> int:
                 default_effort=bridge_config.reasoning_effort,
                 effort_validator=effort_validator,
                 capabilities=thinking_capabilities,
+            )
+    for task in tasks:
+        if not task.attach_images:
+            continue
+        harness = cli_harness or task.harness
+        if not HARNESSES[harness].attach_images:
+            supported = ", ".join(name for name, item in HARNESSES.items() if item.attach_images)
+            raise ValueError(
+                f"task {task.id!r}: files.attach_images is not supported by the "
+                f"{HARNESSES[harness].label} Harness; use {supported}"
+            )
+        if harness == "opencode" and not args.opencode_vision:
+            raise ValueError(f"task {task.id!r}: files.attach_images requires --opencode-vision")
+        if harness == "pi" and args.pi_input_modalities == "text":
+            raise ValueError(
+                f"task {task.id!r}: files.attach_images requires --pi-input-modalities text,image"
             )
 
     if args.dry_run:

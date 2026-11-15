@@ -122,7 +122,7 @@ roller collect \
 
 Claude Code Harness 同时支持纯文本模型和具备视觉能力的模型。图片通过 `files.inputs` 进入工作区，Claude Code 可使用原生 `Read` 工具打开本地图片。图片工具结果保留在原始轨迹、ACTF 和多模态 SFT 中，其中 SFT 使用 `<image>` 占位符和顶层 `images` 字段保存图片。
 
-视觉任务还要求所选模型和 Anthropic-compatible API 服务支持图片内容块。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。纯文本模型仍可处理文本和普通文件，但无法完成需要理解图片内容的任务。
+视觉任务还要求所选模型和 Anthropic-compatible API 服务支持图片内容块。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。如需随首条用户消息发送输入图片，请在 [`files.attach_images`](../tasks/task-format.md) 中列出。纯文本模型仍可处理文本和普通文件，但无法完成需要理解图片内容的任务。
 
 ## 6. Thinking 配置
 

@@ -220,6 +220,23 @@ dataset/
 如需让 Agent 原地修改 seed 文件，请在 `files` 中设置 `"input_mode": "copy"`；此时 Roller 先将
 完整输入树复制为工作区私有的可写副本。默认值 `mount` 使用只读挂载。
 
+输入文件只有在 Agent 用工具打开后才会进入模型。如需随首条用户消息直接发送图片，请在 `files.attach_images` 中列出图片的工作区路径：
+
+```json
+{
+  "files": {
+    "inputs": [{"source": "inputs/chart.png", "target": "inputs/chart.png"}],
+    "attach_images": ["inputs/chart.png"]
+  }
+}
+```
+
+- 每个路径必须是 `files.inputs` 中声明的 `.png`、`.jpg`、`.jpeg`、`.webp` 或 `.gif` 文件，可以直接声明，也可以位于已声明的目录内。图片按列出的顺序发送。
+- 图片只随 task 的首条消息发送；后续消息（包括 `new_session` 边界之后的消息）只发送文本。
+- OpenClaw、Codex、Claude Code、OpenCode 和 Pi 支持该字段。task 在 Hermes 或 DeepSeek 上使用该字段时，会在 run 启动前报错。所选模型和 API 服务须支持图片输入。
+- ACTF 在首条用户消息中保留这些图片，SFT 将其导出为 `<image>` 占位符和顶层 `images` 条目。
+- 该列表属于 Task Bundle 身份的一部分，因此修改后 `--resume` 会重新运行该 task。
+
 ## 6. Context 与系统文件
 
 `files.context` 声明由 Harness 加载的 Context 文件：
@@ -326,6 +343,7 @@ Roller 在启动 Docker 前执行以下检查：
 - `output_dir` 不得位于 `inputs/`、`context/` 下，也不得与输入或 Context target 重叠。
 - Context target 不得使用保留的顶层目录 `inputs`、`outputs`、`context`。
 - `sha256` 必须是 64 位十六进制字符串。
+- `files.attach_images` 中的路径必须是 `files.inputs` 中声明的图片文件，且不得重复。
 - User Simulator 的 `max_turns` 必须在 `1–100` 之间。
 
 随后 Task Bundle 阶段还会检查文件是否存在、类型、大小、符号链接和实际 hash。

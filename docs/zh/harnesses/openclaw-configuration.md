@@ -209,7 +209,7 @@ roller collect --help
 
 完整模板见 [`examples/config/openclaw/models-multimodal.json`](../../../examples/config/openclaw/models-multimodal.json)。`input` 仅用于告知 OpenClaw 如何使用模型。实际 API 后端仍须在所选 API 协议下支持图像输入。
 
-图片通过 `files.inputs` 进入 task 工作区，再由 OpenClaw 的图像查看工具打开。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。纯文本模型仍可处理文本和普通文件，但不能完成需要理解图片内容的 task。
+图片通过 `files.inputs` 进入 task 工作区，再由 OpenClaw 的图像查看工具打开。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。如需随首条用户消息发送输入图片，请在 [`files.attach_images`](../tasks/task-format.md) 中列出。纯文本模型仍可处理文本和普通文件，但不能完成需要理解图片内容的 task。
 
 默认情况下，Roller 还会尝试将 task model 设置为 OpenClaw 的 image model。旧版 OpenClaw 不支持该设置时仅记录 warning。如需关闭，请使用 `--no-set-image-model`。
 

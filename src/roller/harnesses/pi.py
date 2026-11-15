@@ -7,6 +7,7 @@ from typing import Any
 
 from roller.harnesses.bridge import BridgeHarness, BridgeSession, validate_bridge_config, validate_step_limits
 from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
+from roller.native_images import attached_images
 from roller.pi_actf import convert_pi_trace, extract_pi_usage
 from roller.thinking import normalize_thinking, resolve_thinking
 
@@ -66,6 +67,7 @@ class PiSession(BridgeSession):
     api_key_name = "PI_API_KEY"
     assets = (("runner.mjs", SDK_RUNNER, "SDK runner copy"),)
     redact_trace = True
+    attaches_images = True
 
     def effort(self) -> str | None:
         return pi_effort(resolve_thinking(self.request.task.thinking, self.harness.config.reasoning_effort))
@@ -76,11 +78,15 @@ class PiSession(BridgeSession):
     def turn_options(self, timeout: float) -> dict[str, Any]:
         # Pass explicit Context paths while keeping Pi resource discovery isolated.
         config = self.harness.config
+        images = attached_images(self.request, config.workspace_container_path, first_message=self.turns == 1)
+        if images and "image" not in config.input_modalities:
+            raise ValueError("files.attach_images requires --pi-input-modalities text,image")
         return {
             "turn": self.turns, "max_steps": config.max_steps,
             "context_length": config.context_length, "output_tokens": config.output_tokens,
             "input_modalities": list(config.input_modalities), "tools": list(PI_TOOLS),
             "context_paths": [item.target for item in self.request.task.context_files if item.role != "skill"],
+            **({"images": images} if images else {}),
         }
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:

@@ -82,7 +82,7 @@ Pi 作为 Task Agent 或 User Simulator 时均使用这些参数。修改镜像�
 
 Pi 启用 `read`、`bash`、`edit`、`write`、`grep`、`find` 和 `ls` 七个原生工具。具备视觉能力的模型和 OpenAI-compatible 服务可通过 `read` 打开本地图片。图片结果保留在原始轨迹、ACTF 和多模态 SFT 中。
 
-图片通过 `files.inputs` 进入工作区。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。纯文本模型仍可处理文本和普通文件，但不能完成需要理解图片内容的任务。视频、其他 Pi 服务协议和自定义扩展或插件暂不支持。
+图片通过 `files.inputs` 进入工作区。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。如需随首条用户消息发送输入图片，请在 [`files.attach_images`](../tasks/task-format.md) 中列出。该字段要求 `--pi-input-modalities text,image`（默认值）。纯文本模型仍可处理文本和普通文件，但不能完成需要理解图片内容的任务。视频、其他 Pi 服务协议和自定义扩展或插件暂不支持。
 
 ## 6. Session 与工作区
 

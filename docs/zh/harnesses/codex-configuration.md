@@ -159,7 +159,7 @@ roller collect ... \
 
 Codex Harness 同时支持纯文本模型和具备视觉能力的 Responses 模型。图片通过 `files.inputs` 进入工作区，Codex 可使用原生 `view_image` 工具打开本地图片。图片工具结果会保留到原生轨迹、ACTF 和多模态 SFT，其中 SFT 使用 `<image>` 占位符和顶层 `images` 字段保存图片。
 
-视觉 task 还要求 Codex 版本、所选模型和 Responses API 服务均支持图片输入。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。纯文本模型仍可处理文本和普通文件，但不能完成需要理解图片内容的 task。
+视觉 task 还要求 Codex 版本、所选模型和 Responses API 服务均支持图片输入。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。如需随首条用户消息发送输入图片，请在 [`files.attach_images`](../tasks/task-format.md) 中列出。纯文本模型仍可处理文本和普通文件，但不能完成需要理解图片内容的 task。
 
 ## 6. Thinking 配置
 

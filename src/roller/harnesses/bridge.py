@@ -104,6 +104,8 @@ class BridgeSession(InteractiveSession):
     conversion_failure_is_error: ClassVar[bool] = True
     redact_capture_errors: ClassVar[bool] = False
     supports_reset: ClassVar[bool] = False
+    # The runner can put ``files.attach_images`` on the first user message.
+    attaches_images: ClassVar[bool] = False
 
     def __init__(
         self, harness: BridgeHarness, request: RunRequest, output_dir: Path,
@@ -218,6 +220,8 @@ class BridgeSession(InteractiveSession):
         if self.container_started or self._result is not None:
             raise RuntimeError(f"{self.label} session has already started or finished")
         config, task, bundle = self.harness.config, self.request.task, self.request.bundle
+        if task.attach_images and not self.attaches_images:
+            raise ValueError(f"{self.label} does not support files.attach_images")
         self.effort()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         environment = self.inherited_environment()

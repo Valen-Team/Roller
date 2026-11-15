@@ -159,7 +159,7 @@ roller collect ... \
 
 The Codex Harness supports both text-only models and vision-capable Responses models. Images enter the workspace through `files.inputs`, and Codex can open local images with its native `view_image` tool. Image tool results are preserved in the native trace, ACTF, and multimodal SFT, where SFT uses `<image>` placeholders and the top-level `images` field.
 
-Vision tasks also require the Codex version, the selected model, and the Responses API service to support image input. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. Text-only models can continue to process text and ordinary files, but they cannot complete tasks that require understanding image content.
+Vision tasks also require the Codex version, the selected model, and the Responses API service to support image input. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. To send an input image with the first user message, list it in [`files.attach_images`](../tasks/task-format.md). Text-only models can continue to process text and ordinary files, but they cannot complete tasks that require understanding image content.
 
 ## 6. Thinking configuration
 

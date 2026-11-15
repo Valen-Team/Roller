@@ -81,7 +81,7 @@ The same settings apply when Hermes is the Task Agent or User Simulator. After c
 
 Hermes provides terminal, file, and optional image tools. When both the model and API service accept image input, `vision_analyze` can open a local image. For a text-only model, disable the image tool with `--no-hermes-vision`.
 
-Images enter the workspace through `files.inputs`, and image-tool results are preserved in the native trace, ACTF, and multimodal SFT. Task `messages[].content` accepts strings only and cannot contain image blocks directly. Video and remote terminals are not supported.
+Images enter the workspace through `files.inputs`, and image-tool results are preserved in the native trace, ACTF, and multimodal SFT. Task `messages[].content` accepts strings only and cannot contain image blocks directly. `files.attach_images` is not supported. Video and remote terminals are not supported.
 
 ## 6. Sessions and workspace
 

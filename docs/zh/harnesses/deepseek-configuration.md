@@ -79,7 +79,7 @@ DeepSeek 作为 Task Agent 或 User Simulator 时均使用这些参数。修改�
 
 DeepSeek Harness 当前固定使用官方最小工具配置 `sdk-minimal`，仅向模型提供持久化 `bash`，不提供图片查看工具。因此适用于文本和普通文件任务，不支持需要模型理解图片内容的任务。
 
-图片文件可通过 `files.inputs` 放入工作区，但仅作为普通文件存在，不会作为图片内容发送给模型。Task 的 `messages[].content` 当前也只支持字符串，不能直接写入图片内容块。视觉任务应选择支持图片工具的其他 Harness。
+图片文件可通过 `files.inputs` 放入工作区，但仅作为普通文件存在，不会作为图片内容发送给模型。Task 的 `messages[].content` 当前也只支持字符串，不能直接写入图片内容块。不支持 `files.attach_images`。视觉任务应选择支持图片工具的其他 Harness。
 
 ## 6. Session 与工作区
 

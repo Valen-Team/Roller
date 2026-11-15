@@ -177,17 +177,17 @@ Roller 不会静默删除内容。转换器本身不读取文件，也不访问
 字节物化为 image block。
 
 上述是 SFT 层接受的内容块形态，不代表所有 Harness 的运行时都能调用视觉能力。
-各 Harness 的 image 工具结果处理如下：
+各 Harness 的图片输入处理如下：
 
 | Harness | 运行时图片路径 | ACTF/SFT 图片保存 |
 | --- | --- | --- |
-| OpenClaw | Prompt 附件、`read` 或 `image` 辅助模型调用 | 保留；`--wire-trace off` 无法恢复 `image` 工具的输入图片 |
-| Codex | 通过 Responses 调用 `view_image` | 保留 |
-| Claude Code | `Read` 图片结果 | 保留 |
-| OpenCode | `read` 返回内嵌 data URL 附件 | 保留；非图片附件只保留有界审计元数据 |
+| OpenClaw | `files.attach_images`、Prompt 附件、`read` 或 `image` 辅助模型调用 | 保留；`--wire-trace off` 无法恢复 `image` 工具的输入图片 |
+| Codex | `files.attach_images`，或通过 Responses 调用 `view_image` | 保留 |
+| Claude Code | `files.attach_images` 或 `Read` 图片结果 | 保留 |
+| OpenCode | `files.attach_images`，或 `read` 返回内嵌 data URL 附件 | 保留；非图片附件只保留有界审计元数据 |
 | Hermes | Roller 为固定 profile 启用 `vision_analyze` 工具集 | 保留 |
 | DeepSeek | 面向文本的 Bash profile | 显式拒绝 image 内容 |
-| Pi | `read` 原生图片结果，并将所选模型注册为支持图片 | 保留 |
+| Pi | `files.attach_images` 或 `read` 原生图片结果，并将所选模型注册为支持图片 | 保留 |
 
 OpenCode 图片附件若只有远程 URL 或文件路径，仍会保留在 ACTF 中，但无法生成多模态
 SFT，因为导出过程不读取文件，也不访问网络。该 sample 保留 raw/ACTF，并将 SFT 记录为不可用。

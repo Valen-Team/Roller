@@ -79,7 +79,7 @@ The same settings apply when DeepSeek is the Task Agent or User Simulator. After
 
 The DeepSeek Harness currently uses the official `sdk-minimal` tool configuration. It provides one persistent `bash` tool and no image viewer, so it supports text and ordinary file tasks but not tasks that require visual understanding.
 
-Image files can enter the workspace through `files.inputs`, but they remain ordinary files and are not sent to the model as image content. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. For vision tasks, use another Harness that provides an image tool.
+Image files can enter the workspace through `files.inputs`, but they remain ordinary files and are not sent to the model as image content. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. `files.attach_images` is not supported. For vision tasks, use another Harness that provides an image tool.
 
 ## 6. Sessions and workspace
 
