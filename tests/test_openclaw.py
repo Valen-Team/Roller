@@ -34,9 +34,13 @@ class GatewayReadinessTests(unittest.TestCase):
         harness = OpenClawHarness(
             OpenClawConfig(gateway_startup_timeout=0.001), 0, runtime=runtime
         )
-        request = RunRequest(0, Task(id="hello", prompts=("hello",), source_index=0), "model", 300)
+        request = RunRequest(
+            0, Task(id="hello", prompts=("hello",), source_index=0), "model", 300
+        )
         session = mock.Mock()
-        session.start.side_effect = lambda: harness._wait_for_gateway("container", process)
+        session.start.side_effect = lambda: harness._wait_for_gateway(
+            "container", process
+        )
         session.finish.side_effect = lambda status, error: HarnessResult(
             status=status, elapsed_seconds=1, error=error
         )
@@ -71,11 +75,18 @@ class GatewayReadinessTests(unittest.TestCase):
 
     def test_slow_probe_retries_within_startup_budget(self):
         runtime = mock.Mock()
-        runtime.run.side_effect = [subprocess.TimeoutExpired("docker exec", 2), subprocess.CompletedProcess([], 0)]
+        runtime.run.side_effect = [
+            subprocess.TimeoutExpired("docker exec", 2),
+            subprocess.CompletedProcess([], 0),
+        ]
         process = mock.Mock()
         process.poll.return_value = None
-        harness = OpenClawHarness(OpenClawConfig(gateway_startup_timeout=10), 0, runtime=runtime)
-        with mock.patch("roller.harnesses.openclaw.time.monotonic", side_effect=[0, 0, 2]):
+        harness = OpenClawHarness(
+            OpenClawConfig(gateway_startup_timeout=10), 0, runtime=runtime
+        )
+        with mock.patch(
+            "roller.harnesses.openclaw.time.monotonic", side_effect=[0, 0, 2]
+        ):
             harness._wait_for_gateway("container", process)
         self.assertEqual(runtime.run.call_count, 2)
 
@@ -84,8 +95,12 @@ class GatewayReadinessTests(unittest.TestCase):
         runtime.run.side_effect = subprocess.TimeoutExpired("docker exec", 2)
         process = mock.Mock()
         process.poll.return_value = None
-        harness = OpenClawHarness(OpenClawConfig(gateway_startup_timeout=3), 0, runtime=runtime)
-        with mock.patch("roller.harnesses.openclaw.time.monotonic", side_effect=[0, 0, 2, 4]):
+        harness = OpenClawHarness(
+            OpenClawConfig(gateway_startup_timeout=3), 0, runtime=runtime
+        )
+        with mock.patch(
+            "roller.harnesses.openclaw.time.monotonic", side_effect=[0, 0, 2, 4]
+        ):
             with self.assertRaisesRegex(RuntimeError, "gateway did not listen.*3s"):
                 harness._wait_for_gateway("container", process)
         self.assertEqual(runtime.run.call_count, 2)
@@ -101,18 +116,24 @@ class StartupBudgetTests(unittest.TestCase):
                 return super().run(args, timeout)
 
         harness = OpenClawHarness(
-            OpenClawConfig(docker_image="test-image", set_image_model=False), 0, runtime=Runtime(),
+            OpenClawConfig(docker_image="test-image", set_image_model=False),
+            0,
+            runtime=Runtime(),
         )
         task = Task("task", ("hi",), 0, setup_commands=("sleep 3",))
         with tempfile.TemporaryDirectory() as tmp:
-            result = harness.run(RunRequest(0, task, "provider/model", 5), Path(tmp), attempt=1)
+            result = harness.run(
+                RunRequest(0, task, "provider/model", 5), Path(tmp), attempt=1
+            )
 
         self.assertEqual(result.status, "ok")
         # From ``docker run`` through setup/configuration to the first gateway probe.
         start = calls.index(next(call for call in calls if call[0] == "run"))
-        startup = [timeout for _, timeout in calls[start:calls.index(("exec", 2))]]
+        startup = [timeout for _, timeout in calls[start : calls.index(("exec", 2))]]
         self.assertGreater(len(startup), 5)
-        self.assertTrue(all(timeout is not None and timeout <= 5 for timeout in startup))
+        self.assertTrue(
+            all(timeout is not None and timeout <= 5 for timeout in startup)
+        )
 
     def test_step_cut_short_by_the_budget_is_a_task_timeout(self):
         def expire(args, timeout=None):
@@ -123,8 +144,12 @@ class StartupBudgetTests(unittest.TestCase):
         runtime.run.side_effect = expire
         harness = OpenClawHarness(OpenClawConfig(), 0, runtime=runtime)
         harness.deadline = time.monotonic() + 0.05
-        with self.assertRaisesRegex(TimeoutError, "^task setup command: task time budget exhausted$"):
-            harness._checked(["exec", "c", "sleep", "3"], "task setup command", timeout=60)
+        with self.assertRaisesRegex(
+            TimeoutError, "^task setup command: task time budget exhausted$"
+        ):
+            harness._checked(
+                ["exec", "c", "sleep", "3"], "task setup command", timeout=60
+            )
         # Once the budget is spent, no further command starts.
         with self.assertRaisesRegex(TimeoutError, "task time budget exhausted"):
             harness._checked(["exec", "c", "true"], "task setup command")
@@ -135,9 +160,13 @@ class StartupBudgetTests(unittest.TestCase):
         runtime.run.return_value = subprocess.CompletedProcess([], 1)
         process = mock.Mock()
         process.poll.return_value = None
-        harness = OpenClawHarness(OpenClawConfig(gateway_startup_timeout=240), 0, runtime=runtime)
+        harness = OpenClawHarness(
+            OpenClawConfig(gateway_startup_timeout=240), 0, runtime=runtime
+        )
         harness.deadline = time.monotonic() + 0.3
-        with self.assertRaisesRegex(TimeoutError, "gateway startup: task time budget exhausted"):
+        with self.assertRaisesRegex(
+            TimeoutError, "gateway startup: task time budget exhausted"
+        ):
             harness._wait_for_gateway("container", process)
 
 
@@ -184,12 +213,15 @@ class FakeDockerRuntime:
         stdout = f"{self.version}\n" if args[-2:] == ["openclaw", "--version"] else ""
         if args and "ROLLER_SDK_LAST_ASSISTANT" in args[-1]:
             self.assistant_extractions += 1
-            stdout = json.dumps(
-                {
-                    "content": "done",
-                    "assistant_count": self.assistant_extractions,
-                }
-            ) + "\n"
+            stdout = (
+                json.dumps(
+                    {
+                        "content": "done",
+                        "assistant_count": self.assistant_extractions,
+                    }
+                )
+                + "\n"
+            )
         if (
             args
             and args[0] == "cp"
@@ -274,7 +306,11 @@ class CliOnlyReplyRuntime(FakeDockerRuntime):
     def run(self, args, timeout=None):
         result = super().run(args, timeout=timeout)
         args = list(args)
-        if args and args[0] == "cp" and f":{TRANSCRIPT_EXPORT_CONTAINER_PATH}" in args[1]:
+        if (
+            args
+            and args[0] == "cp"
+            and f":{TRANSCRIPT_EXPORT_CONTAINER_PATH}" in args[1]
+        ):
             path = Path(args[2])
             reply = json.loads(path.read_text(encoding="utf-8"))
             reply["message"]["api"] = "cli"
@@ -294,9 +330,7 @@ class OpenClawHelpersTests(unittest.TestCase):
         for level in ("xhigh", "adaptive", "max", "ultra"):
             with self.subTest(level=level):
                 with self.assertRaisesRegex(RuntimeError, "silently downgrade"):
-                    validate_openclaw_thinking(
-                        "OpenClaw 2026.3.11 (29dc654)", level
-                    )
+                    validate_openclaw_thinking("OpenClaw 2026.3.11 (29dc654)", level)
         validate_openclaw_thinking("OpenClaw 2026.3.11 (29dc654)", "high")
 
     def test_modern_thinking_capabilities_are_owned_by_openclaw(self) -> None:
@@ -350,7 +384,9 @@ class OpenClawHelpersTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "must be a JSON object"):
                 load_model_config(path)
 
-    def test_prepares_selected_model_for_reasoning_without_mutating_source(self) -> None:
+    def test_prepares_selected_model_for_reasoning_without_mutating_source(
+        self,
+    ) -> None:
         config = {
             "providers": {
                 "proxy": {
@@ -363,16 +399,16 @@ class OpenClawHelpersTests(unittest.TestCase):
             }
         }
 
-        prepared = prepare_model_config(
-            config, "proxy/plain", enable_reasoning=True
-        )
+        prepared = prepare_model_config(config, "proxy/plain", enable_reasoning=True)
 
         models = prepared["providers"]["proxy"]["models"]
         self.assertTrue(models[0]["reasoning"])
         self.assertTrue(models[1]["reasoning"])
         self.assertNotIn("tags", models[1])
         self.assertNotIn("reasoning", config["providers"]["proxy"]["models"][1])
-        self.assertEqual(config["providers"]["proxy"]["models"][1]["tags"], ["reasoning"])
+        self.assertEqual(
+            config["providers"]["proxy"]["models"][1]["tags"], ["reasoning"]
+        )
 
     def test_preserves_explicit_model_capabilities_and_effort_mapping(self) -> None:
         model = {
@@ -410,13 +446,18 @@ class OpenClawHelpersTests(unittest.TestCase):
                     model = {"id": "selected", "maxTokens": 1024}
                     if capability is not None:
                         model["reasoning"] = capability
-                    config = {"providers": {"proxy": {
-                        "timeoutSeconds": 30,
-                        "models": [model, {"id": "other", "maxTokens": 2048}],
-                    }}}
+                    config = {
+                        "providers": {
+                            "proxy": {
+                                "timeoutSeconds": 30,
+                                "models": [model, {"id": "other", "maxTokens": 2048}],
+                            }
+                        }
+                    }
                     original = json.loads(json.dumps(config))
                     prepared = prepare_model_config(
-                        config, "proxy/selected",
+                        config,
+                        "proxy/selected",
                         enable_reasoning=enable_reasoning,
                         request_timeout_seconds=90,
                         max_tokens=8192,
@@ -432,7 +473,10 @@ class OpenClawHelpersTests(unittest.TestCase):
                             selected["reasoning"],
                             True if capability is None else capability,
                         )
-                    self.assertEqual(provider["models"][1], original["providers"]["proxy"]["models"][1])
+                    self.assertEqual(
+                        provider["models"][1],
+                        original["providers"]["proxy"]["models"][1],
+                    )
                     self.assertEqual(config, original)
 
     def test_no_keep_thinking_requires_interceptable_model_config(self) -> None:
@@ -562,7 +606,12 @@ class OpenClawHelpersTests(unittest.TestCase):
                     "model": "model",
                     "content": [{"type": "text", "text": "done"}],
                     "stopReason": "stop",
-                    "usage": {"input": 10, "output": 2, "cacheRead": 3, "cacheWrite": 1},
+                    "usage": {
+                        "input": 10,
+                        "output": 2,
+                        "cacheRead": 3,
+                        "cacheWrite": 1,
+                    },
                 },
             },
             {
@@ -611,22 +660,32 @@ class OpenClawHelpersTests(unittest.TestCase):
             def run(self, args, timeout=None):
                 result = super().run(args, timeout)
                 if list(args)[-5:] == setting:
-                    return subprocess.CompletedProcess(args, returncode, "", "Unrecognized key")
+                    return subprocess.CompletedProcess(
+                        args, returncode, "", "Unrecognized key"
+                    )
                 return result
 
         runtime = Runtime()
         harness = OpenClawHarness(
-            OpenClawConfig(docker_image="test-image", set_image_model=False), 0, runtime=runtime,
+            OpenClawConfig(docker_image="test-image", set_image_model=False),
+            0,
+            runtime=runtime,
         )
         request = RunRequest(0, Task("task", ("hi",), 0), "provider/model", 30)
         with tempfile.TemporaryDirectory() as temporary:
             result = harness.run(request, Path(temporary), attempt=1)
         tails = [command[-5:] for command in runtime.commands]
-        gateway = next(i for i, c in enumerate(runtime.commands) if "openclaw gateway" in c[-1])
+        gateway = next(
+            i for i, c in enumerate(runtime.commands) if "openclaw gateway" in c[-1]
+        )
         return result, tails.index(setting), gateway
 
     def test_container_runs_the_inspected_image_id_or_the_tag(self) -> None:
-        for image_id, expected in (("sha256:inspected", "sha256:inspected"), ("", "test-image")):
+        for image_id, expected in (
+            ("sha256:inspected", "sha256:inspected"),
+            ("", "test-image"),
+        ):
+
             class Runtime(FakeDockerRuntime):
                 def run(self, args, timeout=None):
                     result = super().run(args, timeout)
@@ -636,17 +695,24 @@ class OpenClawHelpersTests(unittest.TestCase):
 
             runtime = Runtime()
             harness = OpenClawHarness(
-                OpenClawConfig(docker_image="test-image", set_image_model=False), 0, runtime=runtime,
+                OpenClawConfig(docker_image="test-image", set_image_model=False),
+                0,
+                runtime=runtime,
             )
             request = RunRequest(0, Task("task", ("hi",), 0), "provider/model", 30)
-            with self.subTest(image_id=image_id), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(image_id=image_id),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 result = harness.run(request, Path(temporary), attempt=1)
                 self.assertEqual(result.status, "ok", result.error)
                 start = next(c for c in runtime.commands if c[0] == "run")
                 # A tag that moves after inspection cannot change the image in use.
                 self.assertEqual(start[-4], expected)
 
-    def test_session_transcript_redaction_is_disabled_before_the_gateway_starts(self) -> None:
+    def test_session_transcript_redaction_is_disabled_before_the_gateway_starts(
+        self,
+    ) -> None:
         result, setting, gateway = self._run_with_redaction_setting(0)
         self.assertEqual(result.status, "ok")
         self.assertLess(setting, gateway)
@@ -658,10 +724,18 @@ class OpenClawHelpersTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertIn("logging.redactSensitive", logs.output[0])
 
-    HEARTBEAT_OFF = ("openclaw", "config", "set", "agents.defaults.heartbeat.every", "0m")
+    HEARTBEAT_OFF = (
+        "openclaw",
+        "config",
+        "set",
+        "agents.defaults.heartbeat.every",
+        "0m",
+    )
 
     def test_heartbeat_polls_are_disabled_before_the_gateway_starts(self) -> None:
-        result, setting, gateway = self._run_with_redaction_setting(0, self.HEARTBEAT_OFF)
+        result, setting, gateway = self._run_with_redaction_setting(
+            0, self.HEARTBEAT_OFF
+        )
         self.assertEqual(result.status, "ok")
         self.assertLess(setting, gateway)
         with self.assertRaisesRegex(ValueError, "Roller sets itself"):
@@ -673,9 +747,13 @@ class OpenClawHelpersTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertIn("heartbeat", logs.output[0])
 
-    def test_attached_images_mark_the_first_message_and_stay_out_of_the_prompts(self) -> None:
+    def test_attached_images_mark_the_first_message_and_stay_out_of_the_prompts(
+        self,
+    ) -> None:
         task = Task(
-            id="task", prompts=("Describe it", "Finish"), source_index=0,
+            id="task",
+            prompts=("Describe it", "Finish"),
+            source_index=0,
             attach_images=("inputs/chart.png",),
         )
         runtime = FakeDockerRuntime()
@@ -686,8 +764,11 @@ class OpenClawHelpersTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temporary:
             session = harness.create_session(
-                RunRequest(index=0, task=task, model="provider/model", timeout_seconds=30),
-                Path(temporary), 1,
+                RunRequest(
+                    index=0, task=task, model="provider/model", timeout_seconds=30
+                ),
+                Path(temporary),
+                1,
             )
             session.start()
             for prompt in task.prompts:
@@ -696,12 +777,17 @@ class OpenClawHelpersTests(unittest.TestCase):
             session.finish("ok")
 
         workspace = harness.config.workspace_container_path
-        self.assertEqual(runtime.agent_messages, [
-            f"[media attached: {workspace}/inputs/chart.png (image/png)]\nDescribe it",
-            "Finish",
-        ])
+        self.assertEqual(
+            runtime.agent_messages,
+            [
+                f"[media attached: {workspace}/inputs/chart.png (image/png)]\nDescribe it",
+                "Finish",
+            ],
+        )
 
-    def test_harness_collects_raw_trace_and_sends_messages_without_shell_quoting(self) -> None:
+    def test_harness_collects_raw_trace_and_sends_messages_without_shell_quoting(
+        self,
+    ) -> None:
         task = Task(
             id="task",
             prompts=("Use $HOME and 'quotes' literally", "Finish"),
@@ -729,7 +815,9 @@ class OpenClawHelpersTests(unittest.TestCase):
             )
 
         self.assertEqual(result.status, "ok")
-        self.assertEqual(runtime.agent_messages, ["Use $HOME and 'quotes' literally", "Finish"])
+        self.assertEqual(
+            runtime.agent_messages, ["Use $HOME and 'quotes' literally", "Finish"]
+        )
         self.assertIn('"assistant"', canonical_trace)
         self.assertEqual(result.usage["total_tokens"], 5)
         flattened_commands = [" ".join(command) for command in runtime.commands]
@@ -739,22 +827,37 @@ class OpenClawHelpersTests(unittest.TestCase):
                 for command in flattened_commands
             )
         )
-        container_command = next(command for command in runtime.commands if command[:2] == ["run", "-d"])
+        container_command = next(
+            command for command in runtime.commands if command[:2] == ["run", "-d"]
+        )
         self.assertEqual(container_command[container_command.index("--user") + 1], "0")
         self.assertTrue(
-            any("ROLLER_SDK_EXPORT_TRANSCRIPT" in command for command in flattened_commands)
+            any(
+                "ROLLER_SDK_EXPORT_TRANSCRIPT" in command
+                for command in flattened_commands
+            )
         )
         self.assertTrue(
-            any("openclaw config set gateway.mode local" in command for command in flattened_commands)
+            any(
+                "openclaw config set gateway.mode local" in command
+                for command in flattened_commands
+            )
         )
         self.assertTrue(
-            any("openclaw config set gateway.bind loopback" in command for command in flattened_commands)
+            any(
+                "openclaw config set gateway.bind loopback" in command
+                for command in flattened_commands
+            )
         )
         self.assertTrue(
-            any("ROLLER_GATEWAY_PORT=18789" in command for command in flattened_commands)
+            any(
+                "ROLLER_GATEWAY_PORT=18789" in command for command in flattened_commands
+            )
         )
 
-    def test_harness_counts_single_request_when_transcript_has_cli_delivery_copy(self) -> None:
+    def test_harness_counts_single_request_when_transcript_has_cli_delivery_copy(
+        self,
+    ) -> None:
         task = Task(id="task", prompts=("Summarize inputs",), source_index=0)
         request = RunRequest(
             index=0,
@@ -776,9 +879,7 @@ class OpenClawHelpersTests(unittest.TestCase):
                 encoding="utf-8"
             )
             trajectory = json.loads(
-                (output_dir / "rollout" / "trace_ACTF.json").read_text(
-                    encoding="utf-8"
-                )
+                (output_dir / "rollout" / "trace_ACTF.json").read_text(encoding="utf-8")
             )
 
         self.assertEqual(result.status, "ok")
@@ -821,7 +922,9 @@ class OpenClawHelpersTests(unittest.TestCase):
     def test_cli_only_reply_finalizes_as_successful_sft_sample(self) -> None:
         from roller.collector import CollectionConfig, Collector
 
-        request = RunRequest(0, Task("cli-only", ("Summarize inputs",), 0), "provider/model", 30)
+        request = RunRequest(
+            0, Task("cli-only", ("Summarize inputs",), 0), "provider/model", 30
+        )
         harness = OpenClawHarness(
             OpenClawConfig(docker_image="test-image", set_image_model=False),
             worker_slot=0,
@@ -841,7 +944,9 @@ class OpenClawHelpersTests(unittest.TestCase):
             )
             self.assertEqual(sft["messages"][-1]["content"], "done")
 
-    def test_harness_passes_thinking_to_each_agent_turn_and_clears_retry_traces(self) -> None:
+    def test_harness_passes_thinking_to_each_agent_turn_and_clears_retry_traces(
+        self,
+    ) -> None:
         task = Task(id="task", prompts=("first", "second"), source_index=0)
         request = RunRequest(0, task, "provider/model", 30)
         runtime = FakeDockerRuntime()
@@ -882,7 +987,9 @@ class OpenClawHelpersTests(unittest.TestCase):
         self.assertIn("/roller/task/environment", gateway_command[-1])
         self.assertIn("exec openclaw gateway", gateway_command[-1])
         gateway_token = next(
-            value for value in gateway_command if value.startswith("OPENCLAW_GATEWAY_TOKEN=")
+            value
+            for value in gateway_command
+            if value.startswith("OPENCLAW_GATEWAY_TOKEN=")
         )
         for command in agent_commands:
             self.assertEqual(command[command.index("--thinking") + 1], "high")
@@ -1089,7 +1196,9 @@ class OpenClawHelpersTests(unittest.TestCase):
                     result = harness.run(request, Path(temporary), attempt=1)
 
                 self.assertEqual(result.status, "ok", result.error)
-                agent = next(command for command in runtime.commands if "agent" in command)
+                agent = next(
+                    command for command in runtime.commands if "agent" in command
+                )
                 defaults = [
                     command
                     for command in runtime.commands
@@ -1103,7 +1212,9 @@ class OpenClawHelpersTests(unittest.TestCase):
                     self.assertEqual(defaults[0][-1], level)
 
     def test_markdown_inside_one_message_remains_one_turn(self) -> None:
-        prompt = "## Round 1\nKeep this whole message.\n## Round 2\nStill the same message."
+        prompt = (
+            "## Round 1\nKeep this whole message.\n## Round 2\nStill the same message."
+        )
         task = Task(id="task", prompts=(prompt,), source_index=0)
         request = RunRequest(0, task, "provider/model", 30)
         harness = OpenClawHarness(
@@ -1139,19 +1250,32 @@ class OpenClawHelpersTests(unittest.TestCase):
             [command[command.index("--session-id") + 1] for command in agent_commands],
             ["roller", "roller-2"],
         )
-        starts = [command for command in runtime.commands if command[:2] == ["run", "-d"]]
+        starts = [
+            command for command in runtime.commands if command[:2] == ["run", "-d"]
+        ]
         self.assertEqual(len(starts), 1)
 
     def test_subagent_drain_failure_preserves_successful_root_turn(self) -> None:
         runtime = FakeDockerRuntime()
         request = RunRequest(0, Task("task", ("first",), 0), "provider/model", 30)
-        harness = OpenClawHarness(OpenClawConfig(docker_image="test-image", set_image_model=False, capture_calls=True, model_config={}), 0, runtime=runtime)
+        harness = OpenClawHarness(
+            OpenClawConfig(
+                docker_image="test-image",
+                set_image_model=False,
+                capture_calls=True,
+                model_config={},
+            ),
+            0,
+            runtime=runtime,
+        )
         with tempfile.TemporaryDirectory() as tmp:
             session = harness.create_session(request, Path(tmp), attempt=1)
             session.container_started = True
             session.gateway_process = FakeProcess(gateway=True)
             harness.capture = mock.Mock(errors=[])
-            with mock.patch.object(harness, "_checked", side_effect=TimeoutError("pending announcement")):
+            with mock.patch.object(
+                harness, "_checked", side_effect=TimeoutError("pending announcement")
+            ):
                 turn = session.send("first", 30)
             self.assertEqual(turn.content, "done")
             self.assertEqual(turn.return_code, 0)
@@ -1181,7 +1305,9 @@ class OpenClawHelpersTests(unittest.TestCase):
         self.assertIn(["stop", "--time", "1", session.container], runtime.commands)
         self.assertNotIn(["rm", "-f", session.container], runtime.commands)
 
-    def test_harness_mounts_bundle_injects_context_and_collects_all_outputs(self) -> None:
+    def test_harness_mounts_bundle_injects_context_and_collects_all_outputs(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "inputs").mkdir()
@@ -1232,7 +1358,12 @@ class OpenClawHelpersTests(unittest.TestCase):
             self.assertEqual(result.metadata["output_collection"]["file_count"], 2)
             self.assertTrue((output_dir / "results" / "report.md").is_file())
             self.assertTrue((output_dir / "results" / "extra.log").is_file())
-            self.assertTrue(any("/roller/task/inputs:ro" in command for command in flattened_commands))
+            self.assertTrue(
+                any(
+                    "/roller/task/inputs:ro" in command
+                    for command in flattened_commands
+                )
+            )
             self.assertTrue(
                 any(
                     "/tmp_workspace/inputs/input.txt:ro" in command
@@ -1247,7 +1378,8 @@ class OpenClawHelpersTests(unittest.TestCase):
             )
             self.assertTrue(
                 any(
-                    "openclaw config set agents.defaults.workspace /tmp_workspace" in command
+                    "openclaw config set agents.defaults.workspace /tmp_workspace"
+                    in command
                     for command in flattened_commands
                 )
             )
@@ -1259,14 +1391,16 @@ class OpenClawHelpersTests(unittest.TestCase):
             tasks_path = root / "tasks.json"
             tasks_path.write_text(
                 json.dumps(
-                    [{
-                        "id": "editable",
-                        "prompt": "edit seed.txt",
-                        "files": {
-                            "inputs": ["seed.txt"],
-                            "input_mode": "copy",
-                        },
-                    }]
+                    [
+                        {
+                            "id": "editable",
+                            "prompt": "edit seed.txt",
+                            "files": {
+                                "inputs": ["seed.txt"],
+                                "input_mode": "copy",
+                            },
+                        }
+                    ]
                 ),
                 encoding="utf-8",
             )

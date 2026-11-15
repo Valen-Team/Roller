@@ -10,16 +10,34 @@ from roller.thinking_capabilities import load_thinking_capabilities
 
 class ThinkingCapabilitiesTests(unittest.TestCase):
     def test_claude_equivalent_api_bases_share_capability_limit(self) -> None:
-        capabilities = self._load({
-            "schema_version": "roller.thinking-capabilities/v1",
-            "profiles": [{"harness": "claude-code", "model": "served-model",
-                          "api_base": "http://gateway.test", "supported_efforts": ["low"]}],
-        })
-        for endpoint in ("http://gateway.test", "http://gateway.test/v1",
-                         "http://gateway.test/v1/messages/"):
-            with self.subTest(endpoint=endpoint), self.assertRaisesRegex(ValueError, "not declared supported"):
-                capabilities.validate(harness="claude-code", model="served-model",
-                                      api_base=endpoint, effort="high")
+        capabilities = self._load(
+            {
+                "schema_version": "roller.thinking-capabilities/v1",
+                "profiles": [
+                    {
+                        "harness": "claude-code",
+                        "model": "served-model",
+                        "api_base": "http://gateway.test",
+                        "supported_efforts": ["low"],
+                    }
+                ],
+            }
+        )
+        for endpoint in (
+            "http://gateway.test",
+            "http://gateway.test/v1",
+            "http://gateway.test/v1/messages/",
+        ):
+            with (
+                self.subTest(endpoint=endpoint),
+                self.assertRaisesRegex(ValueError, "not declared supported"),
+            ):
+                capabilities.validate(
+                    harness="claude-code",
+                    model="served-model",
+                    api_base=endpoint,
+                    effort="high",
+                )
 
     def test_rejects_inert_or_misspelled_profiles(self) -> None:
         for update in (
@@ -29,18 +47,27 @@ class ThinkingCapabilitiesTests(unittest.TestCase):
             {"api_base": " http://gateway.test/v1"},
         ):
             with self.subTest(update=update), self.assertRaises(ValueError):
-                self._load({
-                    "schema_version": "roller.thinking-capabilities/v1",
-                    "profiles": [{
-                        "harness": "pi", "model": "model",
-                        "supported_efforts": ["low"], **update,
-                    }],
-                })
+                self._load(
+                    {
+                        "schema_version": "roller.thinking-capabilities/v1",
+                        "profiles": [
+                            {
+                                "harness": "pi",
+                                "model": "model",
+                                "supported_efforts": ["low"],
+                                **update,
+                            }
+                        ],
+                    }
+                )
         with self.assertRaisesRegex(ValueError, "unknown fields"):
-            self._load({
-                "schema_version": "roller.thinking-capabilities/v1",
-                "profiles": [], "profile": [],
-            })
+            self._load(
+                {
+                    "schema_version": "roller.thinking-capabilities/v1",
+                    "profiles": [],
+                    "profile": [],
+                }
+            )
 
     def _load(self, payload: object):
         temporary = tempfile.TemporaryDirectory()
@@ -143,8 +170,9 @@ class ThinkingCapabilitiesTests(unittest.TestCase):
                 "duplicate",
             ),
         ):
-            with self.subTest(message=message), self.assertRaisesRegex(
-                ValueError, message
+            with (
+                self.subTest(message=message),
+                self.assertRaisesRegex(ValueError, message),
             ):
                 self._load(
                     {

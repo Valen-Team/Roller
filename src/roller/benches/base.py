@@ -122,9 +122,7 @@ class GradeSpec:
             raise BenchFormatError(f"{label}.score_key: must be a non-empty string")
         grade_on_agent_failure = payload.get("grade_on_agent_failure", False)
         if not isinstance(grade_on_agent_failure, bool):
-            raise BenchFormatError(
-                f"{label}.grade_on_agent_failure: must be boolean"
-            )
+            raise BenchFormatError(f"{label}.grade_on_agent_failure: must be boolean")
         return cls(
             code=code,
             entrypoint=entrypoint,
@@ -155,7 +153,9 @@ def _stage_files(value: Any, label: str) -> tuple[tuple[str, str], ...]:
             raise BenchFormatError(f"{entry_label}: must be an object")
         source = item.get("source")
         if not isinstance(source, str) or not source.startswith("/"):
-            raise BenchFormatError(f"{entry_label}.source: must be an absolute host path")
+            raise BenchFormatError(
+                f"{entry_label}.source: must be an absolute host path"
+            )
         target = item.get("target")
         if not isinstance(target, str) or not target.strip():
             raise BenchFormatError(f"{entry_label}.target: must be a non-empty string")

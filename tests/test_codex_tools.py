@@ -18,10 +18,14 @@ from roller.wire_trace import WireTraceProxy, _ProxyHandler
 
 TOOLS = [
     {
-        "type": "function", "name": "exec_command", "description": "Execute exactly this command.",
+        "type": "function",
+        "name": "exec_command",
+        "description": "Execute exactly this command.",
         "strict": True,
         "parameters": {
-            "type": "object", "required": ["cmd", "token"], "additionalProperties": False,
+            "type": "object",
+            "required": ["cmd", "token"],
+            "additionalProperties": False,
             "properties": {
                 "cmd": {"type": "string", "description": "Shell command."},
                 "token": {"anyOf": [{"$ref": "#/$defs/mode"}, {"type": "null"}]},
@@ -29,13 +33,30 @@ TOOLS = [
             "$defs": {"mode": {"type": "string", "enum": ["one", "two"]}},
         },
     },
-    {"type": "function", "name": "never_called", "description": "Available but unused.",
-     "parameters": {"type": "object", "properties": {}, "required": []}},
-    {"type": "namespace", "name": "agents", "description": "Agent tools.", "tools": [
-        {"type": "function", "name": "wait", "parameters": {"type": "object", "properties": {}}},
-    ]},
-    {"type": "custom", "name": "apply_patch", "description": "Apply a patch.",
-     "format": {"type": "grammar", "syntax": "lark", "definition": 'start: "patch"'}},
+    {
+        "type": "function",
+        "name": "never_called",
+        "description": "Available but unused.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "type": "namespace",
+        "name": "agents",
+        "description": "Agent tools.",
+        "tools": [
+            {
+                "type": "function",
+                "name": "wait",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        ],
+    },
+    {
+        "type": "custom",
+        "name": "apply_patch",
+        "description": "Apply a patch.",
+        "format": {"type": "grammar", "syntax": "lark", "definition": 'start: "patch"'},
+    },
     {"type": "web_search", "search_context_size": "low"},
 ]
 
@@ -43,41 +64,76 @@ TOOLS = [
 def events(call: dict | None = None) -> list[dict]:
     payloads = [{"type": "message", "role": "user", "content": "Work."}]
     if call is not None:
-        payloads.extend([call, {
-            "type": "custom_tool_call_output" if call["type"] == "custom_tool_call" else "function_call_output",
-            "call_id": call["call_id"], "output": "Done.",
-        }])
+        payloads.extend(
+            [
+                call,
+                {
+                    "type": "custom_tool_call_output"
+                    if call["type"] == "custom_tool_call"
+                    else "function_call_output",
+                    "call_id": call["call_id"],
+                    "output": "Done.",
+                },
+            ]
+        )
     payloads.append({"type": "message", "role": "assistant", "content": "Finished."})
     return [{"type": "response_item", "payload": p} for p in payloads]
 
 
 class CodexToolsTests(unittest.TestCase):
-    def convert(self, root: Path, snapshots: list[dict], call: dict | None = None) -> dict:
+    def convert(
+        self, root: Path, snapshots: list[dict], call: dict | None = None
+    ) -> dict:
         source = root / "trace.jsonl"
         source.write_text("\n".join(json.dumps(e) for e in events(call)) + "\n")
         capture = root / "tools_capture.jsonl"
-        capture.write_text("".join(json.dumps({"kind": "codex_tools", "seq": n, "snapshot": s}) + "\n"
-                                   for n, s in enumerate(snapshots, 1)) +
-                           json.dumps({"kind": "codex_tools_complete", "request_count": len(snapshots)}) + "\n")
-        return convert_codex_trace(source, root / "trace_ACTF.json", tools_trace=capture)
+        capture.write_text(
+            "".join(
+                json.dumps({"kind": "codex_tools", "seq": n, "snapshot": s}) + "\n"
+                for n, s in enumerate(snapshots, 1)
+            )
+            + json.dumps(
+                {"kind": "codex_tools_complete", "request_count": len(snapshots)}
+            )
+            + "\n"
+        )
+        return convert_codex_trace(
+            source, root / "trace_ACTF.json", tools_trace=capture
+        )
 
-    def test_full_definitions_including_unused_namespace_custom_and_builtin(self) -> None:
-        call = {"type": "function_call", "call_id": "c1", "name": "exec_command",
-                "arguments": '{"cmd":"true","token":null}'}
+    def test_full_definitions_including_unused_namespace_custom_and_builtin(
+        self,
+    ) -> None:
+        call = {
+            "type": "function_call",
+            "call_id": "c1",
+            "name": "exec_command",
+            "arguments": '{"cmd":"true","token":null}',
+        }
         with tempfile.TemporaryDirectory() as tmp:
-            trajectory = self.convert(Path(tmp), [tool_snapshot({"tools": TOOLS})] * 2, call)
+            trajectory = self.convert(
+                Path(tmp), [tool_snapshot({"tools": TOOLS})] * 2, call
+            )
         record = actf_to_sft(trajectory)
         self.assertEqual(record["tools"], TOOLS)
         self.assertEqual(trajectory["tools"], TOOLS)
         self.assertEqual(len(trajectory["tools_capture"]["requests"]), 2)
-        self.assertEqual(record["messages"][2]["tool_calls"][0]["function"]["arguments"], call["arguments"])
+        self.assertEqual(
+            record["messages"][2]["tool_calls"][0]["function"]["arguments"],
+            call["arguments"],
+        )
         record["tools"][0]["parameters"]["required"].clear()
         self.assertEqual(trajectory["tools"], TOOLS)
 
     def test_namespace_calls_preserve_original_name_and_namespace(self) -> None:
         for name, namespace in [("wait", "agents"), ("agents.wait", None)]:
             with self.subTest(name=name):
-                call = {"type": "function_call", "call_id": "c", "name": name, "arguments": "{}"}
+                call = {
+                    "type": "function_call",
+                    "call_id": "c",
+                    "name": name,
+                    "arguments": "{}",
+                }
                 if namespace:
                     call["namespace"] = namespace
                 record = actf_to_sft(codex_events_to_actf(events(call), tools=TOOLS))
@@ -86,22 +142,44 @@ class CodexToolsTests(unittest.TestCase):
                 self.assertEqual(actual.get("namespace"), namespace)
 
     def test_custom_tool_input_is_not_invented_json_schema_or_arguments(self) -> None:
-        call = {"type": "custom_tool_call", "call_id": "patch", "name": "apply_patch", "input": "patch\nraw text"}
+        call = {
+            "type": "custom_tool_call",
+            "call_id": "patch",
+            "name": "apply_patch",
+            "input": "patch\nraw text",
+        }
         record = actf_to_sft(codex_events_to_actf(events(call), tools=TOOLS))
-        self.assertEqual(record["messages"][2]["tool_calls"], [{
-            "id": "patch", "type": "custom", "custom": {"name": "apply_patch", "input": "patch\nraw text"},
-        }])
+        self.assertEqual(
+            record["messages"][2]["tool_calls"],
+            [
+                {
+                    "id": "patch",
+                    "type": "custom",
+                    "custom": {"name": "apply_patch", "input": "patch\nraw text"},
+                }
+            ],
+        )
         self.assertEqual(record["tools"], TOOLS)
 
     def test_missing_capture_never_infers_even_without_calls(self) -> None:
-        for call in [None, {"type": "function_call", "call_id": "c", "name": "invented", "arguments": "{}"}]:
+        for call in [
+            None,
+            {
+                "type": "function_call",
+                "call_id": "c",
+                "name": "invented",
+                "arguments": "{}",
+            },
+        ]:
             trajectory = codex_events_to_actf(events(call))
             self.assertIsNone(trajectory["tools"])
             with self.assertRaisesRegex(SFTConversionError, "not captured"):
                 actf_to_sft(trajectory)
         self.assertEqual(read_tool_capture(None)["status"], "missing")
 
-    def test_actual_empty_or_omitted_tools_is_distinct_from_missing_capture(self) -> None:
+    def test_actual_empty_or_omitted_tools_is_distinct_from_missing_capture(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             for snapshot in [tool_snapshot({"tools": []}), tool_snapshot({})]:
                 record = actf_to_sft(self.convert(Path(tmp), [snapshot]))
@@ -110,17 +188,27 @@ class CodexToolsTests(unittest.TestCase):
     def test_changing_schemas_are_retained_and_not_silently_unioned(self) -> None:
         modified = deepcopy(TOOLS)
         modified[0]["description"] = "New definition."
-        snapshots = [tool_snapshot({"tools": TOOLS}), tool_snapshot({"tools": modified})]
+        snapshots = [
+            tool_snapshot({"tools": TOOLS}),
+            tool_snapshot({"tools": modified}),
+        ]
         with tempfile.TemporaryDirectory() as tmp:
             trajectory = self.convert(Path(tmp), snapshots)
         self.assertEqual(trajectory["tools_capture"]["status"], "changed")
-        self.assertEqual([r["snapshot"] for r in trajectory["tools_capture"]["requests"]], snapshots)
+        self.assertEqual(
+            [r["snapshot"] for r in trajectory["tools_capture"]["requests"]], snapshots
+        )
         with self.assertRaisesRegex(SFTConversionError, "changed across requests"):
             actf_to_sft(trajectory)
 
     def test_programmatic_tools_are_retained_without_fake_function_schema(self) -> None:
-        item = {"type": "additional_tools", "tools": [{"name": "programmatic", "schema": "native text"}]}
-        snapshot = tool_snapshot({"tools": TOOLS, "input": [item, {"role": "user", "content": "private"}]})
+        item = {
+            "type": "additional_tools",
+            "tools": [{"name": "programmatic", "schema": "native text"}],
+        }
+        snapshot = tool_snapshot(
+            {"tools": TOOLS, "input": [item, {"role": "user", "content": "private"}]}
+        )
         with tempfile.TemporaryDirectory() as tmp:
             trajectory = self.convert(Path(tmp), [snapshot])
         self.assertEqual(snapshot["additional_tools"], [item])
@@ -130,22 +218,39 @@ class CodexToolsTests(unittest.TestCase):
 
     def test_dynamic_tool_search_is_preserved_and_static_sft_is_rejected(self) -> None:
         item = {"type": "tool_search_output", "call_id": "search", "tools": [TOOLS[2]]}
-        snapshots = [tool_snapshot({"tools": TOOLS[:1]}),
-                     tool_snapshot({"tools": TOOLS[:1], "input": [item]})]
-        call = {"type": "function_call", "call_id": "wait", "name": "wait",
-                "namespace": "agents", "arguments": "{}"}
+        snapshots = [
+            tool_snapshot({"tools": TOOLS[:1]}),
+            tool_snapshot({"tools": TOOLS[:1], "input": [item]}),
+        ]
+        call = {
+            "type": "function_call",
+            "call_id": "wait",
+            "name": "wait",
+            "namespace": "agents",
+            "arguments": "{}",
+        }
         with tempfile.TemporaryDirectory() as tmp:
             trajectory = self.convert(Path(tmp), snapshots, call)
-        self.assertEqual(trajectory["tools_capture"]["requests"][1]["snapshot"]["tool_search_outputs"], [item])
+        self.assertEqual(
+            trajectory["tools_capture"]["requests"][1]["snapshot"][
+                "tool_search_outputs"
+            ],
+            [item],
+        )
         self.assertIsNone(trajectory["tools"])
         with self.assertRaisesRegex(SFTConversionError, "tool_search_output"):
             actf_to_sft(trajectory)
 
-    def test_whole_record_loss_rejects_sft_and_preserves_remaining_snapshots(self) -> None:
+    def test_whole_record_loss_rejects_sft_and_preserves_remaining_snapshots(
+        self,
+    ) -> None:
         modified = deepcopy(TOOLS)
         modified[0]["description"] = "New definition."
         for tools in [TOOLS, modified]:
-            with self.subTest(changed=tools != TOOLS), tempfile.TemporaryDirectory() as tmp:
+            with (
+                self.subTest(changed=tools != TOOLS),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
                 root = Path(tmp)
                 snapshots = [tool_snapshot({"tools": t}) for t in [TOOLS, tools, tools]]
                 self.convert(root, snapshots)
@@ -160,10 +265,16 @@ class CodexToolsTests(unittest.TestCase):
                     with self.subTest(retained=count, error=error):
                         path.write_text("".join(retained))
                         trajectory = convert_codex_trace(
-                            root / "trace.jsonl", root / "trace_ACTF.json", tools_trace=path,
+                            root / "trace.jsonl",
+                            root / "trace_ACTF.json",
+                            tools_trace=path,
                         )
-                        self.assertEqual(trajectory["tools_capture"]["status"], "invalid")
-                        self.assertEqual(len(trajectory["tools_capture"]["requests"]), count)
+                        self.assertEqual(
+                            trajectory["tools_capture"]["status"], "invalid"
+                        )
+                        self.assertEqual(
+                            len(trajectory["tools_capture"]["requests"]), count
+                        )
                         self.assertTrue(trajectory["steps"])
                         self.assertTrue((root / "trace_ACTF.json").is_file())
                         with self.assertRaisesRegex(SFTConversionError, error):
@@ -177,29 +288,51 @@ class CodexToolsTests(unittest.TestCase):
             snapshot, complete = path.read_text().splitlines(keepends=True)
             for count in [None, True, -1, "1", 1.0, 2]:
                 with self.subTest(count=count):
-                    path.write_text(snapshot + json.dumps({"kind": "codex_tools_complete", "request_count": count}) + "\n")
+                    path.write_text(
+                        snapshot
+                        + json.dumps(
+                            {"kind": "codex_tools_complete", "request_count": count}
+                        )
+                        + "\n"
+                    )
                     self.assertEqual(read_tool_capture(path)["status"], "invalid")
             for tail in [snapshot, complete]:
                 path.write_text(snapshot + complete + tail)
                 self.assertEqual(read_tool_capture(path)["status"], "invalid")
 
     def test_unmatched_call_fails_without_adding_a_definition(self) -> None:
-        call = {"type": "function_call", "call_id": "c", "name": "unseen", "arguments": "{}"}
+        call = {
+            "type": "function_call",
+            "call_id": "c",
+            "name": "unseen",
+            "arguments": "{}",
+        }
         with self.assertRaisesRegex(SFTConversionError, "missing captured schema"):
             actf_to_sft(codex_events_to_actf(events(call), tools=TOOLS))
 
     def test_offline_full_wire_reader_and_invalid_captures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "wire.jsonl"
-            path.write_text(json.dumps({"seq": 1, "path": "/v1/responses", "body": {"tools": TOOLS}}) + "\n")
+            path.write_text(
+                json.dumps(
+                    {"seq": 1, "path": "/v1/responses", "body": {"tools": TOOLS}}
+                )
+                + "\n"
+            )
             capture = read_tool_capture(path)
             self.assertEqual(capture["status"], "invalid")
             self.assertIn("missing completion", capture["error"])
             self.assertEqual(capture["requests"][0]["snapshot"]["tools"], TOOLS)
             with path.open("a") as stream:
-                stream.write(json.dumps({"kind": "codex_tools_complete", "request_count": 1}) + "\n")
+                stream.write(
+                    json.dumps({"kind": "codex_tools_complete", "request_count": 1})
+                    + "\n"
+                )
             self.assertEqual(read_tool_capture(path)["status"], "captured")
-            for tail in ['{', json.dumps({"kind": "codex_tools_error", "error": "disk failed"})]:
+            for tail in [
+                "{",
+                json.dumps({"kind": "codex_tools_error", "error": "disk failed"}),
+            ]:
                 with path.open("a") as stream:
                     stream.write(tail + "\n")
                 self.assertEqual(read_tool_capture(path)["status"], "invalid")
@@ -219,36 +352,64 @@ class CodexToolsProxyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "network host"):
             CodexConfig(api_base="http://example.test/v1", network="bridge")
         with self.assertRaisesRegex(ValueError, "no-codex-websockets"):
-            CodexConfig(api_base="http://example.test/v1", wire_trace_mode="full", supports_websockets=True)
+            CodexConfig(
+                api_base="http://example.test/v1",
+                wire_trace_mode="full",
+                supports_websockets=True,
+            )
         # Transport restrictions apply only when an HTTP capture proxy is used.
-        CodexConfig(api_base="http://example.test/v1", wire_trace_mode="off", network="bridge")
+        CodexConfig(
+            api_base="http://example.test/v1", wire_trace_mode="off", network="bridge"
+        )
 
     def test_image_detail_needs_the_request_proxy(self) -> None:
         CodexConfig(api_base="http://example.test/v1", responses_image_detail="high")
         with self.assertRaisesRegex(ValueError, "auto\\|low\\|high\\|original"):
-            CodexConfig(api_base="http://example.test/v1", responses_image_detail="medium")
+            CodexConfig(
+                api_base="http://example.test/v1", responses_image_detail="medium"
+            )
         for options in (
             {},
             {"api_base": "http://example.test/v1", "wire_trace_mode": "off"},
             {"api_base": "http://example.test/v1", "supports_websockets": True},
-            {"api_base": "http://example.test/v1", "wire_trace_mode": "off", "network": "bridge"},
+            {
+                "api_base": "http://example.test/v1",
+                "wire_trace_mode": "off",
+                "network": "bridge",
+            },
         ):
-            with self.subTest(options=options), self.assertRaisesRegex(ValueError, "image detail requires"):
+            with (
+                self.subTest(options=options),
+                self.assertRaisesRegex(ValueError, "image detail requires"),
+            ):
                 CodexConfig(responses_image_detail="high", **options)
 
     def test_image_detail_is_filled_only_where_codex_omitted_it(self) -> None:
         image = {"type": "input_image", "image_url": "data:image/png;base64,AA=="}
-        body = {"model": "m", "tools": TOOLS, "input": [
-            {"role": "user", "content": [{"type": "input_text", "text": "look"}, dict(image)]},
-            {"role": "user", "content": [{**image, "detail": "low"}]},
-            {"type": "function_call_output", "call_id": "c1", "output": [dict(image)]},
-            {"type": "function_call_output", "call_id": "c2", "output": "text"},
-            {"role": "assistant", "content": "plain"},
-        ]}
+        body = {
+            "model": "m",
+            "tools": TOOLS,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "look"}, dict(image)],
+                },
+                {"role": "user", "content": [{**image, "detail": "low"}]},
+                {
+                    "type": "function_call_output",
+                    "call_id": "c1",
+                    "output": [dict(image)],
+                },
+                {"type": "function_call_output", "call_id": "c2", "output": "text"},
+                {"role": "assistant", "content": "plain"},
+            ],
+        }
         expected = deepcopy(body)
         expected["input"][0]["content"][1]["detail"] = "high"
         expected["input"][2]["output"][0]["detail"] = "high"
-        untouched = json.dumps({"model": "m", "input": [{"role": "user", "content": "no image"}]}, indent=1).encode()
+        untouched = json.dumps(
+            {"model": "m", "input": [{"role": "user", "content": "no image"}]}, indent=1
+        ).encode()
 
         def forward(proxy, raw: bytes, path: str = "/v1/responses") -> bytes:
             handler = MagicMock()
@@ -256,32 +417,51 @@ class CodexToolsProxyTests(unittest.TestCase):
             handler.headers = {"Content-Length": str(len(raw))}
             handler.rfile = io.BytesIO(raw)
             handler.path, handler.command = path, "POST"
-            handler._record.side_effect = lambda data: _ProxyHandler._record(handler, data)
+            handler._record.side_effect = lambda data: _ProxyHandler._record(
+                handler, data
+            )
             response = MagicMock(status=200, headers={})
             response.read.return_value = b""
-            with patch("roller.wire_trace.urllib_request.urlopen", return_value=response) as send:
+            with patch(
+                "roller.wire_trace.urllib_request.urlopen", return_value=response
+            ) as send:
                 _ProxyHandler._handle(handler)
             return send.call_args.args[0].data
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            harness = CodexHarness(CodexConfig(
-                api_base="http://example.test/v1", wire_trace_mode="full", responses_image_detail="high",
-            ), 0)
-            with patch.object(WireTraceProxy, "start"), patch.object(WireTraceProxy, "stop"):
+            harness = CodexHarness(
+                CodexConfig(
+                    api_base="http://example.test/v1",
+                    wire_trace_mode="full",
+                    responses_image_detail="high",
+                ),
+                0,
+            )
+            with (
+                patch.object(WireTraceProxy, "start"),
+                patch.object(WireTraceProxy, "stop"),
+            ):
                 harness._start_wire_proxy(root)
                 proxy = harness._wire_proxy
-                self.assertEqual(json.loads(forward(proxy, json.dumps(body).encode())), expected)
+                self.assertEqual(
+                    json.loads(forward(proxy, json.dumps(body).encode())), expected
+                )
                 # Without an image to fill, the request keeps its original bytes.
                 self.assertEqual(forward(proxy, untouched), untouched)
                 raw = json.dumps(body).encode()
                 self.assertEqual(forward(proxy, raw, "/v1/chat/completions"), raw)
                 harness._stop_wire_proxy()
-            recorded = json.loads((root / "wire_trace.jsonl").read_text().splitlines()[0])
+            recorded = json.loads(
+                (root / "wire_trace.jsonl").read_text().splitlines()[0]
+            )
             self.assertEqual(recorded["body"]["input"], expected["input"])
 
             plain = CodexHarness(CodexConfig(api_base="http://example.test/v1"), 0)
-            with patch.object(WireTraceProxy, "start"), patch.object(WireTraceProxy, "stop"):
+            with (
+                patch.object(WireTraceProxy, "start"),
+                patch.object(WireTraceProxy, "stop"),
+            ):
                 plain._start_wire_proxy(root)
                 raw = json.dumps(body).encode()
                 self.assertEqual(forward(plain._wire_proxy, raw), raw)
@@ -290,33 +470,51 @@ class CodexToolsProxyTests(unittest.TestCase):
     def test_unparseable_request_marks_capture_invalid_but_is_forwarded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            proxy = WireTraceProxy("http://example.test/v1", root / "wire.jsonl", responses_tools_path=root / "tools.jsonl")
+            proxy = WireTraceProxy(
+                "http://example.test/v1",
+                root / "wire.jsonl",
+                responses_tools_path=root / "tools.jsonl",
+            )
             handler = MagicMock()
             handler.server.proxy = proxy
             handler.headers = {"Content-Length": "2"}
             handler.rfile = io.BytesIO(b"[]")
             handler.path = "/v1/responses"
             handler.command = "POST"
-            handler._record.side_effect = lambda data: _ProxyHandler._record(handler, data)
+            handler._record.side_effect = lambda data: _ProxyHandler._record(
+                handler, data
+            )
             response = MagicMock(status=400, headers={})
             response.read.return_value = b""
-            with patch("roller.wire_trace.urllib_request.urlopen", return_value=response) as send:
+            with patch(
+                "roller.wire_trace.urllib_request.urlopen", return_value=response
+            ) as send:
                 _ProxyHandler._handle(handler)
             self.assertEqual(send.call_args.args[0].data, b"[]")
             self.assertIn("non-object", proxy.recording_error)
             self.assertEqual(proxy.responses_request_count, 1)
 
-    def test_default_actf_captures_every_request_without_mutating_forwarded_body(self) -> None:
+    def test_default_actf_captures_every_request_without_mutating_forwarded_body(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             harness = CodexHarness(CodexConfig(api_base="http://example.test/v1"), 0)
-            with patch.object(WireTraceProxy, "start"), patch.object(WireTraceProxy, "stop"):
+            with (
+                patch.object(WireTraceProxy, "start"),
+                patch.object(WireTraceProxy, "stop"),
+            ):
                 harness._start_wire_proxy(root)
                 proxy = harness._wire_proxy
                 self.assertIsNotNone(proxy)
                 bodies = [
-                    {"model": "m", "tools": TOOLS, "tool_choice": "auto", "parallel_tool_calls": False,
-                     "input": [{"role": "user", "content": "private prompt"}]},
+                    {
+                        "model": "m",
+                        "tools": TOOLS,
+                        "tool_choice": "auto",
+                        "parallel_tool_calls": False,
+                        "input": [{"role": "user", "content": "private prompt"}],
+                    },
                     {"model": "m", "tools": TOOLS},
                     {"model": "m", "tools": []},
                 ]
@@ -324,34 +522,64 @@ class CodexToolsProxyTests(unittest.TestCase):
                     raw = json.dumps(body).encode()
                     handler = MagicMock()
                     handler.server.proxy = proxy
-                    handler.headers = {"Content-Length": str(len(raw)), "Content-Type": "application/json", "Authorization": "Bearer secret"}
+                    handler.headers = {
+                        "Content-Length": str(len(raw)),
+                        "Content-Type": "application/json",
+                        "Authorization": "Bearer secret",
+                    }
                     handler.rfile = io.BytesIO(raw)
                     handler.path = "/v1/responses"
                     handler.command = "POST"
-                    handler._record.side_effect = lambda data: _ProxyHandler._record(handler, data)
+                    handler._record.side_effect = lambda data: _ProxyHandler._record(
+                        handler, data
+                    )
                     response = MagicMock(status=200, headers={})
                     response.read.return_value = b""
-                    with patch("roller.wire_trace.urllib_request.urlopen", return_value=response) as send:
+                    with patch(
+                        "roller.wire_trace.urllib_request.urlopen",
+                        return_value=response,
+                    ) as send:
                         _ProxyHandler._handle(handler)
                     self.assertEqual(send.call_args.args[0].data, raw)
                 harness._stop_wire_proxy()
             raw_capture = (root / "tools_capture.jsonl").read_text()
             captures = [json.loads(line) for line in raw_capture.splitlines()]
-            self.assertEqual([r["snapshot"] for r in captures[:-1]], [tool_snapshot(b) for b in bodies])
-            self.assertEqual(captures[-1], {"kind": "codex_tools_complete", "request_count": 3})
-            self.assertEqual(read_tool_capture(root / "tools_capture.jsonl")["status"], "changed")
+            self.assertEqual(
+                [r["snapshot"] for r in captures[:-1]],
+                [tool_snapshot(b) for b in bodies],
+            )
+            self.assertEqual(
+                captures[-1], {"kind": "codex_tools_complete", "request_count": 3}
+            )
+            self.assertEqual(
+                read_tool_capture(root / "tools_capture.jsonl")["status"], "changed"
+            )
             self.assertNotIn("private prompt", raw_capture)
             self.assertNotIn("Bearer secret", raw_capture)
             # Shutdown redaction must not destroy legitimate schema properties named token.
-            self.assertEqual(captures[0]["snapshot"]["tools"][0]["parameters"]["properties"]["token"],
-                             TOOLS[0]["parameters"]["properties"]["token"])
+            self.assertEqual(
+                captures[0]["snapshot"]["tools"][0]["parameters"]["properties"][
+                    "token"
+                ],
+                TOOLS[0]["parameters"]["properties"]["token"],
+            )
 
-    def test_request_count_detects_dropped_snapshot_in_actf_and_full_modes(self) -> None:
+    def test_request_count_detects_dropped_snapshot_in_actf_and_full_modes(
+        self,
+    ) -> None:
         for mode in ["actf", "full"]:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                harness = CodexHarness(CodexConfig(api_base="http://example.test/v1", wire_trace_mode=mode), 0)
-                with patch.object(WireTraceProxy, "start"), patch.object(WireTraceProxy, "stop"):
+                harness = CodexHarness(
+                    CodexConfig(
+                        api_base="http://example.test/v1", wire_trace_mode=mode
+                    ),
+                    0,
+                )
+                with (
+                    patch.object(WireTraceProxy, "start"),
+                    patch.object(WireTraceProxy, "stop"),
+                ):
                     harness._start_wire_proxy(root)
                     proxy = harness._wire_proxy
                     handler = MagicMock()
@@ -375,8 +603,11 @@ class CodexToolsProxyTests(unittest.TestCase):
                 self.assertIn("expected 2, read 1", capture["error"])
 
     def test_capture_disabled_does_not_reuse_previous_attempt(self) -> None:
-        for config in [CodexConfig(), CodexConfig(wire_trace_mode="off"),
-                       CodexConfig(api_base="http://example.test/v1", supports_websockets=True)]:
+        for config in [
+            CodexConfig(),
+            CodexConfig(wire_trace_mode="off"),
+            CodexConfig(api_base="http://example.test/v1", supports_websockets=True),
+        ]:
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "tools_capture.jsonl"
                 path.write_text("stale")
@@ -385,11 +616,19 @@ class CodexToolsProxyTests(unittest.TestCase):
                 self.assertIsNone(harness._wire_proxy)
                 self.assertFalse(path.exists())
 
-    def test_recording_failure_invalidates_capture_but_preserves_snapshots(self) -> None:
+    def test_recording_failure_invalidates_capture_but_preserves_snapshots(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            proxy = WireTraceProxy("http://example.test/v1", root / "wire.jsonl", responses_tools_path=root / "tools.jsonl")
-            proxy.write_tools({"kind": "codex_tools", "seq": 1, "snapshot": {"tools": TOOLS}})
+            proxy = WireTraceProxy(
+                "http://example.test/v1",
+                root / "wire.jsonl",
+                responses_tools_path=root / "tools.jsonl",
+            )
+            proxy.write_tools(
+                {"kind": "codex_tools", "seq": 1, "snapshot": {"tools": TOOLS}}
+            )
             proxy.recording_error = "disk failure"
             harness = CodexHarness(CodexConfig(), 0)
             harness._wire_proxy = proxy

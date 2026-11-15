@@ -2,6 +2,7 @@
 
 These are plain strings on disk for compatibility with roller.call/v1.
 """
+
 from __future__ import annotations
 
 from typing import Final, Literal

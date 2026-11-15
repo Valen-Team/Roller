@@ -160,7 +160,9 @@ class ClaudeCodeConfig:
             )
         claude_effort(self.reasoning_effort)
         if self.max_thinking_tokens is not None and self.max_thinking_tokens <= 0:
-            raise ValueError("Claude Code max thinking tokens must be greater than zero")
+            raise ValueError(
+                "Claude Code max thinking tokens must be greater than zero"
+            )
         if self.max_turns is not None and self.max_turns <= 0:
             raise ValueError("Claude Code max turns must be greater than zero")
         if self.permission_mode not in CLAUDE_PERMISSION_MODES:
@@ -173,16 +175,18 @@ class ClaudeCodeConfig:
         if self.wire_trace_mode == "full" and not self.api_base:
             raise ValueError("Claude Code --wire-trace full requires --api-base")
         if self.capture_calls and (not self.api_base or self.network != "host"):
-            raise ValueError("Claude call capture requires --claude-api-base and --network host")
+            raise ValueError(
+                "Claude call capture requires --claude-api-base and --network host"
+            )
         if self.capture_calls and self.wire_trace_mode == "off":
             raise ValueError("Claude call capture requires wire tracing")
-        if self.unique_tool_ids and (not self.api_base or self.wire_trace_mode == "off"):
-            raise ValueError("Claude tool ID repair requires --claude-api-base and wire tracing")
-        if (
-            self.wire_trace_mode != "off"
-            and self.api_base
-            and self.network != "host"
+        if self.unique_tool_ids and (
+            not self.api_base or self.wire_trace_mode == "off"
         ):
+            raise ValueError(
+                "Claude tool ID repair requires --claude-api-base and wire tracing"
+            )
+        if self.wire_trace_mode != "off" and self.api_base and self.network != "host":
             raise ValueError(
                 "Claude Code wire tracing requires --network host so the container "
                 "can reach the rollout-local proxy"
@@ -219,7 +223,9 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         *,
         collect_outputs: bool = True,
     ) -> InteractiveSession:
-        return ClaudeCodeSession(self, request, output_dir, attempt, collect_outputs=collect_outputs)
+        return ClaudeCodeSession(
+            self, request, output_dir, attempt, collect_outputs=collect_outputs
+        )
 
     def _start_wire_proxy(self, output_dir: Path, attempt: int = 1) -> None:
         self._wire_proxy = None
@@ -231,18 +237,24 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         mappings_path = output_dir / TOOL_ID_MAPPINGS_NAME
         mappings_path.unlink(missing_ok=True)
         if self.config.capture_calls:
-            self.capture = CaptureRuntime(output_dir, attempt, "claude-code", self.config.capture_debug)
+            self.capture = CaptureRuntime(
+                output_dir, attempt, "claude-code", self.config.capture_debug
+            )
         self._wire_proxy = WireTraceProxy(
             self.config.api_base,
             log_path,
-            mode="full" if self.config.wire_trace_mode == "full" or self.config.capture_calls else "tools",
+            mode="full"
+            if self.config.wire_trace_mode == "full" or self.config.capture_calls
+            else "tools",
             capture_recorder=self.capture.recorder if self.capture else None,
             # Claude Code 2.1.222 uses an SDK-internal ``?beta=true`` route.
             # Anthropic-compatible gateways commonly implement the stable
             # Messages path but reject this transport-only query flag.
             drop_query_parameters=("beta",),
             drop_request_headers=("anthropic-beta",),
-            tool_id_mappings_path=mappings_path if self.config.unique_tool_ids else None,
+            tool_id_mappings_path=mappings_path
+            if self.config.unique_tool_ids
+            else None,
         )
         self._wire_proxy.start()
 
@@ -262,9 +274,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             self._wire_proxy = None
 
     def _effective_effort(self, request: RunRequest) -> str | None:
-        selected = resolve_thinking(
-            request.task.thinking, self.config.reasoning_effort
-        )
+        selected = resolve_thinking(request.task.thinking, self.config.reasoning_effort)
         return claude_effort(selected)
 
     def _model_name(self, request: RunRequest) -> str:
@@ -281,9 +291,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
                 environment[name] = os.environ[name]
         for name in request.task.env_names:
             if not ENV_NAME_RE.fullmatch(name):
-                raise ValueError(
-                    f"invalid task environment variable name: {name!r}"
-                )
+                raise ValueError(f"invalid task environment variable name: {name!r}")
             if name not in os.environ or os.environ[name] == "":
                 raise ValueError(
                     f"task {request.task.id!r} requires missing environment "
@@ -294,8 +302,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         api_key = os.environ.get(self.config.api_key_env)
         if not api_key:
             raise ValueError(
-                "Claude Code requires a non-empty API key in "
-                f"{self.config.api_key_env}"
+                f"Claude Code requires a non-empty API key in {self.config.api_key_env}"
             )
         environment["ANTHROPIC_API_KEY"] = api_key
         api_base = (
@@ -325,9 +332,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
                 }
             )
         if self.config.max_thinking_tokens is not None:
-            environment["MAX_THINKING_TOKENS"] = str(
-                self.config.max_thinking_tokens
-            )
+            environment["MAX_THINKING_TOKENS"] = str(self.config.max_thinking_tokens)
         return environment
 
     def _start_container(
@@ -374,9 +379,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             "Claude Code workspace setup",
         )
 
-    def _prepare_context_and_setup(
-        self, container: str, request: RunRequest
-    ) -> None:
+    def _prepare_context_and_setup(self, container: str, request: RunRequest) -> None:
         if request.bundle is not None:
             workspace = shlex.quote(self.config.workspace_container_path)
             script = (
@@ -472,7 +475,13 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         command.extend(["--print", "--input-format=stream-json"])
         # ``docker exec`` forwards no stdin; read the message from the file.
         index = command.index("claude")
-        command[index:] = ["/bin/sh", "-c", 'exec "$@" < "$0"', input_path, *command[index:]]
+        command[index:] = [
+            "/bin/sh",
+            "-c",
+            'exec "$@" < "$0"',
+            input_path,
+            *command[index:],
+        ]
         return command
 
     def _copy_image_input(
@@ -505,7 +514,9 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
     ) -> int:
         input_path = None
         if request.task.attach_images and not resume:
-            input_path = self._copy_image_input(container, request, prompt, log_path.parent)
+            input_path = self._copy_image_input(
+                container, request, prompt, log_path.parent
+            )
         process = self.runtime.popen(
             self._claude_command(
                 container, request, prompt, resume=resume, input_path=input_path
@@ -525,9 +536,9 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         if return_code != 0:
             detail = ""
             try:
-                detail = log_path.read_text(
-                    encoding="utf-8", errors="replace"
-                ).strip()[-4000:]
+                detail = log_path.read_text(encoding="utf-8", errors="replace").strip()[
+                    -4000:
+                ]
             except OSError:
                 pass
             raise RuntimeError(
@@ -585,7 +596,8 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             primary_files = [
                 path
                 for path in staging_root.rglob("*.jsonl")
-                if "subagents" not in path.relative_to(staging_root).parts and path.is_file()
+                if "subagents" not in path.relative_to(staging_root).parts
+                and path.is_file()
             ]
             if not primary_files:
                 return None
@@ -593,9 +605,16 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             sidechain_dir = primary.parent / primary.stem / "subagents"
             files = [primary]
             if sidechain_dir.is_dir():
-                files.extend(sorted(path for path in sidechain_dir.rglob("*.jsonl") if not path.is_symlink()))
+                files.extend(
+                    sorted(
+                        path
+                        for path in sidechain_dir.rglob("*.jsonl")
+                        if not path.is_symlink()
+                    )
+                )
             if self.config.capture_calls:
                 from roller.storage import atomic_write_json
+
                 native_dir = self.capture.recorder.directory / "native"
                 native_dir.mkdir(parents=True, exist_ok=True)
                 sources = []
@@ -604,8 +623,12 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
                         continue
                     name = f"source-{index:04d}.jsonl"
                     self.capture.add_native(path, name)
-                    sources.append({"path": f"native/{name}",
-                                    "native_path": path.relative_to(staging_root).as_posix()})
+                    sources.append(
+                        {
+                            "path": f"native/{name}",
+                            "native_path": path.relative_to(staging_root).as_posix(),
+                        }
+                    )
                 atomic_write_json(native_dir.parent / "native_index.json", sources)
             destination = rollout_dir / f"trace.attempt-{attempt}.jsonl"
             self._combine_session_files(files, destination)
@@ -617,15 +640,25 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         finally:
             shutil.rmtree(staging_root, ignore_errors=True)
 
-    def _capture_metadata(self, output_dir: Path, attempt: int, status: str) -> dict[str, Any]:
+    def _capture_metadata(
+        self, output_dir: Path, attempt: int, status: str
+    ) -> dict[str, Any]:
         if not self.config.capture_calls:
             return {}
         if self.capture is None:
-            return {"capture": {"manifest": None, "capture_status": "partial",
-                                "error": "capture recorder unavailable"}}
+            return {
+                "capture": {
+                    "manifest": None,
+                    "capture_status": "partial",
+                    "error": "capture recorder unavailable",
+                }
+            }
         metadata = self.capture.finish(status, error_formatter=str)
         if metadata["capture"]["manifest"] is None:
-            logger.warning("Claude call capture finalization failed: %s", metadata["capture"]["error"])
+            logger.warning(
+                "Claude call capture finalization failed: %s",
+                metadata["capture"]["error"],
+            )
         return metadata
 
     def run(self, request: RunRequest, output_dir: Path, attempt: int) -> HarnessResult:
@@ -634,7 +667,9 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         try:
             session.start()
             for index, prompt in enumerate(request.task.prompts):
-                remaining = request.timeout_seconds - (time.monotonic() - session.started_monotonic)
+                remaining = request.timeout_seconds - (
+                    time.monotonic() - session.started_monotonic
+                )
                 if remaining <= 0:
                     raise TimeoutError("Claude Code task timed out")
                 session.return_codes.append(
@@ -688,7 +723,9 @@ class ClaudeCodeSession(InteractiveSession):
         self.started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.started_monotonic = time.monotonic()
         self.image_digest = harness._image_digest()
-        self.stream_path = output_dir / "rollout" / f"claude-code.attempt-{attempt}.jsonl"
+        self.stream_path = (
+            output_dir / "rollout" / f"claude-code.attempt-{attempt}.jsonl"
+        )
         self._finished: HarnessResult | None = None
 
     def start(self) -> None:
@@ -719,10 +756,14 @@ class ClaudeCodeSession(InteractiveSession):
         self.started = True
 
     def _latest_reply(self) -> str:
-        trace = self.harness._collect_trace(self.container, self.output_dir, self.attempt)
+        trace = self.harness._collect_trace(
+            self.container, self.output_dir, self.attempt
+        )
         if trace is None:
             raise RuntimeError("Claude Code turn produced no native session trace")
-        destination = self.output_dir / "rollout" / f".turn-{len(self.messages) + 1}.ACTF.json"
+        destination = (
+            self.output_dir / "rollout" / f".turn-{len(self.messages) + 1}.ACTF.json"
+        )
         trajectory = convert_claude_code_trace(
             trace,
             destination,
@@ -791,12 +832,18 @@ class ClaudeCodeSession(InteractiveSession):
         try:
             harness._stop_wire_proxy()
         except Exception as exc:
-            logger.warning("[%s] Claude Code wire proxy shutdown failed: %s", task_id, exc)
+            logger.warning(
+                "[%s] Claude Code wire proxy shutdown failed: %s", task_id, exc
+            )
         if self.container_started:
             try:
-                trace_path = harness._collect_trace(self.container, self.output_dir, self.attempt)
+                trace_path = harness._collect_trace(
+                    self.container, self.output_dir, self.attempt
+                )
             except Exception as exc:
-                logger.warning("[%s] Claude Code trace collection failed: %s", task_id, exc)
+                logger.warning(
+                    "[%s] Claude Code trace collection failed: %s", task_id, exc
+                )
             if self.collect_outputs:
                 try:
                     artifact_result, output_copy_error = harness._collect_outputs(
@@ -804,7 +851,9 @@ class ClaudeCodeSession(InteractiveSession):
                     )
                 except Exception as exc:
                     output_copy_error = str(exc)
-                    logger.warning("[%s] Claude Code output collection failed: %s", task_id, exc)
+                    logger.warning(
+                        "[%s] Claude Code output collection failed: %s", task_id, exc
+                    )
         if trace_path is not None:
             try:
                 trajectory_path = self.output_dir / "rollout" / "trace_ACTF.json"
@@ -816,16 +865,28 @@ class ClaudeCodeSession(InteractiveSession):
                     keep_thinking=config.keep_thinking,
                 )
                 if not trajectory.get("steps"):
-                    raise ValueError("Claude Code native trace produced no assistant steps")
+                    raise ValueError(
+                        "Claude Code native trace produced no assistant steps"
+                    )
             except Exception as exc:
                 trajectory_path = None
                 if status == "ok":
-                    status, error = "error", f"Claude Code trajectory conversion failed: {exc}"
+                    status, error = (
+                        "error",
+                        f"Claude Code trajectory conversion failed: {exc}",
+                    )
         if status == "ok" and trace_path is None:
-            status, error = "error", "Claude Code finished but no native session trace was found"
+            status, error = (
+                "error",
+                "Claude Code finished but no native session trace was found",
+            )
         if status == "ok" and output_copy_error is not None:
             status, error = "error", f"output collection failed: {output_copy_error}"
-        if status == "ok" and artifact_result is not None and not artifact_result.passed:
+        if (
+            status == "ok"
+            and artifact_result is not None
+            and not artifact_result.passed
+        ):
             status, error = "error", "unsafe output files were rejected"
         retained_container: str | None = None
         if self.container_started:
@@ -834,11 +895,14 @@ class ClaudeCodeSession(InteractiveSession):
             else:
                 removed = remove_container(harness.runtime, self.container)
                 if removed.returncode != 0:
-                    logger.warning("[%s] failed to remove container %s", task_id, self.container)
+                    logger.warning(
+                        "[%s] failed to remove container %s", task_id, self.container
+                    )
         elapsed = time.monotonic() - self.started_monotonic
         usage = (
             extract_claude_code_usage(trace_path, self.stream_path)
-            if trace_path is not None else dict(ZERO_USAGE)
+            if trace_path is not None
+            else dict(ZERO_USAGE)
         )
         usage["elapsed_seconds"] = round(elapsed, 3)
         provenance = build_provenance(
@@ -847,14 +911,18 @@ class ClaudeCodeSession(InteractiveSession):
             claude_code_version=self.claude_version,
             docker_image=config.docker_image,
             docker_image_digest=self.image_digest,
-            api_base_urls=[redact_anthropic_base_url(config.api_base)] if config.api_base else [],
+            api_base_urls=[redact_anthropic_base_url(config.api_base)]
+            if config.api_base
+            else [],
             environment=self.environment,
             attempt=self.attempt,
             started_at=self.started_at,
             finished_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
         try:
-            reasoning_effort = resolve_thinking(self.request.task.thinking, config.reasoning_effort)
+            reasoning_effort = resolve_thinking(
+                self.request.task.thinking, config.reasoning_effort
+            )
             transport_effort = harness._effective_effort(self.request)
         except Exception:
             reasoning_effort = None
@@ -864,8 +932,12 @@ class ClaudeCodeSession(InteractiveSession):
             elapsed_seconds=elapsed,
             error=error,
             usage=usage,
-            trace_path=trace_path.relative_to(self.output_dir).as_posix() if trace_path else None,
-            trajectory_path=trajectory_path.relative_to(self.output_dir).as_posix() if trajectory_path else None,
+            trace_path=trace_path.relative_to(self.output_dir).as_posix()
+            if trace_path
+            else None,
+            trajectory_path=trajectory_path.relative_to(self.output_dir).as_posix()
+            if trajectory_path
+            else None,
             metadata={
                 **harness._capture_metadata(self.output_dir, self.attempt, status),
                 "raw_trace_schema": "claude-code-session-jsonl",
@@ -882,7 +954,9 @@ class ClaudeCodeSession(InteractiveSession):
                 **({"unique_tool_ids": True} if config.unique_tool_ids else {}),
                 "keep_thinking": config.keep_thinking,
                 "config_sha256": config.config_sha256,
-                "output_collection": output_collection_metadata(artifact_result, self.request, self.output_dir),
+                "output_collection": output_collection_metadata(
+                    artifact_result, self.request, self.output_dir
+                ),
                 "output_copy_error": output_copy_error,
                 "attempt": self.attempt,
                 "provenance": provenance,

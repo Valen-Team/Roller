@@ -5,6 +5,7 @@ than one response. ``ToolIdRegistry`` repairs the IDs before Claude Code sees
 them; ``scope_claude_tool_ids`` separates them in a trace that was collected
 without the repair.
 """
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -84,7 +85,9 @@ def scope_claude_tool_ids(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 key = (identity, native)
                 if key not in calls:
                     if native in pending:
-                        raise ValueError(f"Claude tool ID is reused before its result: {native}")
+                        raise ValueError(
+                            f"Claude tool ID is reused before its result: {native}"
+                        )
                     unique, count = native, 2
                     while unique in used or (unique != native and unique in native_ids):
                         unique = f"{native}__occurrence_{count}"

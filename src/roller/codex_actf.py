@@ -65,9 +65,7 @@ def _instruction_text(value: Any) -> str:
         if isinstance(text, str):
             return text
     if isinstance(value, list):
-        return "\n".join(
-            part for item in value if (part := _instruction_text(item))
-        )
+        return "\n".join(part for item in value if (part := _instruction_text(item)))
     return ""
 
 
@@ -97,7 +95,11 @@ def _reasoning_text(payload: Mapping[str, Any]) -> str:
 
 def _arguments(payload: Mapping[str, Any]) -> tuple[dict[str, Any], Any]:
     payload_type = payload.get("type")
-    raw = payload.get("arguments") if payload_type == "function_call" else payload.get("input")
+    raw = (
+        payload.get("arguments")
+        if payload_type == "function_call"
+        else payload.get("input")
+    )
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
@@ -255,7 +257,11 @@ def _user_image_blocks(value: Any) -> list[dict[str, Any]] | None:
 
 
 def _usage_number(value: Any) -> int:
-    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+    return (
+        int(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else 0
+    )
 
 
 def codex_events_to_actf(
@@ -391,12 +397,20 @@ def codex_events_to_actf(
             # That response answered the compaction prompt, not the task.
             summary = payload.get("message")
             last = groups[-1] if groups else None
-            if (isinstance(summary, str) and last is not None and not last["tool_calls"]
-                    and last["content"] and summary.endswith(last["content"][-1])):
+            if (
+                isinstance(summary, str)
+                and last is not None
+                and not last["tool_calls"]
+                and last["content"]
+                and summary.endswith(last["content"][-1])
+            ):
                 groups.pop()
                 current = None
                 if last["user_content"]:
-                    pending_user, pending_user_time = last["user_content"], last["user_time"]
+                    pending_user, pending_user_time = (
+                        last["user_content"],
+                        last["user_time"],
+                    )
             pending_reasoning = []
             continue
 
@@ -479,7 +493,9 @@ def codex_events_to_actf(
             call["output"] = output
             call["output_time"] = timestamp
             call["metadata"] = metadata
-            exit_code = metadata.get("exit_code") if isinstance(metadata, Mapping) else None
+            exit_code = (
+                metadata.get("exit_code") if isinstance(metadata, Mapping) else None
+            )
             call["is_error"] = (
                 isinstance(exit_code, int)
                 and not isinstance(exit_code, bool)
@@ -569,13 +585,17 @@ def codex_events_to_actf(
         "system_prompt": "\n\n".join(system_parts),
         "tools": deepcopy(tools),
         "tools_format": "responses",
-        "tools_capture": deepcopy(tools_capture) if tools_capture is not None else {
+        "tools_capture": deepcopy(tools_capture)
+        if tools_capture is not None
+        else {
             "source": "provided" if tools is not None else "none",
             "status": "captured" if tools is not None else "missing",
         },
         "steps": steps,
         "started_at": steps[0]["started_at"] if steps else first_time or "",
-        "finished_at": steps[-1]["finished_at"] if steps else last_time or first_time or "",
+        "finished_at": steps[-1]["finished_at"]
+        if steps
+        else last_time or first_time or "",
     }
 
 
@@ -590,7 +610,8 @@ def convert_codex_trace(
     capture = read_tool_capture(tools_trace)
     tools = (
         capture["requests"][0]["snapshot"].get("tools", [])
-        if capture["status"] == "captured" else None
+        if capture["status"] == "captured"
+        else None
     )
     trajectory = codex_events_to_actf(
         _read_events(source),

@@ -1,4 +1,5 @@
 """Install a versioned standalone OpenCode binary, checking npm's SHA-512."""
+
 import base64
 import hashlib
 import io

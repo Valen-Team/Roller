@@ -10,9 +10,7 @@ from roller.openclaw_delivery import OpenClawDeliveryTracker
 from roller.openclaw_usage import OpenClawUsage
 from roller.wire_trace import extract_wire_image_requests, wire_text_digest
 
-OPENCLAW_ANNOUNCEMENT_SFT_REASON = (
-    "OpenClaw announcement input lacks native response binding; use captured per-call contexts"
-)
+OPENCLAW_ANNOUNCEMENT_SFT_REASON = "OpenClaw announcement input lacks native response binding; use captured per-call contexts"
 
 
 def _event_time(value: Any) -> datetime | None:
@@ -122,9 +120,7 @@ def append_user_content(
     return [*head, *tail]
 
 
-def _attach_wire_images(
-    events: list[dict[str, Any]], wire_trace: Path | None
-) -> None:
+def _attach_wire_images(events: list[dict[str, Any]], wire_trace: Path | None) -> None:
     """Attach OpenClaw image-tool model inputs to their native tool results.
 
     The image tool sends its prompt and images in a separate request without
@@ -214,8 +210,7 @@ def _attach_wire_images(
         # in wire order; their order among themselves is not recorded.
         group = matches[:same_prompt] if matches else candidates[:parallel]
         if not group or any(
-            requests[index]["images"] != requests[group[0]]["images"]
-            for index in group
+            requests[index]["images"] != requests[group[0]]["images"] for index in group
         ):
             continue
         selected = group[0]
@@ -381,15 +376,33 @@ def _announcement_inputs(rows: list[dict[str, Any]]) -> tuple[dict[str, str], bo
     inputs: dict[str, str] = {}
     for events in runs.values():
         context = next((e for e in events if e.get("stage") == "stream:context"), None)
-        after = next((e for e in reversed(events) if e.get("stage") == "session:after"), None)
+        after = next(
+            (e for e in reversed(events) if e.get("stage") == "session:after"), None
+        )
         if context is None or after is None:
             unresolved = True
             continue
         before = context.get("messages", [])
-        old_ids = set().union(*(_provider_message_ids(m) for m in before if m.get("role") == "assistant"))
-        new = next((m for m in after.get("messages", []) if m.get("role") == "assistant" and _provider_message_ids(m) - old_ids), None)
-        last_assistant = max((i for i, m in enumerate(before) if m.get("role") == "assistant"), default=-1)
-        texts = [_text(m.get("content")) for m in before[last_assistant + 1:] if m.get("role") == "user"]
+        old_ids = set().union(
+            *(_provider_message_ids(m) for m in before if m.get("role") == "assistant")
+        )
+        new = next(
+            (
+                m
+                for m in after.get("messages", [])
+                if m.get("role") == "assistant" and _provider_message_ids(m) - old_ids
+            ),
+            None,
+        )
+        last_assistant = max(
+            (i for i, m in enumerate(before) if m.get("role") == "assistant"),
+            default=-1,
+        )
+        texts = [
+            _text(m.get("content"))
+            for m in before[last_assistant + 1 :]
+            if m.get("role") == "user"
+        ]
         if new is None or not texts:
             unresolved = True
             continue
@@ -420,7 +433,11 @@ def openclaw_events_to_actf(
     system_prompt_list = list(system_prompts) if system_prompts is not None else []
     system_prompt = system_prompt_list[0] if system_prompt_list else ""
     first_time = next(
-        (_timestamp(row.get("timestamp")) for row in rows if _timestamp(row.get("timestamp"))),
+        (
+            _timestamp(row.get("timestamp"))
+            for row in rows
+            if _timestamp(row.get("timestamp"))
+        ),
         None,
     )
     pending_user: str | list[Any] = ""
@@ -453,9 +470,7 @@ def openclaw_events_to_actf(
         message_time = _timestamp(row.get("timestamp") or message.get("timestamp"))
         if role == "user":
             expected = (
-                expected_users[user_index]
-                if user_index < len(expected_users)
-                else None
+                expected_users[user_index] if user_index < len(expected_users) else None
             )
             value = user_content(message.get("content"), expected)
             if retry_after_empty_error and pending_user and value == pending_user:
@@ -499,8 +514,11 @@ def openclaw_events_to_actf(
                 continue
             retry_after_empty_error = False
             finish_current(message_time)
-            notifications = {notification_inputs[mid] for mid in _provider_message_ids(message)
-                             if notification_inputs and mid in notification_inputs}
+            notifications = {
+                notification_inputs[mid]
+                for mid in _provider_message_ids(message)
+                if notification_inputs and mid in notification_inputs
+            }
             if len(notifications) == 1:
                 pending_user = notifications.pop()
                 pending_user_time = message_time
@@ -547,13 +565,15 @@ def openclaw_events_to_actf(
             tool_call_namespace = (
                 f"session-{session_index}" if multiple_sessions else None
             )
-            current["observation"].append(
-                _observation(message, tool_call_namespace)
-            )
+            current["observation"].append(_observation(message, tool_call_namespace))
             current["finished_at"] = message_time or current.get("finished_at")
 
     last_time = next(
-        (_timestamp(row.get("timestamp")) for row in reversed(rows) if _timestamp(row.get("timestamp"))),
+        (
+            _timestamp(row.get("timestamp"))
+            for row in reversed(rows)
+            if _timestamp(row.get("timestamp"))
+        ),
         None,
     )
     finish_current(last_time)
@@ -585,15 +605,25 @@ def convert_openclaw_trace(
     tools: list[Any] | None = None,
     keep_thinking: bool = True,
 ) -> dict[str, Any]:
-    system_prompts = _cache_trace_system_prompts(cache_trace) if cache_trace is not None else []
-    notification_inputs, unresolved = _announcement_inputs(_read_events(cache_trace)) if cache_trace is not None else ({}, False)
+    system_prompts = (
+        _cache_trace_system_prompts(cache_trace) if cache_trace is not None else []
+    )
+    notification_inputs, unresolved = (
+        _announcement_inputs(_read_events(cache_trace))
+        if cache_trace is not None
+        else ({}, False)
+    )
     native_events = _read_events(source)
-    native_ids = set().union(*(
-        _provider_message_ids(message)
-        for event in native_events
-        if isinstance(message := event.get("message"), dict)
-    ))
-    matched_inputs = {text for mid, text in notification_inputs.items() if mid in native_ids}
+    native_ids = set().union(
+        *(
+            _provider_message_ids(message)
+            for event in native_events
+            if isinstance(message := event.get("message"), dict)
+        )
+    )
+    matched_inputs = {
+        text for mid, text in notification_inputs.items() if mid in native_ids
+    }
     unresolved = unresolved or bool(set(notification_inputs.values()) - matched_inputs)
     _attach_wire_images(native_events, wire_trace)
     trajectory = openclaw_events_to_actf(

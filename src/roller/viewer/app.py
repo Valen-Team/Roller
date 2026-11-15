@@ -224,9 +224,9 @@ class RollerRun:
         self._lock = threading.RLock()
         self._run_info: dict[str, Any] = {}
         self._rollouts: dict[str, Rollout] = {}
-        self._actf_cache: OrderedDict[
-            str, tuple[tuple[int, int], dict[str, Any]]
-        ] = OrderedDict()
+        self._actf_cache: OrderedDict[str, tuple[tuple[int, int], dict[str, Any]]] = (
+            OrderedDict()
+        )
         self.refresh()
 
     def refresh(self) -> None:
@@ -238,15 +238,21 @@ class RollerRun:
             entries = self._run_info.get("samples", [])
             if isinstance(entries, list):
                 for entry in entries:
-                    if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                    if not isinstance(entry, dict) or not isinstance(
+                        entry.get("path"), str
+                    ):
                         continue
                     try:
                         directory = _inside(self.root, self.root / entry["path"])
                     except ViewerDataError:
-                        logger.warning("ignoring sample path outside run: %s", entry["path"])
+                        logger.warning(
+                            "ignoring sample path outside run: %s", entry["path"]
+                        )
                         continue
                     if directory.is_dir():
-                        candidates[directory.relative_to(self.root).as_posix()] = dict(entry)
+                        candidates[directory.relative_to(self.root).as_posix()] = dict(
+                            entry
+                        )
 
             samples_root = self.root / "samples"
             if samples_root.is_dir():
@@ -255,13 +261,18 @@ class RollerRun:
                         safe_info = _inside(self.root, info_path)
                         sample_info = _read_json(safe_info)
                     except ViewerDataError as exc:
-                        logger.warning("ignoring unreadable sample info %s: %s", info_path, exc)
+                        logger.warning(
+                            "ignoring unreadable sample info %s: %s", info_path, exc
+                        )
                         continue
                     relative = safe_info.parent.relative_to(self.root).as_posix()
                     # Sample info carries the finalized trajectory details, while the
                     # run checkpoint carries this invocation's status (for example,
                     # ``skipped`` after Resume). Preserve that run-level overlay.
-                    candidates[relative] = {**sample_info, **candidates.get(relative, {})}
+                    candidates[relative] = {
+                        **sample_info,
+                        **candidates.get(relative, {}),
+                    }
 
             rollouts: dict[str, Rollout] = {}
             for relative, info in sorted(candidates.items()):
@@ -331,9 +342,7 @@ class RollerRun:
                         "thinking", harness_configuration.get("reasoning_effort")
                     ),
                     "keep_thinking": harness_configuration.get("keep_thinking"),
-                    "reasoning_summary": harness_configuration.get(
-                        "reasoning_summary"
-                    ),
+                    "reasoning_summary": harness_configuration.get("reasoning_summary"),
                     "supports_websockets": harness_configuration.get(
                         "supports_websockets"
                     ),
@@ -484,7 +493,9 @@ class RollerRun:
             "tools": tools if isinstance(tools, list) else [],
             "tools_captured": isinstance(tools, list),
             "step_count": len(steps),
-            "steps": [self._step_summary(index, step) for index, step in enumerate(steps)],
+            "steps": [
+                self._step_summary(index, step) for index, step in enumerate(steps)
+            ],
         }
         return payload
 
@@ -529,12 +540,16 @@ class RollerRun:
                 observations.append(
                     {
                         "tool_call_id": _string(
-                            observation.get("toolCallId", observation.get("tool_call_id"))
+                            observation.get(
+                                "toolCallId", observation.get("tool_call_id")
+                            )
                         ),
                         "tool_name": _string(observation.get("toolName")),
                         "is_error": bool(observation.get("isError", False)),
                         "timestamp": observation.get("timestamp"),
-                        "content": _observation_view(observation.get("content"), text_limit),
+                        "content": _observation_view(
+                            observation.get("content"), text_limit
+                        ),
                     }
                 )
         return {
@@ -617,9 +632,7 @@ def _handler(source: RollerRun) -> type[BaseHTTPRequestHandler]:
                         status=_first(query, "status"),
                         model=_first(query, "model"),
                         page=_query_int(query, "page", 1, 1),
-                        page_size=_query_int(
-                            query, "page_size", DEFAULT_PAGE_SIZE, 1
-                        ),
+                        page_size=_query_int(query, "page_size", DEFAULT_PAGE_SIZE, 1),
                     )
                 )
                 return
@@ -640,9 +653,7 @@ def _handler(source: RollerRun) -> type[BaseHTTPRequestHandler]:
                     source.step_detail(
                         parts[3],
                         step_index,
-                        _query_int(
-                            query, "limit", DEFAULT_TEXT_LIMIT, minimum=1_000
-                        ),
+                        _query_int(query, "limit", DEFAULT_TEXT_LIMIT, minimum=1_000),
                     )
                 )
                 return
@@ -669,14 +680,14 @@ def _handler(source: RollerRun) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(body)
 
-        def _json(
-            self, payload: Any, status: HTTPStatus = HTTPStatus.OK
-        ) -> None:
-            body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode(
-                "utf-8"
-            )
+        def _json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
+            body = json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
             self.send_response(status)
-            self._headers("application/json; charset=utf-8", len(body), cache="no-store")
+            self._headers(
+                "application/json; charset=utf-8", len(body), cache="no-store"
+            )
             self.end_headers()
             self.wfile.write(body)
 

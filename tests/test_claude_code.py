@@ -102,9 +102,7 @@ class ClaudeCodeHarnessTests(unittest.TestCase):
             clear=True,
         ):
             environment = harness._environment(request)
-        command = harness._claude_command(
-            "container", request, "hello", resume=False
-        )
+        command = harness._claude_command("container", request, "hello", resume=False)
         self.assertEqual(environment["ANTHROPIC_MODEL"], "claude-opus-5")
         self.assertNotIn("ANTHROPIC_DEFAULT_SONNET_MODEL", environment)
         self.assertEqual(command[command.index("--model") + 1], "claude-opus-5")
@@ -126,20 +124,46 @@ class ClaudeCodeHarnessTests(unittest.TestCase):
             (root / "chart.png").write_bytes(b"png-bytes")
             request = RunRequest(
                 0,
-                Task("task", ("hello", "next"), 0, inputs=(InputFile(root / "chart.png", "inputs/chart.png"),),
-                     attach_images=("inputs/chart.png",)),
-                "anthropic/claude-opus-5", 30,
+                Task(
+                    "task",
+                    ("hello", "next"),
+                    0,
+                    inputs=(InputFile(root / "chart.png", "inputs/chart.png"),),
+                    attach_images=("inputs/chart.png",),
+                ),
+                "anthropic/claude-opus-5",
+                30,
             )
             log_path = root / "rollout" / "claude.log"
-            harness._run_turn("container", request, "hello", resume=False, timeout_seconds=30, log_path=log_path)
-            harness._run_turn("container", request, "next", resume=True, timeout_seconds=30, log_path=log_path)
+            harness._run_turn(
+                "container",
+                request,
+                "hello",
+                resume=False,
+                timeout_seconds=30,
+                log_path=log_path,
+            )
+            harness._run_turn(
+                "container",
+                request,
+                "next",
+                resume=True,
+                timeout_seconds=30,
+                log_path=log_path,
+            )
             self.assertEqual(list(log_path.parent.iterdir()), [])
 
         first, resumed = (call.args[0] for call in harness.runtime.popen.call_args_list)
         shell = first.index("/bin/sh")
         self.assertEqual(
-            first[shell:shell + 5],
-            ["/bin/sh", "-c", 'exec "$@" < "$0"', CLAUDE_INPUT_CONTAINER_PATH, "claude"],
+            first[shell : shell + 5],
+            [
+                "/bin/sh",
+                "-c",
+                'exec "$@" < "$0"',
+                CLAUDE_INPUT_CONTAINER_PATH,
+                "claude",
+            ],
         )
         self.assertEqual(first[-2:], ["--print", "--input-format=stream-json"])
         self.assertIn("--output-format=stream-json", first)
@@ -147,11 +171,20 @@ class ClaudeCodeHarnessTests(unittest.TestCase):
         self.assertEqual(resumed[-3:], ["--continue", "--print", "next"])
         self.assertNotIn("/bin/sh", resumed)
         self.assertEqual(len(copied), 1)
-        self.assertEqual(copied[0]["message"]["content"], [
-            {"type": "text", "text": "hello"},
-            {"type": "image", "source": {"type": "base64", "media_type": "image/png",
-                                         "data": base64.b64encode(b"png-bytes").decode()}},
-        ])
+        self.assertEqual(
+            copied[0]["message"]["content"],
+            [
+                {"type": "text", "text": "hello"},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": base64.b64encode(b"png-bytes").decode(),
+                    },
+                },
+            ],
+        )
 
     def test_builds_print_and_resume_commands(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -192,7 +225,6 @@ class ClaudeCodeHarnessTests(unittest.TestCase):
                 network="bridge",
             )
 
-
     @patch("roller.harnesses.claude_code.WireTraceProxy")
     def test_actf_wire_proxy_captures_tools_without_retaining_full_body(
         self, proxy_class
@@ -217,7 +249,9 @@ class ClaudeCodeHarnessTests(unittest.TestCase):
         )
         proxy_class.return_value.start.assert_called_once_with()
 
-    def test_combines_main_and_sidechain_events_chronologically_and_dedupes(self) -> None:
+    def test_combines_main_and_sidechain_events_chronologically_and_dedupes(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             main = root / "main.jsonl"
@@ -248,11 +282,14 @@ class ClaudeCodeHarnessTests(unittest.TestCase):
             staging = Path(args[-1]) / "-roller-workspace"
             staging.mkdir(parents=True)
             (staging / "session.jsonl").write_text(
-                json.dumps({"uuid": "root", "timestamp": "2026-01-01T00:00:01Z"}) + "\n")
+                json.dumps({"uuid": "root", "timestamp": "2026-01-01T00:00:01Z"}) + "\n"
+            )
             child = staging / "session" / "subagents"
             child.mkdir(parents=True)
             (child / "agent.jsonl").write_text(
-                json.dumps({"uuid": "child", "timestamp": "2026-01-01T00:00:02Z"}) + "\n")
+                json.dumps({"uuid": "child", "timestamp": "2026-01-01T00:00:02Z"})
+                + "\n"
+            )
             return MagicMock(returncode=0)
 
         runtime.run.side_effect = copy_session
@@ -269,8 +306,7 @@ class ClaudeCodeHarnessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             log_path = Path(temporary) / "wire.jsonl"
             log_path.write_text(
-                json.dumps({"body": {"api_key": "secret", "messages": []}})
-                + "\n",
+                json.dumps({"body": {"api_key": "secret", "messages": []}}) + "\n",
                 encoding="utf-8",
             )
             proxy = MagicMock(log_path=log_path)

@@ -55,14 +55,18 @@ class TaskBundleTests(unittest.TestCase):
             )
             task = load_tasks(task_path)[0]
             store = TaskBundleStore(root / "run")
-            with patch("roller.bundles._canonical_digest", wraps=_canonical_digest) as digest:
+            with patch(
+                "roller.bundles._canonical_digest", wraps=_canonical_digest
+            ) as digest:
                 bundle = store.prepare(task)
 
             self.assertEqual(
                 (bundle.inputs_root / "inputs" / "input.txt").read_text(),
                 "immutable input",
             )
-            self.assertEqual((bundle.context_root / "USER.md").read_text(), "private user")
+            self.assertEqual(
+                (bundle.context_root / "USER.md").read_text(), "private user"
+            )
             manifests = {
                 call.args[0]["schema_version"]: call.args[0]
                 for call in digest.call_args_list
@@ -72,7 +76,10 @@ class TaskBundleTests(unittest.TestCase):
             context_manifest = manifests["roller.context/v1"]
             task_manifest = manifests["roller.task/v1"]
 
-            self.assertEqual(input_manifest["files"][0]["sha256"], hashlib.sha256(b"immutable input").hexdigest())
+            self.assertEqual(
+                input_manifest["files"][0]["sha256"],
+                hashlib.sha256(b"immutable input").hexdigest(),
+            )
             user_file = context_manifest["declarations"][0]["files"][0]
             system_file = context_manifest["declarations"][1]["files"][0]
             private_file = context_manifest["declarations"][2]["files"][0]
@@ -206,9 +213,13 @@ class TaskBundleTests(unittest.TestCase):
             bundles = TaskBundleStore(root / "run").prepare_all(tasks)
             self.assertEqual(bundles["a"].inputs_root, bundles["b"].inputs_root)
             self.assertFalse((root / "run" / "blobs").exists())
-            self.assertEqual(len(list((root / "run" / "trees" / "sha256").iterdir())), 1)
+            self.assertEqual(
+                len(list((root / "run" / "trees" / "sha256").iterdir())), 1
+            )
 
-    def test_validation_only_store_reports_the_same_digests_without_writing(self) -> None:
+    def test_validation_only_store_reports_the_same_digests_without_writing(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "inputs").mkdir()
@@ -274,7 +285,9 @@ class TaskBundleTests(unittest.TestCase):
                     },
                 )
             )[0]
-            with patch("roller.bundles._canonical_digest", wraps=_canonical_digest) as digest:
+            with patch(
+                "roller.bundles._canonical_digest", wraps=_canonical_digest
+            ) as digest:
                 bundle = TaskBundleStore(root / "run").prepare(task)
 
             self.assertEqual((bundle.inputs_root / "renamed.txt").read_text(), "source")
@@ -316,16 +329,26 @@ class TaskBundleTests(unittest.TestCase):
             task = self._compatibility_task(root)
             bundle = TaskBundleStore(root / "bundle").prepare(task)
             self.assertEqual(
-                (bundle.input_tree_digest, bundle.input_manifest_digest,
-                 bundle.context_manifest_digest, bundle.manifest_digest),
-                ("17519be61a1bf07237724653f7ed362ba3b3b0850d6146718a9c72fa7e7eefbf",
-                 "12c075febcb964b535988ad3e9507978d48e27d414ff180446d774c409e9f32d",
-                 "880add335e25c1016321eeecbd1e02dff525b3ccb60d2ecb88f915bd99e4084b",
-                 "36a1cf8a539a95f01e05ca61673fa6179605bc799d8c2c325324a53fc2581e84"),
+                (
+                    bundle.input_tree_digest,
+                    bundle.input_manifest_digest,
+                    bundle.context_manifest_digest,
+                    bundle.manifest_digest,
+                ),
+                (
+                    "17519be61a1bf07237724653f7ed362ba3b3b0850d6146718a9c72fa7e7eefbf",
+                    "12c075febcb964b535988ad3e9507978d48e27d414ff180446d774c409e9f32d",
+                    "880add335e25c1016321eeecbd1e02dff525b3ccb60d2ecb88f915bd99e4084b",
+                    "36a1cf8a539a95f01e05ca61673fa6179605bc799d8c2c325324a53fc2581e84",
+                ),
             )
             self.assertTrue((bundle.inputs_root / "data" / "empty").is_dir())
-            self.assertEqual((bundle.inputs_root / "data" / "run.sh").stat().st_mode & 0o777, 0o755)
-            self.assertEqual((bundle.context_root / "full.md").stat().st_mode & 0o777, 0o640)
+            self.assertEqual(
+                (bundle.inputs_root / "data" / "run.sh").stat().st_mode & 0o777, 0o755
+            )
+            self.assertEqual(
+                (bundle.context_root / "full.md").stat().st_mode & 0o777, 0o640
+            )
 
     def test_snapshots_read_sources_twice_and_write_only_final_files(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -344,12 +367,23 @@ class TaskBundleTests(unittest.TestCase):
             with patch.object(Path, "open", counted_open):
                 bundle = store.prepare(task)
 
-            sources = [root / "inputs" / "run.sh", *(root / name for name in ("full", "hash", "none"))]
+            sources = [
+                root / "inputs" / "run.sh",
+                *(root / name for name in ("full", "hash", "none")),
+            ]
             self.assertEqual(
-                Counter({path: count for (path, mode), count in opened.items() if mode == "rb"}),
+                Counter(
+                    {
+                        path: count
+                        for (path, mode), count in opened.items()
+                        if mode == "rb"
+                    }
+                ),
                 Counter({path: 2 for path in sources}),
             )
-            writes = {path: count for (path, mode), count in opened.items() if mode == "wb"}
+            writes = {
+                path: count for (path, mode), count in opened.items() if mode == "wb"
+            }
             self.assertEqual(len(writes), 5)  # Four source files plus one inline input.
             self.assertTrue(all(count == 1 for count in writes.values()))
             self.assertEqual(len(opened), len(sources) + len(writes))
@@ -361,15 +395,22 @@ class TaskBundleTests(unittest.TestCase):
             )
             self.assertFalse((store.run_dir / "blobs").exists())
             self.assertFalse((store.run_dir / "tasks").exists())
-            self.assertEqual((bundle.inputs_root / "data" / "run.sh").read_bytes(), sources[0].read_bytes())
+            self.assertEqual(
+                (bundle.inputs_root / "data" / "run.sh").read_bytes(),
+                sources[0].read_bytes(),
+            )
             for name in ("full", "hash", "none"):
-                self.assertEqual((bundle.context_root / (name + ".md")).read_bytes(), name.encode())
+                self.assertEqual(
+                    (bundle.context_root / (name + ".md")).read_bytes(), name.encode()
+                )
             # A reused input tree performs no additional input I/O.
             opened.clear()
             with patch.object(Path, "open", counted_open):
                 store.prepare(task)
             self.assertNotIn((sources[0], "rb"), opened)
-            self.assertEqual(sum(count for (_, mode), count in opened.items() if mode == "wb"), 3)
+            self.assertEqual(
+                sum(count for (_, mode), count in opened.items() if mode == "wb"), 3
+            )
 
     def test_inline_snapshot_memory_is_bounded_for_new_and_reused_trees(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -380,11 +421,15 @@ class TaskBundleTests(unittest.TestCase):
                 prompts=("read",),
                 source_index=0,
                 inputs=tuple(
-                    InputFile(None, f"{index}.txt", content=f"{index}:" + "你好" * 32768)
+                    InputFile(
+                        None, f"{index}.txt", content=f"{index}:" + "你好" * 32768
+                    )
                     for index in range(32)
                 ),
             )
-            largest_file = max(len(spec.content.encode("utf-8")) for spec in task.inputs)
+            largest_file = max(
+                len(spec.content.encode("utf-8")) for spec in task.inputs
+            )
             store = TaskBundleStore(root / "bundle")
             first_bundle = None
             for reused in (False, True):
@@ -399,24 +444,36 @@ class TaskBundleTests(unittest.TestCase):
                     self.assertLess(peak, largest_file * 4)
                     if first_bundle is not None:
                         self.assertEqual(bundle.inputs_root, first_bundle.inputs_root)
-                        self.assertEqual(bundle.manifest_digest, first_bundle.manifest_digest)
+                        self.assertEqual(
+                            bundle.manifest_digest, first_bundle.manifest_digest
+                        )
                     first_bundle = bundle
             for spec in task.inputs:
                 self.assertEqual(
-                    (bundle.inputs_root / spec.path).read_bytes(), spec.content.encode("utf-8")
+                    (bundle.inputs_root / spec.path).read_bytes(),
+                    spec.content.encode("utf-8"),
                 )
 
     def test_rejects_source_changes_and_cleans_partial_snapshots(self) -> None:
         for kind in ("input", "full", "hash", "none"):
             for changed in (b"other", b"", b"longer content"):
-                with self.subTest(kind=kind, changed=changed), tempfile.TemporaryDirectory() as temporary:
+                with (
+                    self.subTest(kind=kind, changed=changed),
+                    tempfile.TemporaryDirectory() as temporary,
+                ):
                     root = Path(temporary)
                     source = root / "source.txt"
                     source.write_bytes(b"first")
                     task = Task(
-                        id="changed", prompts=("read",), source_index=0,
-                        inputs=(InputFile(source, "input.txt"),) if kind == "input" else (),
-                        context_files=() if kind == "input" else (
+                        id="changed",
+                        prompts=("read",),
+                        source_index=0,
+                        inputs=(InputFile(source, "input.txt"),)
+                        if kind == "input"
+                        else (),
+                        context_files=()
+                        if kind == "input"
+                        else (
                             ContextFile("custom", source, "context.txt", capture=kind),
                         ),
                     )
@@ -428,15 +485,29 @@ class TaskBundleTests(unittest.TestCase):
                         source.write_bytes(changed)
                         return scanned
 
-                    with patch.object(store, "_scan_source", side_effect=scan_then_change):
-                        with self.assertRaisesRegex(BundleError, "changed while snapshotting"):
+                    with patch.object(
+                        store, "_scan_source", side_effect=scan_then_change
+                    ):
+                        with self.assertRaisesRegex(
+                            BundleError, "changed while snapshotting"
+                        ):
                             store.prepare(task)
-                    self.assertFalse(any(path.is_file() for path in store.run_dir.rglob("*")))
-                    self.assertFalse(any(path.name.startswith(".") for path in store.trees_root.iterdir()))
+                    self.assertFalse(
+                        any(path.is_file() for path in store.run_dir.rglob("*"))
+                    )
+                    self.assertFalse(
+                        any(
+                            path.name.startswith(".")
+                            for path in store.trees_root.iterdir()
+                        )
+                    )
                     # A fresh snapshot can be built after the failed attempt.
                     bundle = TaskBundleStore(store.run_dir).prepare(task)
-                    destination = (bundle.inputs_root / "input.txt" if kind == "input"
-                                   else bundle.context_root / "context.txt")
+                    destination = (
+                        bundle.inputs_root / "input.txt"
+                        if kind == "input"
+                        else bundle.context_root / "context.txt"
+                    )
                     self.assertEqual(destination.read_bytes(), changed)
 
     def test_rejects_path_traversal_and_symlinks(self) -> None:
@@ -453,9 +524,7 @@ class TaskBundleTests(unittest.TestCase):
                         {
                             "id": "bad",
                             "prompt": "bad",
-                            "files": {
-                                "inputs": [{"source": "../escape"}]
-                            },
+                            "files": {"inputs": [{"source": "../escape"}]},
                         },
                     )
                 )

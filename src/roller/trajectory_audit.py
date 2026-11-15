@@ -1,4 +1,5 @@
 """Conservative training diagnostics; never rewrite requests or trajectory text."""
+
 from __future__ import annotations
 
 import json
@@ -43,12 +44,23 @@ def training_summary(results: list[dict[str, Any]]) -> dict[str, int]:
     and unverified wire controls. Missing legacy audits are not counted as
     matched or not-observable; no new evidence is inferred on resume.
     """
-    summary = dict(sft_included=0, sft_segmented=0, sft_excluded=0, thinking_mismatch=0,
-                   wire_unverified=0, wire_not_observable=0)
+    summary = dict(
+        sft_included=0,
+        sft_segmented=0,
+        sft_excluded=0,
+        thinking_mismatch=0,
+        wire_unverified=0,
+        wire_not_observable=0,
+    )
     for result in results:
         reason = sft_exclusion_reason(result)
-        key = ("sft_segmented" if reason == SEGMENTED_SFT_REASON else
-               "sft_excluded" if reason else "sft_included")
+        key = (
+            "sft_segmented"
+            if reason == SEGMENTED_SFT_REASON
+            else "sft_excluded"
+            if reason
+            else "sft_included"
+        )
         summary[key] += 1
         runtime = result.get("runtime")
         runtime = runtime if isinstance(runtime, dict) else {}
@@ -65,7 +77,9 @@ def training_summary(results: list[dict[str, Any]]) -> dict[str, int]:
     return summary
 
 
-def thinking_audit(trajectory: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any] | None:
+def thinking_audit(
+    trajectory: dict[str, Any], metadata: dict[str, Any]
+) -> dict[str, Any] | None:
     """Describe visible reasoning without treating its absence as proof."""
     settings = metadata.get("settings")
     settings = settings if isinstance(settings, dict) else {}
@@ -75,29 +89,44 @@ def thinking_audit(trajectory: dict[str, Any], metadata: dict[str, Any]) -> dict
     if requested is None:
         return None
     keep_thinking = keeps_thinking(metadata)
-    audit: dict[str, Any] = {"requested_effort": requested, "retained_in_actf": keep_thinking}
+    audit: dict[str, Any] = {
+        "requested_effort": requested,
+        "retained_in_actf": keep_thinking,
+    }
     if not keep_thinking:
-        audit.update(status="not_observable", visible_reasoning_observed=None,
-                     visible_reasoning_characters=None, visible_reasoning_steps=None)
+        audit.update(
+            status="not_observable",
+            visible_reasoning_observed=None,
+            visible_reasoning_characters=None,
+            visible_reasoning_steps=None,
+        )
         return audit
     reasoning = []
     steps = trajectory.get("steps")
     for step in steps if isinstance(steps, list) else []:
         assistant = step.get("assistant_content") if isinstance(step, dict) else None
-        content = assistant.get("reasoning_content") if isinstance(assistant, dict) else None
+        content = (
+            assistant.get("reasoning_content") if isinstance(assistant, dict) else None
+        )
         if isinstance(content, str) and content:
             reasoning.append(content)
     observed = bool(reasoning)
-    audit.update(status="mismatch" if requested == "off" and observed else
-                 "visible_reasoning_observed" if observed else "no_visible_reasoning",
-                 visible_reasoning_observed=observed,
-                 visible_reasoning_characters=sum(map(len, reasoning)),
-                 visible_reasoning_steps=len(reasoning))
+    audit.update(
+        status="mismatch"
+        if requested == "off" and observed
+        else "visible_reasoning_observed"
+        if observed
+        else "no_visible_reasoning",
+        visible_reasoning_observed=observed,
+        visible_reasoning_characters=sum(map(len, reasoning)),
+        visible_reasoning_steps=len(reasoning),
+    )
     return audit
 
 
-def _request_effort(body: dict[str, Any], requested: str, transport_effort: str | None,
-                    seq: int | None) -> dict[str, Any]:
+def _request_effort(
+    body: dict[str, Any], requested: str, transport_effort: str | None, seq: int | None
+) -> dict[str, Any]:
     efforts = []
     controls = [body]
     nested = body.get("extra_body")
@@ -127,22 +156,36 @@ def _request_effort(body: dict[str, Any], requested: str, transport_effort: str 
             switches.append(template.get("enable_thinking"))
     efforts = ["off" if e == "none" else e for e in efforts]
     disabled = "disabled" in modes or any(v is False for v in switches)
-    active = any(mode in ("enabled", "adaptive") for mode in modes) or any(v is True for v in switches)
-    known = [requested if e == transport_effort and transport_effort != requested else e
-             for e in efforts if isinstance(e, str) and
-             (e in THINKING_LEVELS or e == transport_effort)]
+    active = any(mode in ("enabled", "adaptive") for mode in modes) or any(
+        v is True for v in switches
+    )
+    known = [
+        requested if e == transport_effort and transport_effort != requested else e
+        for e in efforts
+        if isinstance(e, str) and (e in THINKING_LEVELS or e == transport_effort)
+    ]
     mismatch = any(e != requested for e in known)
     mismatch |= (requested == "off" and active) or (requested != "off" and disabled)
-    status = ("mismatch" if mismatch else "matched" if
-              (efforts and len(known) == len(efforts)) or (requested == "off" and disabled)
-              else "unverified")
-    return {"seq": seq, "status": status, "observed_efforts": known,
-            "enabled": active, "disabled": disabled,
-            "unrecognized_effort": len(known) != len(efforts)}
+    status = (
+        "mismatch"
+        if mismatch
+        else "matched"
+        if (efforts and len(known) == len(efforts)) or (requested == "off" and disabled)
+        else "unverified"
+    )
+    return {
+        "seq": seq,
+        "status": status,
+        "observed_efforts": known,
+        "enabled": active,
+        "disabled": disabled,
+        "unrecognized_effort": len(known) != len(efforts),
+    }
 
 
-def _request_audits(path: Path, requested: str, transport_effort: str | None,
-                    schema: str | None = None) -> tuple[list[dict[str, Any]], bool]:
+def _request_audits(
+    path: Path, requested: str, transport_effort: str | None, schema: str | None = None
+) -> tuple[list[dict[str, Any]], bool]:
     """Audit each request as it is read, without retaining full request bodies."""
     audits = []
     unreadable = False
@@ -158,21 +201,30 @@ def _request_audits(path: Path, requested: str, transport_effort: str | None,
                     continue
                 if schema is None:
                     endpoint = str(event.get("path", "")).split("?", 1)[0].rstrip("/")
-                    if not endpoint.endswith(("/chat/completions", "/responses", "/messages")):
+                    if not endpoint.endswith(
+                        ("/chat/completions", "/responses", "/messages")
+                    ):
                         continue
                     body = event.get("body", event.get("params"))
                 elif event.get("type") == "request":
                     if schema == "roller.hermes-events/v1":
                         body = event
-                    elif schema in {"roller.pi-events/v1", "roller.deepseek-events/v1",
-                                    "roller.opencode-events/v1"}:
+                    elif schema in {
+                        "roller.pi-events/v1",
+                        "roller.deepseek-events/v1",
+                        "roller.opencode-events/v1",
+                    }:
                         body = event.get("body")
                     else:
                         continue
                 else:
                     continue
                 if isinstance(body, dict):
-                    audits.append(_request_effort(body, requested, transport_effort, event.get("seq")))
+                    audits.append(
+                        _request_effort(
+                            body, requested, transport_effort, event.get("seq")
+                        )
+                    )
                 else:
                     unreadable = True
     except (OSError, UnicodeError):
@@ -180,23 +232,40 @@ def _request_audits(path: Path, requested: str, transport_effort: str | None,
     return audits, unreadable
 
 
-def wire_effort_audit(path: Path, requested: str | None, transport_effort: str | None = None,
-                      native_path: Path | None = None, native_schema: str | None = None) -> dict[str, Any] | None:
+def wire_effort_audit(
+    path: Path,
+    requested: str | None,
+    transport_effort: str | None = None,
+    native_path: Path | None = None,
+    native_schema: str | None = None,
+) -> dict[str, Any] | None:
     if requested is None:
         return None
     requests, unreadable = _request_audits(path, requested, transport_effort)
     source = "wire"
     if not requests and native_path is not None and native_schema is not None:
         requests, unreadable = _request_audits(
-            native_path, requested, transport_effort, native_schema,
+            native_path,
+            requested,
+            transport_effort,
+            native_schema,
         )
         source = "native"
     status = "not_observable"
     if any(row["status"] == "mismatch" for row in requests):
         status = "mismatch"
     elif requests:
-        status = "matched" if not unreadable and all(row["status"] == "matched" for row in requests) else "unverified"
-    return {"requested_effort": requested, "status": status, "requests": requests, "source": source}
+        status = (
+            "matched"
+            if not unreadable and all(row["status"] == "matched" for row in requests)
+            else "unverified"
+        )
+    return {
+        "requested_effort": requested,
+        "status": status,
+        "requests": requests,
+        "source": source,
+    }
 
 
 def completion_audit(trajectory: dict[str, Any]) -> dict[str, Any]:
@@ -210,7 +279,11 @@ def completion_audit(trajectory: dict[str, Any]) -> dict[str, Any]:
         return {"status": "incomplete", "reason": "token_limit", "stop_reason": reason}
     assistant = last.get("assistant_content") or {}
     content = assistant.get("content") if isinstance(assistant, dict) else None
-    if isinstance(content, str) and not content.strip() and not assistant.get("tool_calls"):
+    if (
+        isinstance(content, str)
+        and not content.strip()
+        and not assistant.get("tool_calls")
+    ):
         return {"status": "incomplete", "reason": "empty_final_answer"}
     return {"status": "not_flagged"}  # Not a task grader or proof of completeness.
 
@@ -235,11 +308,17 @@ def native_completion_audit(path: Path, schema: str | None) -> dict[str, Any]:
                     continue
                 if schema == "roller.pi-events/v1":
                     event = row.get("event")
-                    if row.get("type") != "event" or not isinstance(event, dict) or event.get("type") != "message_end":
+                    if (
+                        row.get("type") != "event"
+                        or not isinstance(event, dict)
+                        or event.get("type") != "message_end"
+                    ):
                         continue
                     message = event.get("message")
                 else:
-                    message = row.get("message") if row.get("type") == "message" else None
+                    message = (
+                        row.get("message") if row.get("type") == "message" else None
+                    )
                 if isinstance(message, dict) and message.get("role") == "assistant":
                     last = message
     except (OSError, UnicodeError):
@@ -249,16 +328,29 @@ def native_completion_audit(path: Path, schema: str | None) -> dict[str, Any]:
     content = last.get("content")
     calls = []
     if isinstance(content, list):
-        calls = [b for b in content if isinstance(b, dict) and b.get("type") == "toolCall"]
-        if all(isinstance(b, dict) and b.get("type") in ("text", "thinking", "toolCall") for b in content):
+        calls = [
+            b for b in content if isinstance(b, dict) and b.get("type") == "toolCall"
+        ]
+        if all(
+            isinstance(b, dict) and b.get("type") in ("text", "thinking", "toolCall")
+            for b in content
+        ):
             text = [b.get("text") for b in content if b.get("type") == "text"]
             content = "".join(text) if all(isinstance(t, str) for t in text) else None
         else:
             content = None
-    audit = completion_audit({"steps": [{
-        "assistant_content": {"content": content, "tool_calls": calls},
-        "metric": {"stop_reason": last.get("stopReason", last.get("stop_reason"))},
-    }]})
+    audit = completion_audit(
+        {
+            "steps": [
+                {
+                    "assistant_content": {"content": content, "tool_calls": calls},
+                    "metric": {
+                        "stop_reason": last.get("stopReason", last.get("stop_reason"))
+                    },
+                }
+            ]
+        }
+    )
     return {**audit, "source": "native"}
 
 
@@ -278,11 +370,17 @@ def model_identity_audit(path: Path) -> dict[str, Any]:
                     continue
                 if row.get("kind") == "response_metadata":
                     responses.append(row)
-                elif isinstance(row.get("seq"), int) and isinstance(row.get("model"), str):
+                elif isinstance(row.get("seq"), int) and isinstance(
+                    row.get("model"), str
+                ):
                     requests[row["seq"]] = {
-                        "request_seq": row["seq"], "requested_model": row["model"],
-                        "response_models": [], "finish_reasons": [], "status": "not_observable",
-                        "response_statuses": [], "capture_status": "not_observable",
+                        "request_seq": row["seq"],
+                        "requested_model": row["model"],
+                        "response_models": [],
+                        "finish_reasons": [],
+                        "status": "not_observable",
+                        "response_statuses": [],
+                        "capture_status": "not_observable",
                     }
     except (OSError, UnicodeError):
         unreadable = True
@@ -299,12 +397,20 @@ def model_identity_audit(path: Path) -> dict[str, Any]:
         request["response_statuses"] = response.get("response_statuses", [])
         request["capture_status"] = response.get("capture_status", "not_observable")
         request["status"] = (
-            "name_mismatch" if any(m != request["requested_model"] for m in models)
-            else "matched" if models and response.get("capture_status") == "observed"
+            "name_mismatch"
+            if any(m != request["requested_model"] for m in models)
+            else "matched"
+            if models and response.get("capture_status") == "observed"
             else "not_observable"
         )
     statuses = [r["status"] for r in requests.values()]
-    status = "name_mismatch" if "name_mismatch" in statuses else "matched" if not unreadable and statuses and all(s == "matched" for s in statuses) else "not_observable"
+    status = (
+        "name_mismatch"
+        if "name_mismatch" in statuses
+        else "matched"
+        if not unreadable and statuses and all(s == "matched" for s in statuses)
+        else "not_observable"
+    )
     return {"status": status, "requests": list(requests.values())}
 
 
@@ -321,20 +427,34 @@ def response_completion_audit(identity: dict[str, Any]) -> dict[str, Any]:
     if "incomplete" in statuses or any(
         reason in {"length", "max_tokens", "max_output_tokens"} for reason in reasons
     ):
-        return {"status": "incomplete", "reason": "token_limit", "source": "response_metadata",
-                "request_seq": last["request_seq"]}
-    return {"status": "not_flagged", "source": "response_metadata",
-            "request_seq": last["request_seq"]}
+        return {
+            "status": "incomplete",
+            "reason": "token_limit",
+            "source": "response_metadata",
+            "request_seq": last["request_seq"],
+        }
+    return {
+        "status": "not_flagged",
+        "source": "response_metadata",
+        "request_seq": last["request_seq"],
+    }
 
 
-def record_training_audits(metadata: dict[str, Any], trajectory: dict[str, Any] | None, wire_path: Path) -> None:
+def record_training_audits(
+    metadata: dict[str, Any], trajectory: dict[str, Any] | None, wire_path: Path
+) -> None:
     settings = metadata.get("settings")
     settings = settings if isinstance(settings, dict) else {}
     effort = metadata.get("reasoning_effort")
     if effort is None:
         effort = settings.get("reasoning_effort")
-    wire = wire_effort_audit(wire_path, effort, metadata.get("transport_effort"),
-                             wire_path.with_name("trace.jsonl"), metadata.get("raw_trace_schema"))
+    wire = wire_effort_audit(
+        wire_path,
+        effort,
+        metadata.get("transport_effort"),
+        wire_path.with_name("trace.jsonl"),
+        metadata.get("raw_trace_schema"),
+    )
     identity = model_identity_audit(wire_path)
     metadata["model_identity_audit"] = identity
     if identity["status"] == "name_mismatch":
@@ -367,7 +487,8 @@ def record_training_audits(metadata: dict[str, Any], trajectory: dict[str, Any] 
         completion = completion_audit(trajectory)
     else:
         completion = native_completion_audit(
-            wire_path.with_name("trace.jsonl"), metadata.get("raw_trace_schema"),
+            wire_path.with_name("trace.jsonl"),
+            metadata.get("raw_trace_schema"),
         )
     metadata["completion_audit"] = completion
     if completion["status"] == "incomplete":
@@ -381,6 +502,14 @@ def record_training_audits(metadata: dict[str, Any], trajectory: dict[str, Any] 
         reasons.append(response_completion["reason"])
     if reasons:
         existing = metadata.get("sft_eligibility")
-        if isinstance(existing, dict) and existing.get("eligible") is False and existing.get("reason"):
+        if (
+            isinstance(existing, dict)
+            and existing.get("eligible") is False
+            and existing.get("reason")
+        ):
             reasons.insert(0, existing["reason"])
-        metadata["sft_eligibility"] = {"eligible": False, "reason": reasons[0], "reasons": list(dict.fromkeys(reasons))}
+        metadata["sft_eligibility"] = {
+            "eligible": False,
+            "reason": reasons[0],
+            "reasons": list(dict.fromkeys(reasons)),
+        }

@@ -81,10 +81,7 @@ class ExampleFilesTests(unittest.TestCase):
         )
 
         multimodal = load_model_config(
-            self.examples_root
-            / "config"
-            / "openclaw"
-            / "models-multimodal.json",
+            self.examples_root / "config" / "openclaw" / "models-multimodal.json",
             {
                 "MY_PROXY_BASE_URL": "https://proxy.example/v1",
                 "MY_PROXY_API_KEY": "secret",
@@ -95,17 +92,12 @@ class ExampleFilesTests(unittest.TestCase):
         self.assertEqual(multimodal_model["input"], ["text", "image"])
 
     def test_native_harness_config_examples_are_safe_and_parseable(self) -> None:
-        codex_path = (
-            self.examples_root / "config" / "codex" / "config.toml.example"
-        )
+        codex_path = self.examples_root / "config" / "codex" / "config.toml.example"
         codex_config = tomllib.loads(codex_path.read_text(encoding="utf-8"))
         self.assertEqual(codex_config, {"model_verbosity": "medium"})
 
         claude_path = (
-            self.examples_root
-            / "config"
-            / "claude-code"
-            / "settings.json.example"
+            self.examples_root / "config" / "claude-code" / "settings.json.example"
         )
         claude_settings = json.loads(claude_path.read_text(encoding="utf-8"))
         self.assertFalse(claude_settings["includeCoAuthoredBy"])
@@ -141,9 +133,7 @@ class ExampleFilesTests(unittest.TestCase):
         self.assertNotIn("thinkingLevelMap", chat)
 
     def test_user_simulator_example_is_an_independent_dynamic_task(self) -> None:
-        tasks = load_tasks(
-            self.examples_root / "tasks" / "user-simulator.jsonl"
-        )
+        tasks = load_tasks(self.examples_root / "tasks" / "user-simulator.jsonl")
         self.assertEqual(len(tasks), 1)
         task = tasks[0]
         self.assertEqual(task.prompts, ())
@@ -262,9 +252,9 @@ class ExampleFilesTests(unittest.TestCase):
         rows = [
             json.loads(line)
             for name in ("tasks.jsonl", "user-simulator.jsonl")
-            for line in (self.examples_root / "tasks" / name).read_text(
-                encoding="utf-8"
-            ).splitlines()
+            for line in (self.examples_root / "tasks" / name)
+            .read_text(encoding="utf-8")
+            .splitlines()
             if line.strip()
         ]
         rows += json.loads(
@@ -317,7 +307,17 @@ class ExampleFilesTests(unittest.TestCase):
             {**base, "files": {"inputs": [{"source": "a.txt", "content": "x"}]}},
             {**base, "files": {"inputs": [{"content": "x"}]}},
             {**base, "files": {"input_mode": "link"}},
-            {**base, "runtime": {"image_build": {"base_image": "b", "context": "c", "dockerfile": "d", "harness": "pi"}}},
+            {
+                **base,
+                "runtime": {
+                    "image_build": {
+                        "base_image": "b",
+                        "context": "c",
+                        "dockerfile": "d",
+                        "harness": "pi",
+                    }
+                },
+            },
             {**base, "runtime": {"workspace_path": "relative"}},
         ]
         for row in rejected:

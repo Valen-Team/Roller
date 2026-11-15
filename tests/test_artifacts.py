@@ -25,9 +25,7 @@ class ArtifactCollectionTests(unittest.TestCase):
 
             self.assertTrue(result.passed)
             self.assertTrue((sample / "results" / "report.md").is_file())
-            self.assertTrue(
-                (sample / "results" / "assets" / "chart.json").is_file()
-            )
+            self.assertTrue((sample / "results" / "assets" / "chart.json").is_file())
             self.assertTrue((sample / "results" / "debug.tmp").is_file())
             self.assertTrue((sample / "results" / "empty").is_dir())
             self.assertEqual(result.file_count, 3)

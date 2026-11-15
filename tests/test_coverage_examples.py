@@ -1,4 +1,5 @@
 """Public coverage examples must work after cloning, without private fixtures."""
+
 from __future__ import annotations
 
 import hashlib
@@ -25,7 +26,16 @@ class CoverageExamplesTests(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.checkout = Path(cls.temporary.name) / "checkout 中文 with spaces"
         cls.coverage = cls.checkout / "examples" / "coverage"
-        ignore = shutil.ignore_patterns("__pycache__", "*.pyc", ".env", "*.local.json", "local", "reports", "results", "live-test")
+        ignore = shutil.ignore_patterns(
+            "__pycache__",
+            "*.pyc",
+            ".env",
+            "*.local.json",
+            "local",
+            "reports",
+            "results",
+            "live-test",
+        )
         shutil.copytree(PROJECT / "examples" / "coverage", cls.coverage, ignore=ignore)
         shutil.copytree(PROJECT / "src", cls.checkout / "src", ignore=ignore)
         cls.env = {
@@ -39,7 +49,10 @@ class CoverageExamplesTests(unittest.TestCase):
     def run_script(self, script, *args, success=True):
         result = subprocess.run(
             [sys.executable, str(self.coverage / script), *map(str, args)],
-            cwd=self.checkout, env=self.env, text=True, capture_output=True,
+            cwd=self.checkout,
+            env=self.env,
+            text=True,
+            capture_output=True,
             timeout=90,
         )
         if success:
@@ -51,8 +64,11 @@ class CoverageExamplesTests(unittest.TestCase):
     def test_regeneration_is_portable_and_independent_of_environment(self):
         def snapshot():
             return {
-                path.relative_to(self.coverage).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-                for path in self.coverage.rglob("*") if path.is_file()
+                path.relative_to(self.coverage).as_posix(): hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+                for path in self.coverage.rglob("*")
+                if path.is_file()
             }
 
         before = snapshot()
@@ -71,25 +87,50 @@ class CoverageExamplesTests(unittest.TestCase):
         self.run_script("validate_merged.py")
         self.run_script("suite.py", "run", "--case", "inputs/*/codex", "--dry-run")
         output = self.checkout / "runs" / "absolute" / "tasks.json"
-        self.run_script("merge.py", "--case", "inputs/absolute_root/*", "--absolute-roots", "--output", output)
+        self.run_script(
+            "merge.py",
+            "--case",
+            "inputs/absolute_root/*",
+            "--absolute-roots",
+            "--output",
+            output,
+        )
         payload = json.loads(output.read_text())
         self.assertEqual(len(payload["tasks"]), 4 * len(HARNESS_NAMES))
         for row in payload["tasks"]:
-            self.assertEqual(Path(row["file_root"]), (self.coverage / "fixtures").resolve())
+            self.assertEqual(
+                Path(row["file_root"]), (self.coverage / "fixtures").resolve()
+            )
         self.run_script("validate_merged.py", "--tasks", output)
 
     def test_subset_binds_all_simulator_pairs_and_preserves_inheritance(self):
         output = self.checkout / "runs" / "mixed" / "tasks.json"
-        models = {"openclaw": "example/provider-model", "codex": "example-codex", "claude-code": "example-claude", "hermes": "example-hermes", "opencode": "example-opencode", "deepseek": "example-deepseek", "pi": "example-pi"}
-        model_args = [arg for name, value in models.items() for arg in ("--" + name + "-model", value)]
-        self.run_script("merge.py", "--case", "simulators/pair/*", *model_args, "--output", output)
+        models = {
+            "openclaw": "example/provider-model",
+            "codex": "example-codex",
+            "claude-code": "example-claude",
+            "hermes": "example-hermes",
+            "opencode": "example-opencode",
+            "deepseek": "example-deepseek",
+            "pi": "example-pi",
+        }
+        model_args = [
+            arg
+            for name, value in models.items()
+            for arg in ("--" + name + "-model", value)
+        ]
+        self.run_script(
+            "merge.py", "--case", "simulators/pair/*", *model_args, "--output", output
+        )
         payload = json.loads(output.read_text())
         self.assertEqual(payload["models"], models)
         self.assertEqual(len(payload["tasks"]), 4 * len(HARNESS_NAMES) ** 2)
         self.assertEqual(len(payload["negative_cases"]), 20)
         inheritance = 0
         pairs = set()
-        for index, (row, coverage) in enumerate(zip(payload["tasks"], payload["coverage"])):
+        for index, (row, coverage) in enumerate(
+            zip(payload["tasks"], payload["coverage"])
+        ):
             agent, simulator = row["harness"], row["user_simulator"]
             pairs.add((agent, simulator["harness"]))
             self.assertEqual(row["model"], models[agent])
@@ -116,12 +157,32 @@ class CoverageExamplesTests(unittest.TestCase):
         for harness in ("hermes", "opencode", "deepseek", "pi"):
             with self.subTest(harness=harness):
                 output = self.checkout / "runs" / harness / "tasks.json"
-                self.run_script("merge.py", "--case", "*/" + harness, "--exclude-case", "vision/*", "--output", output)
+                self.run_script(
+                    "merge.py",
+                    "--case",
+                    "*/" + harness,
+                    "--exclude-case",
+                    "vision/*",
+                    "--output",
+                    output,
+                )
                 payload = json.loads(output.read_text())
                 self.assertEqual(len(payload["tasks"]), 200)
-                self.assertTrue(all(row["harness"] == harness for row in payload["tasks"]))
-                self.assertTrue(all(row["tier"] != "vision" for row in payload["coverage"]))
-                self.run_script("suite.py", "list", "--case", "*/" + harness, "--exclude-case", "*/" + harness, success=False)
+                self.assertTrue(
+                    all(row["harness"] == harness for row in payload["tasks"])
+                )
+                self.assertTrue(
+                    all(row["tier"] != "vision" for row in payload["coverage"])
+                )
+                self.run_script(
+                    "suite.py",
+                    "list",
+                    "--case",
+                    "*/" + harness,
+                    "--exclude-case",
+                    "*/" + harness,
+                    success=False,
+                )
 
 
 if __name__ == "__main__":

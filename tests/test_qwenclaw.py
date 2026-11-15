@@ -158,7 +158,14 @@ class QwenClawWorkspaceTests(unittest.TestCase):
                 "nested skill",
             )
             self.assertEqual(
-                (root / "workspace" / "skills" / "github" / "scripts" / "check-auth.sh").read_text(),
+                (
+                    root
+                    / "workspace"
+                    / "skills"
+                    / "github"
+                    / "scripts"
+                    / "check-auth.sh"
+                ).read_text(),
                 "root script",
             )
             (root / "workspace" / "skills" / "github" / "new.md").write_text(
@@ -171,9 +178,7 @@ class QwenClawWorkspaceTests(unittest.TestCase):
 
     def test_qwenclaw_wrapper_prepares_workspace_compatibility_alias(self) -> None:
         runtime = Mock()
-        runtime.run.return_value = SimpleNamespace(
-            returncode=0, stdout="", stderr=""
-        )
+        runtime.run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
         inner = HermesHarness(
             HermesConfig(docker_image="registry.example/hermes:test"),
             0,
@@ -198,9 +203,7 @@ class QwenClawWorkspaceTests(unittest.TestCase):
         alias_command = runtime.run.call_args_list[0].args[0][-1]
         compatibility_command = runtime.run.call_args_list[1].args[0][-1]
         self.assertIn("ln -s /roller/workspace /home/node/workspace", alias_command)
-        self.assertIn(
-            "ln -s . /roller/workspace/workspace", compatibility_command
-        )
+        self.assertIn("ln -s . /roller/workspace/workspace", compatibility_command)
 
     def test_load_maps_sources_and_inline_content(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -266,8 +269,7 @@ class QwenClawWorkspaceTests(unittest.TestCase):
         )
         self.assertTrue(
             all(
-                row["bench"]["metadata"]["upstream_task_id"]
-                == "task_00001_demo"
+                row["bench"]["metadata"]["upstream_task_id"] == "task_00001_demo"
                 for row in rows
             )
         )
@@ -351,11 +353,10 @@ class QwenClawGraderTests(unittest.TestCase):
 
     def test_removes_unused_yaml_import_from_automated_grader(self) -> None:
         markdown = _task_markdown().replace(
-            "def grade(transcript, workspace_path):\n"
-            "    return {\"file_check\": 1.0}",
+            'def grade(transcript, workspace_path):\n    return {"file_check": 1.0}',
             "def grade(transcript, workspace_path):\n"
             "    import os, re, yaml\n"
-            "    return {\"file_check\": 1.0}",
+            '    return {"file_check": 1.0}',
         )
         task = parse_task_markdown(markdown, "unused-yaml.md")
 
@@ -366,11 +367,10 @@ class QwenClawGraderTests(unittest.TestCase):
 
     def test_keeps_yaml_import_when_automated_grader_uses_it(self) -> None:
         markdown = _task_markdown().replace(
-            "def grade(transcript, workspace_path):\n"
-            "    return {\"file_check\": 1.0}",
+            'def grade(transcript, workspace_path):\n    return {"file_check": 1.0}',
             "def grade(transcript, workspace_path):\n"
             "    import yaml\n"
-            "    return {\"file_check\": float(bool(yaml.safe_load(\"ok: true\")))}",
+            '    return {"file_check": float(bool(yaml.safe_load("ok: true")))}',
         )
         task = parse_task_markdown(markdown, "used-yaml.md")
 
@@ -570,7 +570,8 @@ class QwenClawGraderTests(unittest.TestCase):
                                 self.assertAlmostEqual(scores["overall_score"], 0.88)
                             else:
                                 with self.assertRaisesRegex(
-                                    RuntimeError, r"after 2 attempt\(s\).*must be finite"
+                                    RuntimeError,
+                                    r"after 2 attempt\(s\).*must be finite",
                                 ):
                                     namespace["roller_grade"]([], workspace)
                         self.assertEqual(len(_JudgeHandler.requests), 2)

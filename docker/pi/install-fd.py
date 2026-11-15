@@ -1,4 +1,5 @@
 """Install a checksum-pinned official fd release for Pi's native find tool."""
+
 from __future__ import annotations
 
 import hashlib
@@ -18,7 +19,9 @@ CHECKSUMS = {
 
 def main() -> None:
     architecture = platform.machine().lower()
-    architecture = {"amd64": "x86_64", "arm64": "aarch64"}.get(architecture, architecture)
+    architecture = {"amd64": "x86_64", "arm64": "aarch64"}.get(
+        architecture, architecture
+    )
     if platform.system() != "Linux" or architecture not in CHECKSUMS:
         raise RuntimeError("Pi image supports Linux x86_64 and aarch64")
     stem = f"fd-v{VERSION}-{architecture}-unknown-linux-musl"

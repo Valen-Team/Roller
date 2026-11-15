@@ -117,7 +117,7 @@ def parse_grader_stdout(stdout: str) -> dict[str, Any] | None:
     marker = "__ROLLER_SCORE__"
     index = stdout.rfind(marker)
     if index >= 0:
-        candidate = stdout[index + len(marker):].strip()
+        candidate = stdout[index + len(marker) :].strip()
         try:
             payload = json.loads(candidate)
         except json.JSONDecodeError:
@@ -186,7 +186,9 @@ class ContainerGrader:
             )
 
         if self.spec.needs_transcript:
-            self._stage_transcript(runtime, container, transcript_container_path, task_id)
+            self._stage_transcript(
+                runtime, container, transcript_container_path, task_id
+            )
 
         staging_error = self._stage_files(runtime, container, workspace, task_id)
         if staging_error is not None:
@@ -281,7 +283,9 @@ class ContainerGrader:
             if copied.returncode != 0:
                 detail = (copied.stderr or copied.stdout or "").strip()[-300:]
                 return f"could not copy {source} to {destination}: {detail}"
-            logger.debug("[%s] staged %s -> %s for grading", task_id, source, destination)
+            logger.debug(
+                "[%s] staged %s -> %s for grading", task_id, source, destination
+            )
         return None
 
     @staticmethod
@@ -532,7 +536,9 @@ class GradedHarness(Harness):
                         container,
                         task_id=request.task.id,
                         workspace_path=workspace_container_path(session),
-                        transcript_container_path=transcript_container_path(session, spec),
+                        transcript_container_path=transcript_container_path(
+                            session, spec
+                        ),
                     )
             logger.info(
                 "[%s] benchmark grading finished in %.1fs%s",
@@ -570,4 +576,6 @@ class GradedHarness(Harness):
             try:
                 atomic_write_json(output_dir / "score.json", payload)
             except OSError as exc:
-                logger.warning("[%s] could not write score.json: %s", request.task.id, exc)
+                logger.warning(
+                    "[%s] could not write score.json: %s", request.task.id, exc
+                )

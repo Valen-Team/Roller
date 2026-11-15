@@ -16,7 +16,9 @@ def _numeric(scores: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def sample_score(scores: dict[str, Any], score_key: str = "overall_score") -> float | None:
+def sample_score(
+    scores: dict[str, Any], score_key: str = "overall_score"
+) -> float | None:
     """Reduce one grader payload to a single number.
 
     Follows WildClawBench's rule: prefer the declared aggregate key, otherwise
@@ -149,11 +151,7 @@ def format_report(bench_name: str, report: dict[str, Any]) -> str:
                 lines.append(
                     f"    {row['average']:.4f}  {name}  ({row['task_count']} tasks)"
                 )
-    failures = [
-        row
-        for row in report.get("tasks", [])
-        if row.get("score") is None
-    ]
+    failures = [row for row in report.get("tasks", []) if row.get("score") is None]
     if failures:
         lines.append("")
         lines.append(f"  unscored samples ({len(failures)}):")

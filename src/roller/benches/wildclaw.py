@@ -187,7 +187,9 @@ def search_shim_from_env(
     host_ip = (env.get("SEARCH_SHIM_HOST_IP") or "").strip()
     if not host_ip:
         return None
-    hostname = (env.get("SEARCH_SHIM_HOSTNAME") or "").strip() or SEARCH_SHIM_HOSTNAME_DEFAULT
+    hostname = (
+        env.get("SEARCH_SHIM_HOSTNAME") or ""
+    ).strip() or SEARCH_SHIM_HOSTNAME_DEFAULT
     raw_cert = (env.get("SEARCH_SHIM_CERT") or "").strip()
     certificate: str | None = None
     if raw_cert:
@@ -220,7 +222,9 @@ def parse_frontmatter(block: str, label: str) -> dict[str, str]:
             continue
         key, separator, value = stripped.partition(":")
         if not separator:
-            raise BenchFormatError(f"{label}: frontmatter line is not key: value — {line!r}")
+            raise BenchFormatError(
+                f"{label}: frontmatter line is not key: value — {line!r}"
+            )
         metadata[key.strip()] = value.strip().strip("'\"")
     return metadata
 
@@ -316,7 +320,9 @@ class WildClawBenchAdapter(BenchAdapter):
     """
 
     name = "wildclawbench"
-    description = "WildClawBench — 60 real-world OpenClaw agent tasks across 6 categories"
+    description = (
+        "WildClawBench — 60 real-world OpenClaw agent tasks across 6 categories"
+    )
 
     def __init__(
         self,
@@ -373,9 +379,7 @@ class WildClawBenchAdapter(BenchAdapter):
         for path in sorted(tasks_root.rglob("*.md")):
             if path.name.startswith("task0_template") or path.name == "README.md":
                 continue
-            parsed = parse_task_markdown(
-                path.read_text(encoding="utf-8"), str(path)
-            )
+            parsed = parse_task_markdown(path.read_text(encoding="utf-8"), str(path))
             if not parsed["category"]:
                 parsed["category"] = path.parent.name
             if wanted_categories and parsed["category"] not in wanted_categories:
@@ -404,7 +408,9 @@ class WildClawBenchAdapter(BenchAdapter):
         nested = root / "tasks"
         return nested if nested.is_dir() else root
 
-    def _skill_context(self, parsed: dict[str, Any], root: Path) -> list[dict[str, Any]]:
+    def _skill_context(
+        self, parsed: dict[str, Any], root: Path
+    ) -> list[dict[str, Any]]:
         """Turn each ``## Skills`` name into a staged ``role: skill`` context entry.
 
         The names refer to directories under the checkout's ``skills/``. Recording
@@ -508,7 +514,9 @@ class WildClawBenchAdapter(BenchAdapter):
         row["files"] = files
         # The shim has to be wired up before the agent runs, so it goes ahead of
         # the task's own warmup commands.
-        setup = (shim.setup_commands() if shim is not None else []) + list(parsed["warmup"])
+        setup = (shim.setup_commands() if shim is not None else []) + list(
+            parsed["warmup"]
+        )
         # Upstream prompts and graders use /tmp_workspace literally. Override
         # every Harness default so Codex/Claude Code do not silently work in
         # /roller/workspace while the task looks for files somewhere else.

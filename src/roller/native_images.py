@@ -1,4 +1,5 @@
 """Images a task sends to the model with its first message (``files.attach_images``)."""
+
 from __future__ import annotations
 
 import base64
@@ -44,7 +45,7 @@ def image_source(request: RunRequest, path: str) -> Path:
         if item.path == path:
             return item.source
         if path.startswith(item.path + "/"):
-            return item.source / path[len(item.path) + 1:]
+            return item.source / path[len(item.path) + 1 :]
     raise ValueError(f"attached image has no source file: {path}")
 
 
@@ -53,14 +54,18 @@ def claude_user_message(request: RunRequest, prompt: str) -> dict[str, Any]:
 
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     for path in request.task.attach_images:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": image_media_type(path),
-                "data": base64.b64encode(image_source(request, path).read_bytes()).decode("ascii"),
-            },
-        })
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": image_media_type(path),
+                    "data": base64.b64encode(
+                        image_source(request, path).read_bytes()
+                    ).decode("ascii"),
+                },
+            }
+        )
     return {"type": "user", "message": {"role": "user", "content": content}}
 
 

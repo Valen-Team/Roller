@@ -20,7 +20,11 @@ ZERO_USAGE: dict[str, int | float] = {
 
 
 def _number(value: Any, default: int | float = 0) -> int | float:
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else default
+    return (
+        value
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else default
+    )
 
 
 def extract_openclaw_usage(trace_path: Path) -> dict[str, int | float]:
@@ -53,10 +57,16 @@ def extract_openclaw_usage(trace_path: Path) -> dict[str, int | float]:
             if usage is None:
                 continue
             totals["request_count"] += 1
-            for key, value in zip((
-                "input_tokens", "output_tokens", "cache_read_tokens",
-                "cache_write_tokens", "total_tokens",
-            ), usage.counts):
+            for key, value in zip(
+                (
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_read_tokens",
+                    "cache_write_tokens",
+                    "total_tokens",
+                ),
+                usage.counts,
+            ):
                 totals[key] += value
             totals["cost_usd"] += usage.cost_usd
     totals["cost_usd"] = round(float(totals["cost_usd"]), 6)

@@ -107,9 +107,7 @@ class ConversationManager(Harness):
         self.name = agent_harness.name
 
     @staticmethod
-    def _simulator_request(
-        request: RunRequest, spec: UserSimulatorSpec
-    ) -> RunRequest:
+    def _simulator_request(request: RunRequest, spec: UserSimulatorSpec) -> RunRequest:
         simulator_task = Task(
             id=f"{request.task.id}__user_simulator",
             prompts=(),
@@ -172,7 +170,9 @@ class ConversationManager(Harness):
                 raise ValueError("canonical ACTF trajectory must be a JSON object")
             if result.status == "ok":
                 write_sft(sft_path, trajectory)
-        record_training_audits(result.metadata, trajectory, simulator_dir / "wire_trace.jsonl")
+        record_training_audits(
+            result.metadata, trajectory, simulator_dir / "wire_trace.jsonl"
+        )
         rollout_dir = simulator_dir / "rollout"
         if rollout_dir.exists():
             shutil.rmtree(rollout_dir)
@@ -271,9 +271,7 @@ class ConversationManager(Harness):
                     status = "ok"
                     break
                 transcript.append({"role": "user", "content": decision.content})
-                agent_reply = agent_session.send(
-                    decision.content, remaining()
-                ).content
+                agent_reply = agent_session.send(decision.content, remaining()).content
                 transcript.append({"role": "assistant", "content": agent_reply})
                 rounds.append(
                     {
@@ -336,9 +334,7 @@ class ConversationManager(Harness):
                 "usage": simulator_result.usage,
                 "trajectory": {
                     "raw": "trace.jsonl" if raw_path.is_file() else None,
-                    "raw_schema": simulator_result.metadata.get(
-                        "raw_trace_schema"
-                    ),
+                    "raw_schema": simulator_result.metadata.get("raw_trace_schema"),
                     "actf": "trace_ACTF.json" if actf_path.is_file() else None,
                     "actf_schema": "ACTF_v1.0" if actf_path.is_file() else None,
                     "sft": "trace_SFT.json" if sft_path.is_file() else None,
@@ -401,14 +397,10 @@ class ConversationManager(Harness):
                         "raw": "trace.jsonl" if agent_result.trace_path else None,
                         "raw_schema": agent_result.metadata.get("raw_trace_schema"),
                         "actf": (
-                            "trace_ACTF.json"
-                            if agent_result.trajectory_path
-                            else None
+                            "trace_ACTF.json" if agent_result.trajectory_path else None
                         ),
                         "sft": (
-                            "trace_SFT.json"
-                            if agent_result.trajectory_path
-                            else None
+                            "trace_SFT.json" if agent_result.trajectory_path else None
                         ),
                     },
                 },

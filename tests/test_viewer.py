@@ -23,17 +23,26 @@ def write_json(path: Path, payload: object) -> None:
 class ViewerTests(unittest.TestCase):
     def test_inline_image_blocks_preserve_order_and_reject_remote_sources(self):
         from roller.viewer.app import _observation_view
-        content = [{"type": "text", "text": "before"},
+
+        content = [
+            {"type": "text", "text": "before"},
             {"type": "image", "data": "AA==", "mimeType": "image/png"},
             {"type": "text", "text": "between"},
-            {"type": "image", "data": "AQ==", "mimeType": "image/jpeg"}]
+            {"type": "image", "data": "AQ==", "mimeType": "image/jpeg"},
+        ]
         blocks = _observation_view(content, 40000)["blocks"]
-        self.assertEqual([b["type"] for b in blocks], ["text", "image", "text", "image"])
-        self.assertEqual([b["url"] for b in blocks if b["type"] == "image"],
-            ["data:image/png;base64,AA==", "data:image/jpeg;base64,AQ=="])
-        for block in ({"type": "image", "data": "https://example.com/image.png"},
-                      {"type": "image", "data": "AA==", "mimeType": "image/svg+xml"},
-                      {"type": "image", "data": "not-base64", "mimeType": "image/png"}):
+        self.assertEqual(
+            [b["type"] for b in blocks], ["text", "image", "text", "image"]
+        )
+        self.assertEqual(
+            [b["url"] for b in blocks if b["type"] == "image"],
+            ["data:image/png;base64,AA==", "data:image/jpeg;base64,AQ=="],
+        )
+        for block in (
+            {"type": "image", "data": "https://example.com/image.png"},
+            {"type": "image", "data": "AA==", "mimeType": "image/svg+xml"},
+            {"type": "image", "data": "not-base64", "mimeType": "image/png"},
+        ):
             self.assertNotIn("blocks", _observation_view([block], 40000))
 
     def setUp(self) -> None:
@@ -251,7 +260,9 @@ class ViewerTests(unittest.TestCase):
             with urlopen(f"{address}/", timeout=5) as response:
                 html = response.read().decode("utf-8")
                 self.assertIn("Roller Trajectory Viewer", html)
-                self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
+                self.assertIn(
+                    "default-src 'self'", response.headers["Content-Security-Policy"]
+                )
             with urlopen(f"{address}/style.css", timeout=5) as response:
                 css = response.read().decode("utf-8")
                 self.assertIn("[hidden] { display: none !important; }", css)

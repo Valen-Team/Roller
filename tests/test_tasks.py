@@ -37,7 +37,9 @@ class TaskLoadingTests(unittest.TestCase):
             payload = json.loads(task_file.read_text(encoding="utf-8"))
             payload[0]["runtime"]["thinking"] = "turbo"
             task_file.write_text(json.dumps(payload), encoding="utf-8")
-            with self.assertRaisesRegex(TaskFormatError, "runtime.thinking must be one of"):
+            with self.assertRaisesRegex(
+                TaskFormatError, "runtime.thinking must be one of"
+            ):
                 load_tasks(task_file)
 
     def test_loads_user_simulator_task_without_predefined_messages(self) -> None:
@@ -283,7 +285,9 @@ class TaskLoadingTests(unittest.TestCase):
             with self.assertRaisesRegex(TaskFormatError, "reserved"):
                 load_tasks(task_file)
 
-    def test_accepts_renamed_and_inline_inputs_but_rejects_output_declarations(self) -> None:
+    def test_accepts_renamed_and_inline_inputs_but_rejects_output_declarations(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             (root / "input.txt").write_text("input", encoding="utf-8")
@@ -297,7 +301,10 @@ class TaskLoadingTests(unittest.TestCase):
                             "files": {
                                 "inputs": [
                                     {"source": "input.txt", "target": "renamed.txt"},
-                                    {"path": "inline/config.yaml", "content": "ok: true\n"},
+                                    {
+                                        "path": "inline/config.yaml",
+                                        "content": "ok: true\n",
+                                    },
                                 ],
                                 "input_mode": "copy",
                             },
@@ -326,7 +333,9 @@ class TaskLoadingTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(TaskFormatError, "files.outputs.*no longer supported"):
+            with self.assertRaisesRegex(
+                TaskFormatError, "files.outputs.*no longer supported"
+            ):
                 load_tasks(task_file)
 
     def test_rejects_invalid_input_mode_and_target(self) -> None:
@@ -336,11 +345,13 @@ class TaskLoadingTests(unittest.TestCase):
             task_file = root / "tasks.json"
             task_file.write_text(
                 json.dumps(
-                    [{
-                        "id": "bad-mode",
-                        "prompt": "read",
-                        "files": {"inputs": ["input.txt"], "input_mode": "move"},
-                    }]
+                    [
+                        {
+                            "id": "bad-mode",
+                            "prompt": "read",
+                            "files": {"inputs": ["input.txt"], "input_mode": "move"},
+                        }
+                    ]
                 ),
                 encoding="utf-8",
             )
@@ -349,15 +360,17 @@ class TaskLoadingTests(unittest.TestCase):
 
             task_file.write_text(
                 json.dumps(
-                    [{
-                        "id": "bad-target",
-                        "prompt": "read",
-                        "files": {
-                            "inputs": [
-                                {"source": "input.txt", "target": "../outside.txt"}
-                            ]
-                        },
-                    }]
+                    [
+                        {
+                            "id": "bad-target",
+                            "prompt": "read",
+                            "files": {
+                                "inputs": [
+                                    {"source": "input.txt", "target": "../outside.txt"}
+                                ]
+                            },
+                        }
+                    ]
                 ),
                 encoding="utf-8",
             )
@@ -369,17 +382,19 @@ class TaskLoadingTests(unittest.TestCase):
             task_file = Path(temporary) / "tasks.json"
             task_file.write_text(
                 json.dumps(
-                    [{
-                        "id": "sessions",
-                        "messages": [
-                            {"role": "user", "content": "first"},
-                            {
-                                "role": "user",
-                                "content": "second",
-                                "new_session": True,
-                            },
-                        ],
-                    }]
+                    [
+                        {
+                            "id": "sessions",
+                            "messages": [
+                                {"role": "user", "content": "first"},
+                                {
+                                    "role": "user",
+                                    "content": "second",
+                                    "new_session": True,
+                                },
+                            ],
+                        }
+                    ]
                 ),
                 encoding="utf-8",
             )

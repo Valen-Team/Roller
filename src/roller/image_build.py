@@ -85,7 +85,13 @@ def _build(
     ) as stream:
         stream.write(dockerfile_source.rstrip() + "\n")
         dockerfile = Path(stream.name)
-    command = [*_build_command_prefix(binary), "--file", str(dockerfile), "--tag", image]
+    command = [
+        *_build_command_prefix(binary),
+        "--file",
+        str(dockerfile),
+        "--tag",
+        image,
+    ]
     for name, value in build_args:
         command.extend(["--build-arg", f"{name}={value}"])
     # Docker treats these predefined proxy args specially: they are available
@@ -127,7 +133,9 @@ def _build(
         dockerfile.unlink(missing_ok=True)
     assert result is not None
     if result.returncode != 0:
-        raise RuntimeError(f"Docker image build failed with code {result.returncode}: {image}")
+        raise RuntimeError(
+            f"Docker image build failed with code {result.returncode}: {image}"
+        )
 
 
 def prepare_task_images(

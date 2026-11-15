@@ -51,8 +51,12 @@ class TaskImageBuildTests(unittest.TestCase):
 
             self.assertEqual(result, {"task": "sha256:final"})
             self.assertEqual(build.call_count, 2)
-            self.assertEqual(build.call_args_list[0].kwargs["image"], "roller-task:base")
-            self.assertEqual(build.call_args_list[1].kwargs["image"], "roller-task:final")
+            self.assertEqual(
+                build.call_args_list[0].kwargs["image"], "roller-task:base"
+            )
+            self.assertEqual(
+                build.call_args_list[1].kwargs["image"], "roller-task:final"
+            )
             overlay = build.call_args_list[1].kwargs["dockerfile_source"]
             self.assertIn("FROM ${HARNESS_IMAGE} AS roller_harness", overlay)
             self.assertIn("command -v python3", overlay)

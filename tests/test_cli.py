@@ -9,7 +9,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from roller.cli import _build_parser, _collect, _docker_preflight, _init, _jsonl_equivalent, _validate_thinking_requests
+from roller.cli import (
+    _build_parser,
+    _collect,
+    _docker_preflight,
+    _init,
+    _jsonl_equivalent,
+    _validate_thinking_requests,
+)
 from roller.bundles import TaskBundleStore
 from roller.tasks import load_tasks
 from roller.models import RunRequest, Task, UserSimulatorSpec
@@ -27,17 +34,25 @@ class CliTests(unittest.TestCase):
             models.parent.mkdir(parents=True)
             models.write_text("edited")
             with contextlib.redirect_stdout(io.StringIO()) as output:
-                self.assertEqual(_init(_build_parser().parse_args(["init", str(root)])), 0)
+                self.assertEqual(
+                    _init(_build_parser().parse_args(["init", str(root)])), 0
+                )
             self.assertEqual(models.read_text(), "edited")
             self.assertTrue((root / "examples" / "tasks" / "tasks.jsonl").is_file())
             self.assertTrue((root / "examples" / "env" / "api.env.example").is_file())
             self.assertTrue((root / "examples" / "benchmarks" / "base.yaml").is_file())
             self.assertEqual(list((root / "examples").rglob("*.env")), [])
             self.assertIn("1 existing files kept", output.getvalue())
-            args = _build_parser().parse_args([
-                "collect", "--tasks", str(root / "examples" / "tasks" / "tasks.jsonl"),
-                "--model", "provider/model", "--dry-run",
-            ])
+            args = _build_parser().parse_args(
+                [
+                    "collect",
+                    "--tasks",
+                    str(root / "examples" / "tasks" / "tasks.jsonl"),
+                    "--model",
+                    "provider/model",
+                    "--dry-run",
+                ]
+            )
             self.assertEqual(len(load_tasks(Path(args.tasks))), 4)
 
     def test_review_preflight_matrix_uses_runtime_endpoint_and_codex_rules(self):
@@ -46,59 +61,138 @@ class CliTests(unittest.TestCase):
             tasks = root / "tasks.jsonl"
             tasks.write_text(json.dumps({"id": "hello", "prompt": "say hello"}) + "\n")
             capabilities = root / "capabilities.json"
-            capabilities.write_text(json.dumps({
-                "schema_version": "roller.thinking-capabilities/v1",
-                "profiles": [{"harness": "claude-code", "model": "served-model",
-                              "api_base": "http://gateway.test", "supported_efforts": ["low"]}],
-            }))
-            for endpoint in ("http://gateway.test", "http://gateway.test/v1",
-                             "http://gateway.test/v1/messages"):
-                args = _build_parser().parse_args([
-                    "collect", "--tasks", str(tasks), "--harness", "claude-code",
-                    "--model", "served-model", "--thinking", "high",
-                    "--claude-api-base", endpoint,
-                    "--thinking-capabilities", str(capabilities), "--dry-run",
-                ])
-                with self.subTest(endpoint=endpoint), self.assertRaisesRegex(ValueError, "not declared supported"):
+            capabilities.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "roller.thinking-capabilities/v1",
+                        "profiles": [
+                            {
+                                "harness": "claude-code",
+                                "model": "served-model",
+                                "api_base": "http://gateway.test",
+                                "supported_efforts": ["low"],
+                            }
+                        ],
+                    }
+                )
+            )
+            for endpoint in (
+                "http://gateway.test",
+                "http://gateway.test/v1",
+                "http://gateway.test/v1/messages",
+            ):
+                args = _build_parser().parse_args(
+                    [
+                        "collect",
+                        "--tasks",
+                        str(tasks),
+                        "--harness",
+                        "claude-code",
+                        "--model",
+                        "served-model",
+                        "--thinking",
+                        "high",
+                        "--claude-api-base",
+                        endpoint,
+                        "--thinking-capabilities",
+                        str(capabilities),
+                        "--dry-run",
+                    ]
+                )
+                with (
+                    self.subTest(endpoint=endpoint),
+                    self.assertRaisesRegex(ValueError, "not declared supported"),
+                ):
                     _collect(args)
             for effort in ("off", "adaptive"):
-                args = _build_parser().parse_args([
-                    "collect", "--tasks", str(tasks), "--harness", "codex",
-                    "--model", "served-model", "--thinking", effort, "--dry-run",
-                ])
+                args = _build_parser().parse_args(
+                    [
+                        "collect",
+                        "--tasks",
+                        str(tasks),
+                        "--harness",
+                        "codex",
+                        "--model",
+                        "served-model",
+                        "--thinking",
+                        effort,
+                        "--dry-run",
+                    ]
+                )
                 with self.subTest(effort=effort), self.assertRaises(ValueError):
                     _collect(args)
 
     def test_codex_preflight_rejects_runtime_unsupported_efforts(self):
         for effort in ("off", "adaptive"):
             with self.subTest(effort=effort), self.assertRaises(ValueError):
-                request = RunRequest(0, Task(id="task", prompts=("hello",), source_index=0,
-                                             thinking=effort), "model", 30)
-                _validate_thinking_requests([request], cli_harness="codex", harness="codex",
-                                            api_base=None, default_effort=None,
-                                            effort_validator=codex_effort, capabilities=None)
+                request = RunRequest(
+                    0,
+                    Task(
+                        id="task", prompts=("hello",), source_index=0, thinking=effort
+                    ),
+                    "model",
+                    30,
+                )
+                _validate_thinking_requests(
+                    [request],
+                    cli_harness="codex",
+                    harness="codex",
+                    api_base=None,
+                    default_effort=None,
+                    effort_validator=codex_effort,
+                    capabilities=None,
+                )
 
     def test_capabilities_use_logical_effort_for_simulator_and_resolve_endpoint(self):
-        profiles = ThinkingCapabilities((ThinkingCapability(
-            harness="claude-code", model="sim-model", supported_efforts=frozenset({"ultra"}),
-            api_base="http://gateway.test",
-        ),))
-        task = Task(id="task", prompts=("hello",), source_index=0,
-                    user_simulator=UserSimulatorSpec(instruction="test", harness="claude-code", model="sim-model", thinking="ultra"))
+        profiles = ThinkingCapabilities(
+            (
+                ThinkingCapability(
+                    harness="claude-code",
+                    model="sim-model",
+                    supported_efforts=frozenset({"ultra"}),
+                    api_base="http://gateway.test",
+                ),
+            )
+        )
+        task = Task(
+            id="task",
+            prompts=("hello",),
+            source_index=0,
+            user_simulator=UserSimulatorSpec(
+                instruction="test",
+                harness="claude-code",
+                model="sim-model",
+                thinking="ultra",
+            ),
+        )
         request = RunRequest(0, task, "agent-model", 30)
         _validate_thinking_requests(
-            [request], cli_harness="pi", harness="claude-code",
-            api_base=lambda model: "http://gateway.test/", default_effort="low",
-            effort_validator=lambda effort: "ultracode", capabilities=profiles,
+            [request],
+            cli_harness="pi",
+            harness="claude-code",
+            api_base=lambda model: "http://gateway.test/",
+            default_effort="low",
+            effort_validator=lambda effort: "ultracode",
+            capabilities=profiles,
         )
-        denied = ThinkingCapabilities((ThinkingCapability(
-            harness="claude-code", model="sim-model", supported_efforts=frozenset({"low"}),
-        ),))
+        denied = ThinkingCapabilities(
+            (
+                ThinkingCapability(
+                    harness="claude-code",
+                    model="sim-model",
+                    supported_efforts=frozenset({"low"}),
+                ),
+            )
+        )
         with self.assertRaisesRegex(ValueError, "not declared supported"):
             _validate_thinking_requests(
-                [request], cli_harness="pi", harness="claude-code",
-                api_base=None, default_effort="low",
-                effort_validator=lambda effort: "ultracode", capabilities=denied,
+                [request],
+                cli_harness="pi",
+                harness="claude-code",
+                api_base=None,
+                default_effort="low",
+                effort_validator=lambda effort: "ultracode",
+                capabilities=denied,
             )
 
     def test_retired_cot_flags_are_rejected(self) -> None:
@@ -113,8 +207,13 @@ class CliTests(unittest.TestCase):
         ):
             with self.subTest(flag=flag, value=value):
                 errors = io.StringIO()
-                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
-                    _build_parser().parse_args(["collect", "--tasks", "tasks.jsonl", flag, value])
+                with (
+                    contextlib.redirect_stderr(errors),
+                    self.assertRaises(SystemExit) as raised,
+                ):
+                    _build_parser().parse_args(
+                        ["collect", "--tasks", "tasks.jsonl", flag, value]
+                    )
                 self.assertEqual(raised.exception.code, 2)
                 self.assertIn("unrecognized arguments", errors.getvalue())
 
@@ -125,21 +224,32 @@ class CliTests(unittest.TestCase):
                 b'{"runtime":{"args":{"b":2,"a":1},"image":"test"},"id":"one"}\n',
             )
         )
-        self.assertFalse(
-            _jsonl_equivalent(b'{"id":"one"}\n', b'{"id":"two"}\n')
-        )
+        self.assertFalse(_jsonl_equivalent(b'{"id":"one"}\n', b'{"id":"two"}\n'))
 
-    def test_parser_accepts_samples_grader_parallel_and_bench_timeout_scale(self) -> None:
+    def test_parser_accepts_samples_grader_parallel_and_bench_timeout_scale(
+        self,
+    ) -> None:
         collect = _build_parser().parse_args(
             [
-                "collect", "--tasks", "tasks.jsonl", "--samples", "3",
-                "--grader-parallel", "2",
+                "collect",
+                "--tasks",
+                "tasks.jsonl",
+                "--samples",
+                "3",
+                "--grader-parallel",
+                "2",
             ]
         )
         export = _build_parser().parse_args(
             [
-                "bench", "export", "pinchbench", "/bench", "-o", "tasks.jsonl",
-                "--timeout-multiplier", "2.5",
+                "bench",
+                "export",
+                "pinchbench",
+                "/bench",
+                "-o",
+                "tasks.jsonl",
+                "--timeout-multiplier",
+                "2.5",
             ]
         )
         self.assertEqual((collect.samples, collect.grader_parallel), (3, 2))
@@ -300,15 +410,25 @@ def grade(transcript, workspace_path):
             tasks = root / "tasks.jsonl"
             tasks.write_text(
                 json.dumps(
-                    {"id": "hello", "prompt": "say hello", "files": {"inputs": ["brief.md"]}}
+                    {
+                        "id": "hello",
+                        "prompt": "say hello",
+                        "files": {"inputs": ["brief.md"]},
+                    }
                 )
                 + "\n",
                 encoding="utf-8",
             )
             args = _build_parser().parse_args(
                 [
-                    "collect", "--tasks", str(tasks), "--model", "provider/model",
-                    "--output", str(root / "runs"), "--dry-run",
+                    "collect",
+                    "--tasks",
+                    str(tasks),
+                    "--model",
+                    "provider/model",
+                    "--output",
+                    str(root / "runs"),
+                    "--dry-run",
                 ]
             )
             before = sorted(path.name for path in root.iterdir())
@@ -335,24 +455,49 @@ def grade(transcript, workspace_path):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             tasks = root / "tasks.jsonl"
-            tasks.write_text(json.dumps({"id": "hello", "prompt": "say hello"}) + "\n", encoding="utf-8")
+            tasks.write_text(
+                json.dumps({"id": "hello", "prompt": "say hello"}) + "\n",
+                encoding="utf-8",
+            )
             config = root / "models.json"
-            config.write_text(json.dumps({"providers": {"proxy": {
-                "baseUrl": "http://127.0.0.1:9/v1", "apiKey": "placeholder",
-                "models": [{"id": "served-model"}, {"id": "other-model"}],
-            }}}), encoding="utf-8")
+            config.write_text(
+                json.dumps(
+                    {
+                        "providers": {
+                            "proxy": {
+                                "baseUrl": "http://127.0.0.1:9/v1",
+                                "apiKey": "placeholder",
+                                "models": [
+                                    {"id": "served-model"},
+                                    {"id": "other-model"},
+                                ],
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             def dry_run(model: str) -> int:
-                args = _build_parser().parse_args([
-                    "collect", "--tasks", str(tasks), "--model", model,
-                    "--model-config", str(config), "--dry-run",
-                ])
+                args = _build_parser().parse_args(
+                    [
+                        "collect",
+                        "--tasks",
+                        str(tasks),
+                        "--model",
+                        model,
+                        "--model-config",
+                        str(config),
+                        "--dry-run",
+                    ]
+                )
                 with contextlib.redirect_stdout(io.StringIO()):
                     return _collect(args)
 
             self.assertEqual(dry_run("proxy/served-model"), 0)
             with self.assertRaisesRegex(
-                ValueError, "'proxy/typo' is not declared for provider 'proxy'.*served-model, other-model"
+                ValueError,
+                "'proxy/typo' is not declared for provider 'proxy'.*served-model, other-model",
             ):
                 dry_run("proxy/typo")
             # A provider outside the file may be one OpenClaw ships itself.
@@ -379,7 +524,9 @@ def grade(transcript, workspace_path):
         self.assertIn("api_key_env", groups["Harness API"])
         self.assertIn("pi_api_base", groups["Harness API"])
 
-    def test_thinking_capabilities_reject_unsupported_effort_before_rollout(self) -> None:
+    def test_thinking_capabilities_reject_unsupported_effort_before_rollout(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             tasks = root / "tasks.jsonl"
@@ -388,13 +535,34 @@ def grade(transcript, workspace_path):
                 encoding="utf-8",
             )
             model_config = root / "models.json"
-            model_config.write_text(json.dumps({"providers": {"test": {
-                "baseUrl": "http://gateway.test/v1", "api": "openai-completions",
-                "models": [{"id": "served-model", "name": "served-model"}],
-            }}}))
-            for harness in ("hermes", "opencode", "deepseek", "pi", "codex", "claude-code", "openclaw"):
+            model_config.write_text(
+                json.dumps(
+                    {
+                        "providers": {
+                            "test": {
+                                "baseUrl": "http://gateway.test/v1",
+                                "api": "openai-completions",
+                                "models": [
+                                    {"id": "served-model", "name": "served-model"}
+                                ],
+                            }
+                        }
+                    }
+                )
+            )
+            for harness in (
+                "hermes",
+                "opencode",
+                "deepseek",
+                "pi",
+                "codex",
+                "claude-code",
+                "openclaw",
+            ):
                 with self.subTest(harness=harness):
-                    model = "test/served-model" if harness == "openclaw" else "served-model"
+                    model = (
+                        "test/served-model" if harness == "openclaw" else "served-model"
+                    )
                     capabilities = root / f"{harness}-capabilities.json"
                     capabilities.write_text(
                         json.dumps(
@@ -428,11 +596,14 @@ def grade(transcript, workspace_path):
                             "--thinking-capabilities",
                             str(capabilities),
                             "--dry-run",
-                        ] + (["--model-config", str(model_config)] if harness == "openclaw" else [])
+                        ]
+                        + (
+                            ["--model-config", str(model_config)]
+                            if harness == "openclaw"
+                            else []
+                        )
                     )
-                    with self.assertRaisesRegex(
-                        ValueError, "not declared supported"
-                    ):
+                    with self.assertRaisesRegex(ValueError, "not declared supported"):
                         _collect(args)
 
     def test_parser_accepts_codex_harness_options(self) -> None:
@@ -541,7 +712,6 @@ def grade(transcript, workspace_path):
         self.assertEqual(payload["trajectories"], 1)
         self.assertEqual(payload["plan"][0]["turns"]["count"], 1)
 
-
     def test_task_harness_is_used_when_cli_harness_is_omitted(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             tasks = Path(temporary) / "tasks.jsonl"
@@ -603,8 +773,12 @@ class LaunchIntervalCliTests(unittest.TestCase):
         self.intervals = []
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
-        patches.enter_context(patch("roller.cli._docker_preflight", return_value="image-id"))
-        patches.enter_context(patch("roller.cli.Collector", side_effect=self._collector))
+        patches.enter_context(
+            patch("roller.cli._docker_preflight", return_value="image-id")
+        )
+        patches.enter_context(
+            patch("roller.cli.Collector", side_effect=self._collector)
+        )
 
     def _collector(self, config, harness_factory):
         self.intervals.append(config.launch_interval)
@@ -614,8 +788,16 @@ class LaunchIntervalCliTests(unittest.TestCase):
 
     def invoke(self, *extra: str) -> int:
         args = [
-            "collect", "--tasks", str(self.tasks), "--model", "provider/model",
-            "--output", str(self.root / "runs"), "--run-name", "run", *extra,
+            "collect",
+            "--tasks",
+            str(self.tasks),
+            "--model",
+            "provider/model",
+            "--output",
+            str(self.root / "runs"),
+            "--run-name",
+            "run",
+            *extra,
         ]
         with contextlib.redirect_stdout(io.StringIO()):
             return _collect(_build_parser().parse_args(args))
@@ -633,10 +815,20 @@ class LaunchIntervalCliTests(unittest.TestCase):
     def test_dry_run_reports_the_interval(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            _collect(_build_parser().parse_args(
-                ["collect", "--tasks", str(self.tasks), "--model", "provider/model",
-                 "--dry-run", "--launch-interval", "5"]
-            ))
+            _collect(
+                _build_parser().parse_args(
+                    [
+                        "collect",
+                        "--tasks",
+                        str(self.tasks),
+                        "--model",
+                        "provider/model",
+                        "--dry-run",
+                        "--launch-interval",
+                        "5",
+                    ]
+                )
+            )
         self.assertEqual(json.loads(output.getvalue())["launch_interval"], 5.0)
 
     def test_recorded_in_info_but_not_locked_so_resume_may_change_it(self) -> None:
@@ -661,8 +853,12 @@ class RetryBackoffCliTests(unittest.TestCase):
         self.backoffs = []
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
-        patches.enter_context(patch("roller.cli._docker_preflight", return_value="image-id"))
-        patches.enter_context(patch("roller.cli.Collector", side_effect=self._collector))
+        patches.enter_context(
+            patch("roller.cli._docker_preflight", return_value="image-id")
+        )
+        patches.enter_context(
+            patch("roller.cli.Collector", side_effect=self._collector)
+        )
 
     def _collector(self, config, harness_factory):
         self.backoffs.append(config.retry_backoff)
@@ -672,8 +868,16 @@ class RetryBackoffCliTests(unittest.TestCase):
 
     def invoke(self, *extra: str) -> int:
         args = [
-            "collect", "--tasks", str(self.tasks), "--model", "provider/model",
-            "--output", str(self.root / "runs"), "--run-name", "run", *extra,
+            "collect",
+            "--tasks",
+            str(self.tasks),
+            "--model",
+            "provider/model",
+            "--output",
+            str(self.root / "runs"),
+            "--run-name",
+            "run",
+            *extra,
         ]
         with contextlib.redirect_stdout(io.StringIO()):
             return _collect(_build_parser().parse_args(args))

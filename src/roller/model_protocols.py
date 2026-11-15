@@ -1,4 +1,5 @@
 """Lossless response reconstruction and protocol-specific reference extraction."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -18,7 +19,9 @@ def anthropic_response(payload: bytes, content_type: str) -> dict[str, Any]:
     inputs: dict[int, str] = {}
     stopped = False
     for frame in payload.decode("utf-8").replace("\r\n", "\n").split("\n\n"):
-        data = "\n".join(line[5:].lstrip() for line in frame.split("\n") if line.startswith("data:"))
+        data = "\n".join(
+            line[5:].lstrip() for line in frame.split("\n") if line.startswith("data:")
+        )
         if not data:
             continue
         event = json.loads(data)
@@ -36,8 +39,11 @@ def anthropic_response(payload: bytes, content_type: str) -> dict[str, Any]:
             index = event["index"]
             block = blocks[index]
             delta = event["delta"]
-            field = {"text_delta": "text", "thinking_delta": "thinking",
-                     "signature_delta": "signature"}.get(delta.get("type"))
+            field = {
+                "text_delta": "text",
+                "thinking_delta": "thinking",
+                "signature_delta": "signature",
+            }.get(delta.get("type"))
             if field:
                 block[field] = block.get(field, "") + delta.get(field, "")
             elif delta.get("type") == "input_json_delta":
@@ -57,7 +63,6 @@ def anthropic_response(payload: bytes, content_type: str) -> dict[str, Any]:
     return message
 
 
-
 def chat_response(payload: bytes, content_type: str) -> dict[str, Any]:
     if "text/event-stream" not in content_type:
         result = json.loads(payload)
@@ -70,7 +75,9 @@ def chat_response(payload: bytes, content_type: str) -> dict[str, Any]:
     finish = None
     done = False
     for frame in payload.decode("utf-8").replace("\r\n", "\n").split("\n\n"):
-        data = "\n".join(line[5:].lstrip() for line in frame.split("\n") if line.startswith("data:"))
+        data = "\n".join(
+            line[5:].lstrip() for line in frame.split("\n") if line.startswith("data:")
+        )
         if not data:
             continue
         if data == "[DONE]":
@@ -81,8 +88,12 @@ def chat_response(payload: bytes, content_type: str) -> dict[str, Any]:
             raise ValueError("Chat Completions stream returned an error")
         # Some gateways prefix the stream with an empty metadata frame. It is
         # not a model response and must not establish the response ID.
-        if (result is None and chunk.get("id") == "" and chunk.get("choices") == []
-                and not chunk.get("usage")):
+        if (
+            result is None
+            and chunk.get("id") == ""
+            and chunk.get("choices") == []
+            and not chunk.get("usage")
+        ):
             continue
         if result is None:
             result = {k: deepcopy(v) for k, v in chunk.items() if k != "choices"}
@@ -100,23 +111,42 @@ def chat_response(payload: bytes, content_type: str) -> dict[str, Any]:
                     continue
                 if key == "tool_calls":
                     for delta in value:
-                        if delta.get("type", "function") != "function" or set(delta) - {"index", "id", "type", "function"}:
+                        if delta.get("type", "function") != "function" or set(delta) - {
+                            "index",
+                            "id",
+                            "type",
+                            "function",
+                        }:
                             raise ValueError("unsupported Chat Completions tool delta")
                         index = delta["index"]
-                        tool = tools.setdefault(index, {"type": "function", "function": {"name": "", "arguments": ""}})
+                        tool = tools.setdefault(
+                            index,
+                            {
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            },
+                        )
                         if "id" in delta:
                             identifier = delta["id"]
                             previous_id = tool.get("id")
-                            if (not isinstance(identifier, str) or
-                                    previous_id and identifier and previous_id != identifier):
-                                raise ValueError("Chat Completions tool call changed ID")
+                            if (
+                                not isinstance(identifier, str)
+                                or previous_id
+                                and identifier
+                                and previous_id != identifier
+                            ):
+                                raise ValueError(
+                                    "Chat Completions tool call changed ID"
+                                )
                             # Some streams send an empty ID on continuation chunks.
                             if identifier or previous_id is None:
                                 tool["id"] = identifier
                         if "type" in delta:
                             tool["type"] = delta["type"]
                         for field, text in delta.get("function", {}).items():
-                            tool["function"][field] = tool["function"].get(field, "") + text
+                            tool["function"][field] = (
+                                tool["function"].get(field, "") + text
+                            )
                 elif key == "role":
                     message[key] = value
                 elif isinstance(value, str):
@@ -138,7 +168,11 @@ def responses_response(payload: bytes, content_type: str) -> dict[str, Any]:
     else:
         result = None
         for frame in payload.decode("utf-8").replace("\r\n", "\n").split("\n\n"):
-            data = "\n".join(line[5:].lstrip() for line in frame.splitlines() if line.startswith("data:"))
+            data = "\n".join(
+                line[5:].lstrip()
+                for line in frame.splitlines()
+                if line.startswith("data:")
+            )
             if not data or data == "[DONE]":
                 continue
             event = json.loads(data)
@@ -148,7 +182,11 @@ def responses_response(payload: bytes, content_type: str) -> dict[str, Any]:
                 if result is not None:
                     raise ValueError("Responses stream has multiple terminal responses")
                 result = event.get("response")
-    if not isinstance(result, dict) or result.get("object") != "response" or not isinstance(result.get("output"), list):
+    if (
+        not isinstance(result, dict)
+        or result.get("object") != "response"
+        or not isinstance(result.get("output"), list)
+    ):
         raise ValueError("Responses capture lacks a terminal response object")
     return result
 
@@ -176,26 +214,68 @@ def response_finished(protocol: str, output: dict[str, Any]) -> bool:
         # Some compatible gateways return this finish reason with only XML
         # text. There is no executable tool call to pair with a result.
         calls = choice["message"].get("tool_calls")
-        return isinstance(calls, list) and bool(calls) and all(
-            isinstance(call, dict) and isinstance(call.get("id"), str) and bool(call["id"])
-            and isinstance(call.get("function"), dict) and bool(call["function"].get("name"))
-            for call in calls)
+        return (
+            isinstance(calls, list)
+            and bool(calls)
+            and all(
+                isinstance(call, dict)
+                and isinstance(call.get("id"), str)
+                and bool(call["id"])
+                and isinstance(call.get("function"), dict)
+                and bool(call["function"].get("name"))
+                for call in calls
+            )
+        )
     return choice.get("finish_reason") in {"stop", "function_call"}
 
 
 def tool_call_ids(protocol: str, output: dict[str, Any]) -> set[str]:
     if protocol == "openai-responses":
-        return {item["call_id"] for item in output.get("output", []) if isinstance(item, dict)
-                and item.get("type") in {"function_call", "custom_tool_call"} and isinstance(item.get("call_id"), str)}
+        return {
+            item["call_id"]
+            for item in output.get("output", [])
+            if isinstance(item, dict)
+            and item.get("type") in {"function_call", "custom_tool_call"}
+            and isinstance(item.get("call_id"), str)
+        }
     if protocol == "anthropic-messages":
-        return {b["id"] for b in output.get("content", []) if isinstance(b, dict) and b.get("type") == "tool_use" and isinstance(b.get("id"), str)}
-    return {t["id"] for c in output.get("choices", []) for t in c.get("message", {}).get("tool_calls", []) if isinstance(t.get("id"), str)}
+        return {
+            b["id"]
+            for b in output.get("content", [])
+            if isinstance(b, dict)
+            and b.get("type") == "tool_use"
+            and isinstance(b.get("id"), str)
+        }
+    return {
+        t["id"]
+        for c in output.get("choices", [])
+        for t in c.get("message", {}).get("tool_calls", [])
+        if isinstance(t.get("id"), str)
+    }
 
 
 def tool_result_ids(protocol: str, context: dict[str, Any]) -> set[str]:
     if protocol == "openai-responses":
-        return {item["call_id"] for item in context.get("input", []) if isinstance(item, dict)
-                and item.get("type") in {"function_call_output", "custom_tool_call_output"} and isinstance(item.get("call_id"), str)}
+        return {
+            item["call_id"]
+            for item in context.get("input", [])
+            if isinstance(item, dict)
+            and item.get("type") in {"function_call_output", "custom_tool_call_output"}
+            and isinstance(item.get("call_id"), str)
+        }
     if protocol == "anthropic-messages":
-        return {b["tool_use_id"] for m in context.get("messages", []) for b in (m.get("content", []) if isinstance(m.get("content"), list) else []) if isinstance(b, dict) and b.get("type") == "tool_result" and isinstance(b.get("tool_use_id"), str)}
-    return {m["tool_call_id"] for m in context.get("messages", []) if m.get("role") == "tool" and isinstance(m.get("tool_call_id"), str)}
+        return {
+            b["tool_use_id"]
+            for m in context.get("messages", [])
+            for b in (
+                m.get("content", []) if isinstance(m.get("content"), list) else []
+            )
+            if isinstance(b, dict)
+            and b.get("type") == "tool_result"
+            and isinstance(b.get("tool_use_id"), str)
+        }
+    return {
+        m["tool_call_id"]
+        for m in context.get("messages", [])
+        if m.get("role") == "tool" and isinstance(m.get("tool_call_id"), str)
+    }

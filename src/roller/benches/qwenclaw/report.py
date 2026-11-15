@@ -34,9 +34,7 @@ def aggregate_samples(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
     }
     perfect = sum(value >= 1.0 - 1e-9 for value in task_means.values())
     report["average"] = (
-        round(sum(task_means.values()) / len(task_means), 6)
-        if task_means
-        else None
+        round(sum(task_means.values()) / len(task_means), 6) if task_means else None
     )
     report["upstream_task_count"] = len(task_means)
     report["strict_accuracy"] = (

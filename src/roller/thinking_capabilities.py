@@ -65,9 +65,7 @@ class ThinkingCapabilities:
             return profile
         if effort not in profile.supported_efforts:
             supported = "|".join(
-                level
-                for level in THINKING_LEVELS
-                if level in profile.supported_efforts
+                level for level in THINKING_LEVELS if level in profile.supported_efforts
             )
             endpoint = f" at {_endpoint(api_base, harness)}" if api_base else ""
             raise ValueError(
@@ -117,7 +115,9 @@ def load_thinking_capabilities(path: Path) -> ThinkingCapabilities:
         if not isinstance(harness, str) or not harness.strip():
             raise ValueError(f"{label}.harness must be a non-empty string")
         if harness not in PROFILE_HARNESSES:
-            raise ValueError(f"{label}.harness has no capability-profile integration: {harness!r}")
+            raise ValueError(
+                f"{label}.harness has no capability-profile integration: {harness!r}"
+            )
         if not isinstance(model, str) or not model.strip():
             raise ValueError(f"{label}.model must be a non-empty string")
         if model != model.strip():

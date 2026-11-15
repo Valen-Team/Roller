@@ -48,8 +48,7 @@ def _sanitize_lock_values(value: Any, key_name: str = "") -> Any:
     redacted = redact_sensitive_values(value)
     if isinstance(redacted, dict):
         return {
-            key: _sanitize_lock_values(item, str(key))
-            for key, item in redacted.items()
+            key: _sanitize_lock_values(item, str(key)) for key, item in redacted.items()
         }
     if isinstance(redacted, list):
         return [_sanitize_lock_values(item, key_name) for item in redacted]
@@ -157,7 +156,9 @@ def _short(value: Any, limit: int = 160) -> str:
     return text if len(text) <= limit else f"{text[: limit - 3]}..."
 
 
-def _differences(recorded: Any, current: Any, path: str = "$", limit: int = 8) -> list[str]:
+def _differences(
+    recorded: Any, current: Any, path: str = "$", limit: int = 8
+) -> list[str]:
     if recorded == current:
         return []
     if limit <= 0:
@@ -172,9 +173,7 @@ def _differences(recorded: Any, current: Any, path: str = "$", limit: int = 8) -
                 rows.append(f"{child}: missing from current lock")
             else:
                 rows.extend(
-                    _differences(
-                        recorded[key], current[key], child, limit - len(rows)
-                    )
+                    _differences(recorded[key], current[key], child, limit - len(rows))
                 )
             if len(rows) >= limit:
                 break
@@ -196,9 +195,7 @@ def _differences(recorded: Any, current: Any, path: str = "$", limit: int = 8) -
             if len(rows) >= limit:
                 break
         return rows
-    return [
-        f"{path}: recorded={_short(recorded)}, current={_short(current)}"
-    ]
+    return [f"{path}: recorded={_short(recorded)}, current={_short(current)}"]
 
 
 def _comparable_lock(lock: Any) -> Any:

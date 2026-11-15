@@ -59,8 +59,10 @@ def _visible_text(message: dict[str, Any]) -> str:
     if not isinstance(content, list):
         return ""
     return "\n".join(
-        block["text"] for block in content
-        if isinstance(block, dict) and block.get("type") == "text"
+        block["text"]
+        for block in content
+        if isinstance(block, dict)
+        and block.get("type") == "text"
         and isinstance(block.get("text"), str)
     ).strip()
 
@@ -86,7 +88,8 @@ def _match_usage(
     if last is not None and last.matchable and usage.counts == last.counts:
         return "last_call"
     known = [
-        record.usage.counts for record in records
+        record.usage.counts
+        for record in records
         if record.usage is not None and record.usage.matchable
     ]
     if len(known) == len(records):
@@ -99,8 +102,10 @@ def _match_usage(
         components, reported_total = usage.counts[:-1], usage.counts[-1]
         latest_total = known[-1][-1]
         if (
-            any(components) and components == total[:-1]
-            and latest_total > 0 and reported_total == latest_total
+            any(components)
+            and components == total[:-1]
+            and latest_total > 0
+            and reported_total == latest_total
         ):
             return "turn_total"
     return None
@@ -168,7 +173,8 @@ class OpenClawDeliveryTracker:
     def _delivers_yielded_turn(self, latest: dict[str, Any], visible: str) -> bool:
         content = latest.get("content")
         yielded = isinstance(content, list) and any(
-            isinstance(block, dict) and block.get("type") == "toolCall"
+            isinstance(block, dict)
+            and block.get("type") == "toolCall"
             and block.get("name") == "sessions_yield"
             for block in content
         )
@@ -191,13 +197,18 @@ class OpenClawDeliveryTracker:
             return DeliveryDecision()
         if message.get("api") != "cli":
             usage = OpenClawUsage.parse(message.get("usage"))
-            self._providers.append(_ProviderRecord(
-                message, usage, usage.cost_usd if usage is not None else 0.0,
-            ))
+            self._providers.append(
+                _ProviderRecord(
+                    message,
+                    usage,
+                    usage.cost_usd if usage is not None else 0.0,
+                )
+            )
             self._latest = message
             self._delivered_text = (
                 _text(message, plain_only=False)
-                if _stop_reason(message) in {None, "stop", "end_turn"} else None
+                if _stop_reason(message) in {None, "stop", "end_turn"}
+                else None
             )
             emitted = _visible_text(message)
             if emitted:
@@ -207,9 +218,11 @@ class OpenClawDeliveryTracker:
         latest = self._latest
         visible = _text(message, plain_only=True)
         if (
-            latest is None or not _same_source(message, latest)
+            latest is None
+            or not _same_source(message, latest)
             or _stop_reason(latest) in {"error", "aborted"}
-            or visible is None or _stop_reason(message) not in {None, "stop", "end_turn"}
+            or visible is None
+            or _stop_reason(message) not in {None, "stop", "end_turn"}
         ):
             self._invalidate_delivery()
             return DeliveryDecision()
@@ -239,7 +252,8 @@ class OpenClawDeliveryTracker:
 
         additional_cost = (
             _credit_cost(source_rows, scope, usage.cost_usd)
-            if usage is not None else 0.0
+            if usage is not None
+            else 0.0
         )
         self._delivered_text = visible
         return DeliveryDecision(

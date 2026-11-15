@@ -167,16 +167,12 @@ categories:
                 binding.grade.env_names,
                 (),
             )
-            self.assertIn(
-                "OPENROUTER_API_KEY", binding.grade.optional_env_names
-            )
+            self.assertIn("OPENROUTER_API_KEY", binding.grade.optional_env_names)
             self.assertIn(
                 "PINCHBENCH_JUDGE_MAX_COMPLETION_TOKENS",
                 binding.grade.optional_env_names,
             )
-            self.assertEqual(
-                binding.metadata["prerequisites"], ["npm:@juppytt/fws"]
-            )
+            self.assertEqual(binding.metadata["prerequisites"], ["npm:@juppytt/fws"])
             self.assertEqual(len(task.setup_commands), 1)
             setup = task.setup_commands[0]
             self.assertIn("@juppytt/fws@0.4.4", setup)
@@ -215,11 +211,11 @@ categories:
             namespace: dict[str, object] = {}
             exec(binding.grade.code, namespace)  # noqa: S102 - validate exported grader
 
-        event_one = {
-            "choices": [{"delta": {"content": '{"scores":{"quality":'}}]
-        }
+        event_one = {"choices": [{"delta": {"content": '{"scores":{"quality":'}}]}
         event_two = {
-            "choices": [{"delta": {"content": "1.0},\"total\":1.0}"}, "finish_reason": "stop"}]
+            "choices": [
+                {"delta": {"content": '1.0},"total":1.0}'}, "finish_reason": "stop"}
+            ]
         }
         response = iter(
             [
@@ -276,12 +272,14 @@ categories:
             exec(binding.grade.code, namespace)  # noqa: S102 - validate exported grader
 
         event = {
-            "choices": [{
-                "delta": {
-                    "reasoning_content": '{"scores":{"quality":1.0},"total":1.0}'
-                },
-                "finish_reason": "stop",
-            }]
+            "choices": [
+                {
+                    "delta": {
+                        "reasoning_content": '{"scores":{"quality":1.0},"total":1.0}'
+                    },
+                    "finish_reason": "stop",
+                }
+            ]
         }
         response = iter([f"data: {json.dumps(event)}\n".encode(), b"data: [DONE]\n"])
         payload = namespace["_pinch_read_response"](response, True)
@@ -321,22 +319,28 @@ categories:
                         if self.calls == 1
                         else '{"scores":{"quality":0.8},"total":0.8}'
                     )
-                    return Response(json.dumps({
-                        "choices": [{"message": {"content": content}}]
-                    }).encode())
+                    return Response(
+                        json.dumps(
+                            {"choices": [{"message": {"content": content}}]}
+                        ).encode()
+                    )
 
             opener = Opener()
             judge_env = {name: "" for name in binding.grade.optional_env_names}
-            judge_env.update({
-                "OPENROUTER_API_KEY": "test-key",
-                "PINCHBENCH_JUDGE_RETRIES": "1",
-            })
-            with mock.patch.dict(namespace["_pinch_os"].environ, judge_env, clear=False), mock.patch.object(
-                namespace["_pinch_request"], "build_opener", return_value=opener
-            ), mock.patch.object(namespace["_pinch_time"], "sleep"):
-                scores, total, _, provenance = namespace["_pinch_judge"](
-                    [], str(root)
-                )
+            judge_env.update(
+                {
+                    "OPENROUTER_API_KEY": "test-key",
+                    "PINCHBENCH_JUDGE_RETRIES": "1",
+                }
+            )
+            with (
+                mock.patch.dict(namespace["_pinch_os"].environ, judge_env, clear=False),
+                mock.patch.object(
+                    namespace["_pinch_request"], "build_opener", return_value=opener
+                ),
+                mock.patch.object(namespace["_pinch_time"], "sleep"),
+            ):
+                scores, total, _, provenance = namespace["_pinch_judge"]([], str(root))
 
         self.assertEqual(opener.calls, 2)
         self.assertEqual(scores, {"quality": 0.8})
@@ -370,16 +374,15 @@ categories:
                     request_payload["timeout"] = timeout
                     return Response()
 
-            judge_env = {
-                name: "" for name in binding.grade.optional_env_names
-            }
+            judge_env = {name: "" for name in binding.grade.optional_env_names}
             judge_env["OPENROUTER_API_KEY"] = "test-key"
-            with mock.patch.dict(namespace["_pinch_os"].environ, judge_env, clear=False), mock.patch.object(
-                namespace["_pinch_request"], "build_opener", return_value=Opener()
+            with (
+                mock.patch.dict(namespace["_pinch_os"].environ, judge_env, clear=False),
+                mock.patch.object(
+                    namespace["_pinch_request"], "build_opener", return_value=Opener()
+                ),
             ):
-                scores, total, _, provenance = namespace["_pinch_judge"](
-                    [], str(root)
-                )
+                scores, total, _, provenance = namespace["_pinch_judge"]([], str(root))
 
         self.assertEqual(scores, {"quality": 1.0})
         self.assertEqual(total, 1.0)
@@ -420,8 +423,11 @@ categories:
             opener = FailingOpener()
             judge_env = {name: "" for name in binding.grade.optional_env_names}
             judge_env["OPENROUTER_API_KEY"] = "test-key"
-            with mock.patch.dict(namespace["_pinch_os"].environ, judge_env, clear=False), mock.patch.object(
-                namespace["_pinch_request"], "build_opener", return_value=opener
+            with (
+                mock.patch.dict(namespace["_pinch_os"].environ, judge_env, clear=False),
+                mock.patch.object(
+                    namespace["_pinch_request"], "build_opener", return_value=opener
+                ),
             ):
                 _, total, notes, provenance = namespace["_pinch_judge"]([], str(root))
 
@@ -430,8 +436,13 @@ categories:
         self.assertIn("after 1 attempt(s)", notes)
         self.assertEqual(provenance["judge_error"], notes)
 
-        with mock.patch.dict(namespace["_pinch_os"].environ, judge_env, clear=False), mock.patch.object(
-            namespace["_pinch_request"], "build_opener", return_value=FailingOpener()
+        with (
+            mock.patch.dict(namespace["_pinch_os"].environ, judge_env, clear=False),
+            mock.patch.object(
+                namespace["_pinch_request"],
+                "build_opener",
+                return_value=FailingOpener(),
+            ),
         ):
             result = namespace["roller_grade"]([], str(root))
         self.assertFalse(result["score_eligible"])
@@ -661,7 +672,9 @@ Complete the demo.
             root = self._root(temporary)
             adapter = SkillsBenchAdapter()
             self.assertEqual(
-                adapter.load(root, variant="without-skills")[0]["bench"]["metadata"]["variant"],
+                adapter.load(root, variant="without-skills")[0]["bench"]["metadata"][
+                    "variant"
+                ],
                 "no-skill",
             )
             with self.assertRaises(BenchFormatError):
@@ -669,7 +682,9 @@ Complete the demo.
             with self.assertRaises(BenchFormatError):
                 adapter.load(root, variant="unknown")
 
-    def test_timeout_multiplier_scales_skillsbench_agent_and_verifier_budgets(self) -> None:
+    def test_timeout_multiplier_scales_skillsbench_agent_and_verifier_budgets(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             row = SkillsBenchAdapter().load(
                 self._root(temporary), timeout_multiplier=1.5
@@ -708,7 +723,9 @@ Complete the demo.
             60,
         )
 
-    def test_aggregate_excludes_ineligible_timeout_and_infrastructure_rows(self) -> None:
+    def test_aggregate_excludes_ineligible_timeout_and_infrastructure_rows(
+        self,
+    ) -> None:
         rows = [
             {
                 "task_id": "pass",
@@ -826,7 +843,7 @@ BASH
         with tempfile.TemporaryDirectory() as temporary:
             dockerfile = Path(temporary) / "Dockerfile"
             dockerfile.write_text(
-                'FROM python:3.12\nRUN pip install \\\n'
+                "FROM python:3.12\nRUN pip install \\\n"
                 '    "setuptools<81" \\\n'
                 "    pycbc==2.8.5\n",
                 encoding="utf-8",
@@ -888,15 +905,10 @@ RUN echo tar -xzf is documentation
 
         portable = _portable_tar_extraction(source)
 
+        self.assertIn("tar --no-same-owner --no-same-permissions -xzf", portable)
+        self.assertIn("| tar --no-same-owner --no-same-permissions -xz", portable)
         self.assertIn(
-            "tar --no-same-owner --no-same-permissions -xzf", portable
-        )
-        self.assertIn(
-            "| tar --no-same-owner --no-same-permissions -xz", portable
-        )
-        self.assertIn(
-            "    tar --no-same-owner --no-same-permissions -xzf "
-            "/tmp/continued.tar.gz",
+            "    tar --no-same-owner --no-same-permissions -xzf /tmp/continued.tar.gz",
             portable,
         )
         self.assertIn("tar --no-same-owner -xf /tmp/already-safe.tar", portable)

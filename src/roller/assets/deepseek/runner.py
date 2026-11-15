@@ -3,6 +3,7 @@
 A private Unix socket keeps one SDK/runtime process (and its Bash PTY) alive
 across Roller turns. The host owns the hard deadline and container cleanup.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,10 +23,13 @@ SOCKET = str(STATE / "runner.sock")
 
 def check():
     from deepseek_harness_runtime import bundled_runtime_path
+
     for package in ("deepseek-harness-sdk", "deepseek-harness-runtime-bin"):
         installed = version(package)
         if installed != VERSION:
-            raise RuntimeError(f"{package} version mismatch: expected {VERSION}, got {installed}")
+            raise RuntimeError(
+                f"{package} version mismatch: expected {VERSION}, got {installed}"
+            )
     if not os.access(bundled_runtime_path(), os.X_OK):
         raise RuntimeError("DeepSeek native runtime is not executable")
     return VERSION
@@ -50,29 +54,55 @@ def write_result(value):
 
 def serve(config):
     from deepseek_harness import DeepSeekHarness
+
     check()
     os.environ["DSH_SYSTEM_PROMPT"] = config["system_prompt"]
     os.environ["DSH_CONTEXT_WINDOW"] = str(config["context_length"])
     os.environ["ROLLER_DEEPSEEK_MODEL"] = config["model"]
     os.environ["ROLLER_DEEPSEEK_OUTPUT_TOKENS"] = str(config["output_tokens"])
-    os.environ["ROLLER_DEEPSEEK_INPUT_MODALITIES"] = ",".join(config["input_modalities"])
-    journal({"type": "metadata", "schema": "roller.deepseek-events/v1", "version": VERSION,
-             "profile": config["profile"], "session_id": config["session_id"], "model": config["model"]})
+    os.environ["ROLLER_DEEPSEEK_INPUT_MODALITIES"] = ",".join(
+        config["input_modalities"]
+    )
+    journal(
+        {
+            "type": "metadata",
+            "schema": "roller.deepseek-events/v1",
+            "version": VERSION,
+            "profile": config["profile"],
+            "session_id": config["session_id"],
+            "model": config["model"],
+        }
+    )
     # sdk-minimal reads DSH_SYSTEM_PROMPT itself. Other profiles build a native
     # prompt with their tool instructions; append the task contract to it.
     patches = [str(STATE / "roller.patch.yml")]
     if config["profile"] != "sdk-minimal":
         prompt_patch = STATE / "task-prompt.patch.yml"
-        prompt_patch.write_text(json.dumps([{"id": "system-prompt", "config": {
-            "personaSuffix": "Your working directory is {{cwd}}.\n\n" + config["system_prompt"]
-        }}]), encoding="utf-8")
+        prompt_patch.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "system-prompt",
+                        "config": {
+                            "personaSuffix": "Your working directory is {{cwd}}.\n\n"
+                            + config["system_prompt"]
+                        },
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
         patches.append(str(prompt_patch))
     # Keep initialization errors reviewable even when there is no native turn.
     with DeepSeekHarness(
-        model=config["model"], provider="deepseek-official", cwd=os.getcwd(),
-        profile=config["profile"], dsh_home="/roller/deepseek-home",
+        model=config["model"],
+        provider="deepseek-official",
+        cwd=os.getcwd(),
+        profile=config["profile"],
+        dsh_home="/roller/deepseek-home",
         patches=tuple(patches),
-        reasoning_effort=config["thinking"], max_tokens=config["output_tokens"],
+        reasoning_effort=config["thinking"],
+        max_tokens=config["output_tokens"],
         initialize_timeout_seconds=min(60, config["timeout_seconds"]),
     ) as harness:
         session = harness.start_session(config["session_id"])
@@ -85,17 +115,36 @@ def serve(config):
                 with connection, connection.makefile("r", encoding="utf-8") as stream:
                     payload = json.loads(stream.readline())
                     try:
-                        result = session.run(payload["message"], on_notification=lambda n: journal(
-                            {"type": "notification", "method": n.method, "payload": n.payload}))
+                        result = session.run(
+                            payload["message"],
+                            on_notification=lambda n: journal(
+                                {
+                                    "type": "notification",
+                                    "method": n.method,
+                                    "payload": n.payload,
+                                }
+                            ),
+                        )
                         limit_path = STATE / "limit.json"
                         if limit_path.exists():
                             limit = json.loads(limit_path.read_text())
                             if limit["turn"] == payload["turn"]:
                                 raise RuntimeError(limit["error"])
-                        if result.finish_reason != "completed" or not result.final_response.strip():
-                            reason = next((e["data"]["reason"] for e in reversed(result.events)
-                                           if e.get("type") == "turn/end"), result.finish_reason)
-                            raise RuntimeError(f"DeepSeek turn did not complete: {json.dumps(reason, ensure_ascii=False)}")
+                        if (
+                            result.finish_reason != "completed"
+                            or not result.final_response.strip()
+                        ):
+                            reason = next(
+                                (
+                                    e["data"]["reason"]
+                                    for e in reversed(result.events)
+                                    if e.get("type") == "turn/end"
+                                ),
+                                result.finish_reason,
+                            )
+                            raise RuntimeError(
+                                f"DeepSeek turn did not complete: {json.dumps(reason, ensure_ascii=False)}"
+                            )
                         value = {"ok": True, "content": result.final_response}
                     except Exception as exc:
                         value = {"ok": False, "error": str(exc)}
@@ -109,14 +158,20 @@ def send(config):
     process = None
     if not Path(SOCKET).exists():
         with (STATE / "runtime.log").open("a") as log:
-            process = subprocess.Popen([sys.executable, __file__, "--serve", str(STATE / "turn.json")],
-                                       stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                                       start_new_session=True)
+            process = subprocess.Popen(
+                [sys.executable, __file__, "--serve", str(STATE / "turn.json")],
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
     deadline = time.monotonic() + config["timeout_seconds"]
     with socket.socket(socket.AF_UNIX) as client:
         while True:
             if process is not None and process.poll() is not None:
-                raise RuntimeError("DeepSeek runtime startup failed; see the native journal and rollout log")
+                raise RuntimeError(
+                    "DeepSeek runtime startup failed; see the native journal and rollout log"
+                )
             try:
                 client.connect(SOCKET)
                 break
@@ -150,7 +205,13 @@ def main():
     except Exception as exc:
         if not args.check:
             journal({"type": "runner_error", "error": str(exc)})
-            write_result({"ok": False, "error": str(exc), "timeout": isinstance(exc, TimeoutError)})
+            write_result(
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "timeout": isinstance(exc, TimeoutError),
+                }
+            )
         print(redact({"error": str(exc)}), file=sys.stderr)
         return 1
 
