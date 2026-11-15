@@ -14,7 +14,7 @@ from roller.benches.grading import (
 )
 from roller.benches.qwenclaw.task_parser import QwenClawTask
 from roller.benches.qwenclaw.workspace import workspace_compatibility_script
-from roller.benches.transcripts import grader_messages, session_trajectory
+from roller.benches.transcripts import grader_messages
 
 IMPORT_LINE_RE = re.compile(
     r"^(?P<indent>[ \t]*)import\s+(?P<names>[A-Za-z0-9_., \t]+)$",

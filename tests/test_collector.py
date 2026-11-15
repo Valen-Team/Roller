@@ -985,15 +985,21 @@ class LaunchIntervalTests(unittest.TestCase):
     def test_launches_are_spaced_across_workers(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             state = self._state(delay=0.6)
+            began = time.monotonic()
             results = self._collect(
                 Path(temporary) / "run", state, make_requests(),
                 parallel=4, launch_interval=0.15,
             )
 
         self.assertEqual([result["status"] for result in results], ["ok"] * 4)
-        starts = sorted(start for start, _ in state["starts"])
-        gaps = [later - earlier for earlier, later in zip(starts, starts[1:])]
-        self.assertTrue(all(gap >= 0.13 for gap in gaps), gaps)
+        # The gate schedules launch k no earlier than k intervals after the
+        # first. A worker that wakes late starts later, never earlier, so the
+        # offsets hold on a loaded machine where the gaps between starts do not.
+        offsets = [start - began for start in sorted(start for start, _ in state["starts"])]
+        self.assertTrue(
+            all(offset >= index * 0.15 - 0.02 for index, offset in enumerate(offsets)),
+            offsets,
+        )
         # Spacing delays launches; it does not cap concurrency.
         self.assertEqual(state["max_active"], 4)
 

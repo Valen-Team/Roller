@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 from roller.capture import (CallRecorder, apply_capture_retention, read_jsonl,
                             recover_capture_retention, validate_capture)
-from roller.claude_capture import anthropic_response, finalize_claude_capture
+from roller.claude_capture import finalize_claude_capture
+from roller.model_protocols import anthropic_response
 from roller.claude_code_actf import claude_code_events_to_actf
 from roller.sft import SFTConversionError, actf_to_sft
 from roller.storage import write_jsonl

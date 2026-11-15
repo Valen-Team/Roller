@@ -75,7 +75,7 @@ class CoverageExamplesTests(unittest.TestCase):
         payload = json.loads(output.read_text())
         self.assertEqual(len(payload["tasks"]), 4 * len(HARNESS_NAMES))
         for row in payload["tasks"]:
-            self.assertEqual(Path(row["file_root"]), self.coverage / "fixtures")
+            self.assertEqual(Path(row["file_root"]), (self.coverage / "fixtures").resolve())
         self.run_script("validate_merged.py", "--tasks", output)
 
     def test_subset_binds_all_simulator_pairs_and_preserves_inheritance(self):

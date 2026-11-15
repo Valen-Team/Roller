@@ -68,5 +68,15 @@ replacement = 'href="https://github.com/Valen-Team/Roller/blob/v$HFPR_VERSION/\1
 pattern = '\]\((?!https?://|#)([^)]+)\)'
 replacement = '](https://github.com/Valen-Team/Roller/blob/v$HFPR_VERSION/\1)'
 
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+# Pyflakes: unused imports and names, undefined names.
+select = ["F"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Package facades re-export names.
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

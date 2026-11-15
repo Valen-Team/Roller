@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
-from roller.models import ContextFile, InputFile, RunRequest, Task, TaskBundle
+from roller.models import RunRequest, Task, TaskBundle
 from roller.storage import atomic_write_json, safe_component
 
 

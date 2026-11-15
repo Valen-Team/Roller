@@ -8,7 +8,6 @@ import re
 
 from roller.capture import read_jsonl, native_directory
 from roller.capture_protocol import NativeCapture, finalize_native_capture
-from roller.model_protocols import anthropic_response
 
 
 def _participant(event: dict[str, Any], source: str) -> str:
