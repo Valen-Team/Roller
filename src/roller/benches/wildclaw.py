@@ -18,9 +18,10 @@ import math
 import os
 import re
 import shlex
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from roller.benches.base import (
     BenchAdapter,

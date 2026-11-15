@@ -7,7 +7,7 @@ Pi and DeepSeek's bundled profiles have no delegation tool or extensions.
 from pathlib import Path
 from typing import Any
 
-from roller.capture import read_jsonl, native_directory
+from roller.capture import native_directory, read_jsonl
 from roller.capture_protocol import NativeCapture
 
 
@@ -51,7 +51,7 @@ def read_bridge_native(directory: Path, harness: str) -> NativeCapture:
         }
         native.session_owners.setdefault(sid, set()).add(pid)
         count = 0
-        for index, row in enumerate(rows):
+        for row in rows:
             if row.get("type") == "runner_error":
                 native.errors.append(f"{path.name}: native runner error")
             if harness == "hermes":

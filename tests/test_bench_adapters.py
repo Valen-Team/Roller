@@ -12,13 +12,13 @@ from roller.benches import BenchFormatError, binding_from_task_row
 from roller.benches.base import BenchBinding, GradeSpec
 from roller.benches.grading import GradedHarness, prepare_benchmark_workspace
 from roller.benches.pinchbench import PinchBenchAdapter
-from roller.benches.wildclaw import WildClawBenchAdapter
 from roller.benches.skillsbench import (
     SkillsBenchAdapter,
     _portable_heredocs,
     _portable_tar_extraction,
     _qualified_from_images,
 )
+from roller.benches.wildclaw import WildClawBenchAdapter
 from roller.bundles import TaskBundleStore
 from roller.harnesses.base import InteractiveHarness
 from roller.models import RunRequest, Task

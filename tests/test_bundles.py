@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-from collections import Counter
 import json
 import stat
 import tempfile
 import tracemalloc
 import unittest
+from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 

@@ -21,7 +21,6 @@ from roller.harnesses.gateway_ports import (
 from roller.models import HarnessResult
 from roller.run_lock import ensure_run_lock
 
-
 # Far from the default range, where real runs on this host reserve ports.
 TEST_GATEWAY_PORT = 45000
 

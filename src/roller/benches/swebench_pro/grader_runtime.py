@@ -55,7 +55,7 @@ class SWEBenchProGradedHarness(GradedHarness):
             f"{BASELINE_REF} -- ."
         )
         try:
-            result = getattr(self.inner, "runtime").run(
+            result = self.inner.runtime.run(
                 [
                     "exec",
                     "-w",

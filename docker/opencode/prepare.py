@@ -2,11 +2,11 @@
 
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 version, registry = sys.argv[1:]
 with tempfile.TemporaryDirectory(prefix="opencode-build-") as temporary:

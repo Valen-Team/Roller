@@ -17,6 +17,7 @@ from roller.benches.base import (
     binding_from_task_row,
 )
 from roller.benches.pinchbench import PinchBenchAdapter
+from roller.benches.qwenclaw import QwenClawBenchAdapter
 from roller.benches.report import (
     SCORE_FILE,
     format_report,
@@ -24,7 +25,6 @@ from roller.benches.report import (
     read_scores,
     sample_score,
 )
-from roller.benches.qwenclaw import QwenClawBenchAdapter
 from roller.benches.skillsbench import SkillsBenchAdapter
 from roller.benches.swebench_pro import SWEBenchProAdapter
 from roller.benches.wildclaw import WildClawBenchAdapter

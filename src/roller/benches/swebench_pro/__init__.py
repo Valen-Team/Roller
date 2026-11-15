@@ -18,9 +18,9 @@ from roller.benches.swebench_pro.constants import (
     WORKSPACE_CONTAINER_PATH,
 )
 from roller.benches.swebench_pro.grader_runtime import (
+    _GRADER_SOURCE,
     ContainerGrader,
     SWEBenchProGradedHarness,
-    _GRADER_SOURCE,
     _strip_binary_hunks,
 )
 from roller.benches.swebench_pro.images import (

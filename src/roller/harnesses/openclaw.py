@@ -10,16 +10,17 @@ import subprocess
 import tempfile
 import time
 import uuid
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from roller.actf import convert_openclaw_trace
-from roller.capture_runtime import CaptureRuntime
 from roller.artifacts import ArtifactCollectionResult
+from roller.capture_runtime import CaptureRuntime
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
 from roller.harnesses.config_overrides import (
     ConfigAssignment,
@@ -27,7 +28,6 @@ from roller.harnesses.config_overrides import (
 )
 from roller.harnesses.container import (
     CONTEXT_CONTAINER_PATH,
-    ENV_NAME as ENV_NAME_RE,
     INPUTS_CONTAINER_PATH,
     OUTPUTS_CONTAINER_PATH,
     PROXY_ENV_NAMES,
@@ -35,6 +35,9 @@ from roller.harnesses.container import (
     build_provenance,
     docker_run_args,
     output_collection_metadata,
+)
+from roller.harnesses.container import (
+    ENV_NAME as ENV_NAME_RE,
 )
 from roller.harnesses.docker import DockerRuntime, remove_container
 from roller.models import HarnessResult, RunRequest

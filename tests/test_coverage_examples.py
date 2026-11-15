@@ -5,16 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-
+from pathlib import Path
 
 from roller.harness_registry import HARNESS_NAMES
-
 
 PROJECT = Path(__file__).resolve().parents[1]
 

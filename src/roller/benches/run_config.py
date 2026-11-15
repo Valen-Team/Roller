@@ -6,17 +6,17 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
 
 from roller.harness_registry import HARNESS_NAMES
 from roller.thinking import normalize_thinking
-
 
 BENCH_RUN_SCHEMA = "roller.bench-run/v1"
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

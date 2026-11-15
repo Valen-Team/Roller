@@ -29,8 +29,8 @@ from roller.benches.swebench_pro.constants import (
     WORKSPACE_CONTAINER_PATH,
 )
 from roller.benches.swebench_pro.grader_runtime import (
-    SWEBenchProGradedHarness,
     _GRADER_SOURCE,
+    SWEBenchProGradedHarness,
 )
 from roller.benches.swebench_pro.images import ensure_harness_image
 from roller.benches.swebench_pro.report import aggregate

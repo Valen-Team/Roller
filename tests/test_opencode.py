@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import contextlib
-from copy import deepcopy
 import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from roller.cli import _build_parser, _collect
@@ -21,13 +21,13 @@ from roller.harnesses.opencode import (
     _ensure_local_proxy_bypass,
     _system_prompt,
 )
+from roller.models import RunRequest, Task
 from roller.opencode_actf import (
     convert_opencode_trace,
     extract_opencode_usage,
     native_messages,
     opencode_events_to_actf,
 )
-from roller.models import RunRequest, Task
 from roller.sft import SFTConversionError, actf_to_sft
 
 TOOL = {

@@ -16,6 +16,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO
+
 from roller.capture_states import (
     CallExecutionStatus,
     CaptureStatus,

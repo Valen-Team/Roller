@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
-from roller.models import RunRequest
 from roller.capture import validate_capture
 from roller.compaction_sft import (
     SFT_SEGMENTS_DIR,
@@ -18,6 +18,7 @@ from roller.harness_registry import (
     compaction_mode,
     requires_cache_trace,
 )
+from roller.models import RunRequest
 from roller.sft import actf_to_sft, validate_sft_record
 
 

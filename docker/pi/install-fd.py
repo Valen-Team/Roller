@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import io
-from pathlib import Path
 import platform
 import tarfile
+from pathlib import Path
 from urllib.request import urlopen
-
 
 VERSION = "10.2.0"
 CHECKSUMS = {

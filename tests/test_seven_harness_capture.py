@@ -1,27 +1,26 @@
-import json
 import gzip
-from pathlib import Path
+import json
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
-
-from roller.harnesses.codex import CodexConfig, CodexHarness
 
 from roller.bridge_capture import read_bridge_native
 from roller.capture import CallRecorder, read_jsonl, validate_capture
 from roller.capture_protocol import NativeCapture, finalize_capture
-from roller.codex_capture import read_codex_native, retain_root_tools
-from roller.codex_tools import tool_snapshot, read_tool_capture
 from roller.capture_runtime import CaptureRuntime
+from roller.codex_capture import read_codex_native, retain_root_tools
+from roller.codex_tools import read_tool_capture, tool_snapshot
+from roller.harnesses.codex import CodexConfig, CodexHarness
 from roller.model_protocols import (
     decode_response,
     response_finished,
     tool_call_ids,
     tool_result_ids,
 )
-from roller.wire_trace import WireTraceProxy
 from roller.openclaw_capture import read_openclaw_native
 from roller.storage import write_jsonl
+from roller.wire_trace import WireTraceProxy
 
 
 class SevenHarnessCaptureTests(unittest.TestCase):

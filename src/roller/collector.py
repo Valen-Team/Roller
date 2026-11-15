@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import fnmatch
-import json
 import inspect
+import json
 import logging
 import math
 import queue
@@ -10,13 +10,13 @@ import re
 import shutil
 import threading
 import time
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
 
-from roller.harnesses.base import Harness
 from roller.capture import (
     _safe_file,
     read_jsonl,
@@ -29,6 +29,7 @@ from roller.compaction_sft import (
     has_main_compaction,
 )
 from roller.harness_registry import allows_raw_only_actf
+from roller.harnesses.base import Harness
 from roller.integrity import (
     has_legacy_claude_sidechain,
     keeps_thinking,

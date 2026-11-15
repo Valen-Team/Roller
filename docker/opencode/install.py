@@ -4,10 +4,10 @@ import base64
 import hashlib
 import io
 import json
-from pathlib import Path
 import platform
 import sys
 import tarfile
+from pathlib import Path
 from urllib.request import urlopen
 
 version, registry = sys.argv[1:]

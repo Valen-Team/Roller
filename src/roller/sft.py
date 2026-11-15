@@ -3,9 +3,10 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from roller.codex_tools import tool_index
 from roller.storage import atomic_write_json

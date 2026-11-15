@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 from roller.actf import convert_openclaw_trace
 from roller.collector import CollectionConfig, Collector

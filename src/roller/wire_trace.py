@@ -12,24 +12,24 @@ OpenAI-compatible HTTP layer, it works for harness versions that honour
 
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
 import io
 import json
 import threading
 import time
 import zlib
+from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 from urllib import request as urllib_request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from roller.response_metadata import ResponseMetadata
 
-from roller.codex_tools import tool_snapshot
 from roller.capture import CallRecorder
+from roller.codex_tools import tool_snapshot
+from roller.response_metadata import ResponseMetadata
 from roller.tool_id_identity import ToolIdRegistry
-
 
 HOP_BY_HOP_HEADERS = {
     "connection",

@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any
 
+from roller.harness_registry import HARNESS_NAMES
 from roller.models import (
     ContainerImageBuild,
     ContextFile,
@@ -14,7 +16,6 @@ from roller.models import (
     Task,
     UserSimulatorSpec,
 )
-from roller.harness_registry import HARNESS_NAMES
 from roller.native_images import IMAGE_MEDIA_TYPES, image_media_type
 from roller.thinking import normalize_thinking
 

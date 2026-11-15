@@ -12,10 +12,9 @@ from typing import Any
 from roller.harnesses.base import Harness, InteractiveHarness
 from roller.models import HarnessResult, RunRequest, Task, UserSimulatorSpec
 from roller.sft import write_sft
-from roller.trajectory_audit import record_training_audits
 from roller.storage import atomic_write_json
+from roller.trajectory_audit import record_training_audits
 from roller.usage import ZERO_USAGE
-
 
 CONVERSATION_SCHEMA = "roller.conversation/v1"
 PARTICIPANT_SCHEMA = "roller.participant/v1"

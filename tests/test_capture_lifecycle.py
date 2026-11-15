@@ -1,9 +1,9 @@
 """Lifecycle regressions: terminal output is not completion delivery evidence."""
 
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from roller.capture import CallRecorder, read_jsonl, validate_capture
 from roller.capture_protocol import finalize_capture

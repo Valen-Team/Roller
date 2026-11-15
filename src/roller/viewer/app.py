@@ -7,12 +7,13 @@ import logging
 import mimetypes
 import threading
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from roller.sft import SFTConversionError, _image_data_uri

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Final
 
-
 # These are OpenClaw's user-facing logical levels, not the raw values accepted
 # by every provider API. OpenClaw's model profile owns the provider-specific
 # validation and mapping (for example, GPT maps ``off`` to API effort ``none``).

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from roller.collector import CollectionConfig, Collector
 from roller.compaction_sft import (
     _assistant_signature,
     _responses_item,
@@ -15,7 +16,6 @@ from roller.compaction_sft import (
     export_compaction_segments,
     has_main_compaction,
 )
-from roller.collector import CollectionConfig, Collector
 from roller.integrity import validate_resumable_sample
 from roller.models import HarnessResult, RunRequest, Task
 from roller.sft import SFTConversionError, validate_sft_record

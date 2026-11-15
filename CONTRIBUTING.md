@@ -20,8 +20,11 @@ CI runs the following on every pull request. Run them locally before you push:
 
 ```bash
 python -m pytest        # unit tests, about two minutes
-ruff check              # pyflakes rules; install with: python -m pip install ruff
+ruff check              # lint; install with: python -m pip install ruff
+ruff format --check     # formatting; drop --check to apply it
 ```
+
+`pre-commit install` sets up a hook that runs both ruff commands on every commit, using [.pre-commit-config.yaml](.pre-commit-config.yaml).
 
 The tests run on Linux and macOS without Docker or network access. Tests that execute real containers are skipped unless their environment variables are set.
 

@@ -7,13 +7,13 @@ The append-only journal lives separately from Hermes' compressible history.
 from __future__ import annotations
 
 import argparse
-from copy import deepcopy
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import threading
 from contextvars import ContextVar
+from copy import deepcopy
+from datetime import datetime, timezone
+from pathlib import Path
 
 DELEGATE_CALL = ContextVar("roller_delegate_call", default=None)
 

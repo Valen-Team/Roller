@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any
 
-
 TOKEN_FIELDS = ("input", "output", "cacheRead", "cacheWrite", "totalTokens")
 _ALIASES = {"input": "input_tokens", "output": "output_tokens"}
 TokenCounts = tuple[int | float, ...]

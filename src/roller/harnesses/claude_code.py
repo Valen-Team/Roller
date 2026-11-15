@@ -8,10 +8,11 @@ import shutil
 import subprocess
 import time
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from roller.artifacts import ArtifactCollectionResult
@@ -20,14 +21,18 @@ from roller.claude_code_actf import convert_claude_code_trace
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
 from roller.harnesses.container import (
     CONTEXT_CONTAINER_PATH,
-    ENV_NAME as ENV_NAME_RE,
     INPUTS_CONTAINER_PATH,
     OUTPUTS_CONTAINER_PATH,
-    PROXY_ENV_NAMES as COMMON_ENV_NAMES,
     ContainerCommands,
     build_provenance,
     docker_run_args,
     output_collection_metadata,
+)
+from roller.harnesses.container import (
+    ENV_NAME as ENV_NAME_RE,
+)
+from roller.harnesses.container import (
+    PROXY_ENV_NAMES as COMMON_ENV_NAMES,
 )
 from roller.harnesses.docker import DockerRuntime, remove_container
 from roller.models import HarnessResult, RunRequest
@@ -70,7 +75,7 @@ def normalize_anthropic_base_url(value: str) -> str:
 
     try:
         parsed = urlsplit(value.strip())
-        parsed.port
+        parsed.port  # noqa: B018 - reading it raises for an invalid port
     except ValueError as exc:
         raise ValueError("Anthropic API base must be an absolute http(s) URL") from exc
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:

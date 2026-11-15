@@ -5,15 +5,15 @@ from __future__ import annotations
 
 import argparse
 import copy
-from dataclasses import replace
 import fnmatch
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PROJECT = ROOT.parents[1]
@@ -530,4 +530,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

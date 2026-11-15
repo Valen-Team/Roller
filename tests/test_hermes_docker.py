@@ -7,15 +7,15 @@ ROLLER_HERMES_DOCKER_TEST=1 PYTHONPATH=src python -m unittest discover \
 from __future__ import annotations
 
 import contextlib
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 import os
-from pathlib import Path
 import shlex
 import tempfile
 import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch
 
 from roller.cli import _build_parser, _collect

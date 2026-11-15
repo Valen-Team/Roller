@@ -7,13 +7,14 @@ import argparse
 import copy
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parents[1] / "src"))
-from roller.tasks import load_tasks
 from suite import DEFAULT_MODELS, HARNESSES, normalized, select
+
+from roller.tasks import load_tasks
 
 
 def main():
