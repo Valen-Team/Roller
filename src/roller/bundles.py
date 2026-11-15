@@ -557,11 +557,14 @@ class TaskBundleStore:
                     digest = record["sha256"]
                     blob = blobs / digest
                     if not blob.exists():
-                        blob.parent.mkdir(parents=True, exist_ok=True)
+                        # Source may have been private; keep the archive owner-only.
+                        blobs.mkdir(parents=True, exist_ok=True)
+                        for directory in (blobs.parent, blobs):
+                            directory.chmod(0o700)
                         fd, temporary = tempfile.mkstemp(prefix=f".{digest}.", dir=blob.parent)
                         os.close(fd)
                         shutil.copyfile(bundle.context_root / record["logical_path"], temporary)
-                        os.chmod(temporary, 0o444)
+                        os.chmod(temporary, 0o400)
                         os.replace(temporary, blob)
                     files.append({**record, "blob": f"context/sha256/{digest}"})
                 declarations.append({**declaration, "files": files})

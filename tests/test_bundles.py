@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections import Counter
 import json
+import stat
 import tempfile
 import tracemalloc
 import unittest
@@ -150,6 +151,8 @@ class TaskBundleTests(unittest.TestCase):
             none_digest = hashlib.sha256(b"not captured").hexdigest()
             blob = destination / "context" / "sha256" / full_digest
             self.assertEqual(blob.read_text(encoding="utf-8"), "shared full")
+            self.assertEqual(stat.S_IMODE(blob.stat().st_mode), 0o400)
+            self.assertEqual(stat.S_IMODE(blob.parent.stat().st_mode), 0o700)
             self.assertEqual(
                 sorted(path.name for path in blob.parent.iterdir()), [full_digest]
             )
