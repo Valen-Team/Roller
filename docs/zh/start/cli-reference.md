@@ -98,7 +98,7 @@ roller collect ... --parallel 24 --launch-interval 8
 | --- | --- | --- |
 | `--output DIR` | `runs` | 设置所有 run 根目录的父目录 |
 | `--run-name NAME` | UTC 时间名 | 设置本次 run 的目录名 |
-| `--dry-run` | 关闭 | 检查 task、文件和运行计划，不启动 Docker |
+| `--dry-run` | 关闭 | 检查 task、文件和运行计划，不启动 Docker，也不写入任何文件。每条计划中的 rollout 会列出正式运行将记录的 bundle digest |
 | `--resume` | 关闭 | 继续同一个 run，并跳过产物完整的成功 sample，详见第 6 节 |
 
 ### 3.4 兼容与调试

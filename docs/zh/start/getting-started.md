@@ -112,7 +112,7 @@ roller collect \
   --dry-run
 ```
 
-Dry-run 在正式采集前检查 Roller 能否正确读取 task 和参数，并预览即将执行的 rollout。Dry-run 不启动容器、不调用模型 API，也不生成 run 结果。确认无报错后，再执行正式采集。
+Dry-run 在正式采集前检查 Roller 能否正确读取 task 和参数，并预览即将执行的 rollout。Dry-run 不启动容器、不调用模型 API，也不写入任何文件；它只读取一遍输入完成校验，并列出正式运行将记录的 bundle digest。确认无报错后，再执行正式采集。
 
 ## 6. 正式采集
 
