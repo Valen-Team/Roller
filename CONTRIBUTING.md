@@ -57,6 +57,10 @@ python -m pip install -r docs/requirements-docs.txt
 cd docs && make html
 ```
 
+## Code of conduct
+
+Participation in this project is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Security
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md), not in a public issue.

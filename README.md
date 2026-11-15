@@ -352,7 +352,7 @@ python -m pytest
 ruff check
 ```
 
-[CONTRIBUTING.md](CONTRIBUTING.md) describes the conventions for tests, documentation and the run lock, and [CHANGELOG.md](CHANGELOG.md) lists the changes in each release. Report a vulnerability as described in [SECURITY.md](SECURITY.md).
+[CONTRIBUTING.md](CONTRIBUTING.md) describes the conventions for tests, documentation and the run lock, and [CHANGELOG.md](CHANGELOG.md) lists the changes in each release. Report a vulnerability as described in [SECURITY.md](SECURITY.md). Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ### Contributors
 
