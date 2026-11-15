@@ -1,152 +1,144 @@
 # SWE-Bench Pro
 
-[Documentation home](../index.md) · [Bench integration and scoring](bench-format.md) · [CLI reference](../start/cli-reference.md)
+[Documentation](../index.md) · [Bench integration and scoring](bench-format.md) · [CLI reference](../start/cli-reference.md)
 
-Evaluation report:
-[DeepSeek V4 Pro fixed-first-100 results (2026-09-19)](swebench-pro-evaluation-2026-09-19.md).
+Roller runs the 731 tasks from 11 repositories in the public SWE-Bench Pro test split. It reuses
+the official instance images, `run_script.sh`, `parser.py`, the fail-to-pass and pass-to-pass
+test sets, and the resolved criterion. The upstream repository is
+<https://github.com/scaleapi/SWE-bench_Pro-os>.
 
-Roller supports all 731 tasks and 11 repositories in the public SWE-Bench Pro
-test split. It reuses the official Docker images, `run_script.sh`, `parser.py`,
-F2P/P2P sets, and resolved criterion.
-Upstream: <https://github.com/scaleapi/SWE-bench_Pro-os>.
-
-## 1. Data and export
-
-The prepared local dataset root is `/NAS/zqy/SWE-bench_Pro`. It contains
-`test.jsonl`, `test.parquet`, `test_patches/`, and the official `run_scripts/`.
+## Prepare the environment
 
 ```bash
-roller bench export swebench-pro /NAS/zqy/SWE-bench_Pro \
-  --output /tmp/swebench-pro.jsonl
+git clone https://github.com/scaleapi/SWE-bench_Pro-os.git "$PWD/.benchmarks/swebench-pro"
+export SWEBENCH_PRO_ROOT="$PWD/.benchmarks/swebench-pro"
 
-roller bench export swebench-pro /NAS/zqy/SWE-bench_Pro \
-  --task-id instance_flipt-io__flipt-a0cbc0cb65ae601270bdbe3f5313e2dfd49c80e4 \
-  --output /tmp/swebench-pro-smoke.jsonl
+export MODEL_API_BASE_URL=https://api.example.com/v1
+export MODEL_API_KEY=replace-with-your-api-key
+export ROLLER_RUN_ROOT="$PWD/runs/swebench-pro"
+mkdir -p "$ROLLER_RUN_ROOT"
 ```
 
-`--category` takes a repository name such as `flipt-io/flipt`. The adapter
-prefers `test.jsonl`. If the root only has Parquet, run
-`pip install -e '.[swebench-pro]'`.
-
-## 2. One-command runner
-
-`scripts/run-swebench-pro.sh` exports tasks, collects trajectories, and writes
-`<OUTPUT_ROOT>/<RUN_NAME>/report.json`. Start with one instance as a smoke
-test:
+The bench root needs the upstream `run_scripts/` directory and the test split of the
+[`ScaleAI/SWE-bench_Pro`](https://huggingface.co/datasets/ScaleAI/SWE-bench_Pro) dataset, saved
+as `test.jsonl`, `data.jsonl`, `test.parquet`, or `data/test.parquet`. Roller reads the first of
+these that exists. Reading Parquet requires the optional extra:
 
 ```bash
-export MY_PROXY_BASE_URL=https://api.example.com/v1
-export MY_PROXY_API_KEY=replace-me
+pip install 'roller-agent[swebench-pro]'
+```
 
-SWEBENCH_PRO_ROOT=/path/to/SWE-bench_Pro \
-MODEL=my-openai-proxy/my-model \
-MODEL_CONFIG=examples/config/openclaw/models.json \
+The instance images are published for `linux/amd64` as `jefzda/sweap-images:<dockerhub_tag>`.
+The Harness image must have the same architecture as the instance image; Roller stops before
+building when they differ. For OpenClaw, use the official `linux/amd64` image, which provides
+Node at `/usr/local/bin/node` and OpenClaw under `/app`.
+
+Before starting a larger job, run one instance:
+
+```bash
+roller collect --bench swebench-pro --bench-root "$SWEBENCH_PRO_ROOT" \
+  --bench-task-id instance_flipt-io__flipt-a0cbc0cb65ae601270bdbe3f5313e2dfd49c80e4 \
+  --model example/example-model --model-config example.models.json \
+  --parallel 1 --grader-parallel 1 \
+  --output "$ROLLER_RUN_ROOT" --run-name smoke
+```
+
+The command writes `smoke/tasks.jsonl` and `smoke/bench-report.json`. `--bench-category` takes a
+repository name such as `flipt-io/flipt`. The model configuration has the same format as in the
+[PinchBench guide](pinchbench.md#prepare-the-environment).
+
+The first run of an instance pulls its image and builds a derived image, which takes
+considerable network traffic and disk space. Later runs reuse the local images. A full run
+pulls one image per instance, so monitor Docker disk usage.
+
+## Runner script
+
+`scripts/run-swebench-pro.sh` exports the tasks, collects trajectories, and writes
+`<OUTPUT_ROOT>/<RUN_NAME>/report.json`:
+
+```bash
+SWEBENCH_PRO_ROOT="$PWD/.benchmarks/swebench-pro" \
+MODEL=example/example-model \
+MODEL_CONFIG=example.models.json \
 TASK_IDS=instance_flipt-io__flipt-a0cbc0cb65ae601270bdbe3f5313e2dfd49c80e4 \
 ./scripts/run-swebench-pro.sh
 ```
 
-`HARNESS` defaults to `openclaw`. `TASK_IDS` and `CATEGORIES` accept
-comma-separated lists. `PARALLEL`, `RETRIES`, `OUTPUT_ROOT`, and `RUN_NAME`
-override their defaults. For another Harness, set `HARNESS`, `API_BASE`, and
-`API_KEY_ENV`; `API_KEY_ENV` is the name of the variable that holds the key,
-not the key itself. Optional `MAX_STEPS` maps to the corresponding Claude Code,
-Hermes, OpenCode, DeepSeek, or Pi option. Arguments after the script are
-appended to `roller collect`, for example `--resume`.
+`HARNESS` defaults to `openclaw`. `TASK_IDS` and `CATEGORIES` accept comma-separated lists.
+`PARALLEL`, `RETRIES`, `OUTPUT_ROOT`, and `RUN_NAME` override their defaults. For another
+Harness, set `HARNESS`, `API_BASE`, and `API_KEY_ENV`; `API_KEY_ENV` is the name of the variable
+that holds the model API key. `MAX_STEPS` maps to the corresponding Claude Code, Hermes,
+OpenCode, DeepSeek, or Pi option. Arguments after the script are appended to `roller collect`,
+for example `--resume`.
 
-## 3. Harnesses and model APIs
+## Harnesses and images
 
-```bash
-export MY_PROXY_BASE_URL=https://api.example.com/v1
-export MY_PROXY_API_KEY=replace-me
+Exported tasks default to `harness: openclaw`, which `--harness` can override. Roller supports
+OpenClaw, Codex, Claude Code, Hermes, OpenCode, DeepSeek, and Pi.
 
-roller collect --tasks /tmp/swebench-pro-smoke.jsonl \
-  --model my-openai-proxy/my-model \
-  --harness openclaw \
-  --model-config examples/config/openclaw/models.json \
-  --task-timeouts --parallel 1 \
-  --output /tmp/swebench-pro-runs --run-name local-qwen-smoke
-```
+For each instance, Roller combines the instance image with the selected Harness image:
 
-Roller supports OpenClaw, Codex, Claude Code, Hermes, OpenCode, DeepSeek, and
-Pi. Exported tasks default to `harness: openclaw`; `--harness` overrides it.
-Codex uses the Responses API, Claude Code uses the Anthropic Messages API, and
-the other non-OpenClaw harnesses use an OpenAI-compatible Chat Completions API.
-See the [CLI reference](../start/cli-reference.md) for endpoint and key options.
+| Harness | Derived image |
+| --- | --- |
+| OpenClaw | The instance image with the OpenClaw runtime added. Node is installed at `/opt/roller-node/bin/node`, so the Node of the project is unchanged |
+| Other Harnesses | The Harness image with the `/app` repository copied from the instance image. System dependencies come from the Harness image and can differ from the instance image |
 
-On the first run of an instance, Roller pulls
-`jefzda/sweap-images:<dockerhub_tag>` and combines it with the selected Harness
-image. The OpenClaw runtime is installed into the official instance image.
-Other Harnesses use their own runtime image and copy the official `/app`
-repository into it. Derived images are cached by source image, Harness image,
-and Harness name. The first run needs substantial network bandwidth, disk, and
-startup time; later runs reuse the local image.
+Derived images are tagged `roller-swebench-pro-<harness>:<digest>` and cached by instance image,
+Harness image, and Harness name. The task container runs as root, regardless of
+`--container-user`, because task setup rewrites the repository under `/app`.
 
-## 4. Isolation and scoring
+## Execution and scoring
 
-The Agent works in `/app` in the derived image. At startup, Roller resets to
-`base_commit`, records the original tracked files, removes the upstream `.git`
-history, and creates a fresh repository containing only the baseline snapshot.
-The Agent therefore cannot recover the gold commit from Git, and exported tasks
-do not contain the gold source patch. For non-OpenClaw Harnesses, system
-dependencies come from the Harness image and may differ from the official
-instance image.
+The Agent works in `/app`. Before the Agent starts, Roller resets the repository to
+`base_commit`, removes the upstream `.git` history, and commits the tracked files to a new
+repository. The gold commit is therefore not available in Git, and the exported tasks do not
+contain the gold patch.
 
-After the Agent's last turn, Roller extracts tracked, untracked, and committed
-model changes into `model.patch`, removes binary hunks as upstream does, and
-starts a fresh official instance container. Only this independent container
-receives the model patch, hidden `test.patch`, official runner, and parser. The
-grader applies the model patch to a clean baseline and then overwrites official
-test files with their hidden versions. The independent grader container is
-removed after success or failure. A task is resolved only when the union of F2P
-and P2P tests is in the parser's `PASSED` set. `overall_score` is 1 for resolved
-and 0 otherwise.
+After the last turn, Roller extracts the tracked, untracked, and committed changes of the Agent
+as `model.patch` and starts a new container from the instance image. Only this container
+receives the model patch, the hidden `test.patch`, and the official runner and parser. The
+grader applies the model patch to the baseline, restores the hidden versions of the test files,
+and runs the official script. The grading container is removed afterwards.
 
-Each sample's `results/` contains `model.patch`, `test_stdout.log`,
-`test_stderr.log`, and `test_output.json`. The score remains in `score.json`.
+A task is resolved when every fail-to-pass and pass-to-pass test is in the `PASSED` set of the
+parser. `overall_score` is 1 for a resolved task and 0 otherwise.
 
-```bash
-roller bench report /tmp/swebench-pro-runs/local-qwen-smoke
-```
+Binary file changes are not part of the graded patch. Roller lists their paths in
+`scores.dropped_binary_files` in `score.json` and logs a warning, so a score that depends on a
+binary change can be identified.
 
-## 5. Comparability boundary
+The `results/` directory of each sample contains `model.patch`, `test_stdout.log`,
+`test_stderr.log`, and `test_output.json`. The score is in `score.json`.
 
-- Always score in a fresh instance container. Do not reuse a manually modified
-  container.
-- Use `--task-timeouts`. The Agent budget is 3600 seconds per task; grading has
-  a separate 3600-second limit.
-- This integration uses local Docker and does not implement upstream Modal.
-- All seven Harnesses use the same fresh-official-image scoring path. Record
-  Agent environment differences in experiment reports.
-- Container networking remains enabled for the model API; this is not
-  equivalent to upstream `--block_network`.
-- A full run can pull many per-instance images. Start with `--task-id` and
-  monitor Docker disk usage.
+## Grading options
 
-## 6. Optional environment and grading corrections
+Three environment variables change the task setup and grading. All are off by default. Roller
+reads them when it converts the tasks, that is, during `collect --bench` or `bench export`, and
+records the values in `bench.metadata.evaluation_protocol` and `bench.metadata.go_proxy`.
 
-OpenClaw uses `/opt/roller-node/bin/node`, preserving the project's original Node.
-The Python `SWEBenchProAdapter` API offers three options, disabled by default and recorded in exported manifests:
+| Variable | Effect |
+| --- | --- |
+| `SWEBENCH_PRO_REPAIR_TEST_FIXTURES=1` | Adds text test data that the upstream `test.patch` omits. Roller takes it from test-data directories in the gold patch and applies it only in the grading container |
+| `SWEBENCH_PRO_EXCLUDE_AGENT_TESTS=1` | Leaves changes that the Agent made to Go, Python, and JavaScript test sources out of the graded patch, so that they do not collide with the hidden tests. `model.patch` keeps all changes; the graded patch is saved as `graded.patch` |
+| `SWEBENCH_PRO_GO_PROXY=<url>` | Sets `GOPROXY` in the task and grading containers, for example `https://goproxy.cn,direct`. When the tests report missing `go.sum` entries, the grader downloads the dependencies and runs the tests once more within the same time budget. The first logs and the dependency changes are saved in `results/` |
 
-- `go_proxy="https://goproxy.cn,direct"`: preserve the image's Go cache paths and make Go available to login shells. If tests report missing go.sum entries, download dependencies and rerun within the original grading time budget. Save dependency edits and the first failed logs separately.
-- `repair_test_fixtures=True`: extract only non-executable text data from test-data directories in the upstream gold patch to supply missing fixtures during grading. These files never enter the Agent workspace or prompt.
-- `exclude_agent_tests=True`: exclude model changes to Go/Python/JS test source during grading to avoid collisions with hidden tests. Preserve `model.patch`; write the actual grading patch to `graded.patch`.
+The boolean variables accept `1`, `true`, `yes`, `on`, `0`, `false`, `no`, and `off`.
+`SWEBENCH_PRO_CACHE_DIR` sets the directory for the extracted test patches, which defaults to
+`~/.cache/roller/benches/swebench-pro`.
 
-These options preserve the official pass criterion while changing runtime and
-grading infrastructure. Report both original and corrected scores. Cumulative
-recovery from rerunning failures is not an independent pass@1 measurement.
+Scores obtained with these options differ from the upstream protocol. State the options when
+reporting them.
 
-## 7. Implementation layout
+## Upstream option mapping
 
-The integration lives in `src/roller/benches/swebench_pro/`:
+| SWE-Bench Pro | Roller |
+| --- | --- |
+| Dataset and `run_scripts/` | `--bench-root` |
+| Instance selection | `--bench-task-id`, `--bench-category` |
+| Docker or Modal backend | Local Docker only |
+| `--block_network` | Not available. The container network stays enabled for the model API |
+| Worker count | `--parallel`, `--grader-parallel` |
 
-- `adapter.py`: task export, Harness wrapping, and the BenchAdapter entry point;
-- `task_parser.py`: dataset discovery and upstream field parsing;
-- `workspace.py`: baseline setup, patch caching, and fixture repair;
-- `grader_runtime.py`: model patch extraction and fresh-container grading;
-- `grader.py`: self-contained code staged into the grading container;
-- `images.py`: derived Harness image construction;
-- `report.py`: score aggregation;
-- `__init__.py`: compatibility exports for `roller.benches.swebench_pro`.
-
-Keep new Bench integrations similarly scoped so parsing, workspace preparation,
-runtime execution, grading, and reporting can evolve independently.
+The task timeout is 3600 seconds, and grading has a separate limit of 3600 seconds.
+`collect --bench` applies the task timeout automatically; add `--task-timeouts` when collecting
+from an exported task file.

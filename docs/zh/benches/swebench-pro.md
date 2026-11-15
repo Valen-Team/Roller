@@ -2,131 +2,132 @@
 
 [文档中心](../index.md) · [Bench 接入与评分](bench-format.md) · [CLI 参数参考](../start/cli-reference.md)
 
-评测报告：
-[DeepSeek V4 Pro 固定前 100 题结果（2026-09-19）](swebench-pro-evaluation-2026-09-19.md)。
+Roller 运行 SWE-Bench Pro 公开 test split 中 11 个仓库的 731 个任务，并复用官方实例镜像、
+`run_script.sh`、`parser.py`、fail-to-pass 与 pass-to-pass 测试集合以及 resolved 判定。
+上游仓库为 <https://github.com/scaleapi/SWE-bench_Pro-os>。
 
-Roller 支持 SWE-Bench Pro 公共 test split 的 731 个任务、11 个仓库，并复用官方
-Docker 镜像、`run_script.sh`、`parser.py`、F2P/P2P 集合和 resolved 判定。
-上游：<https://github.com/scaleapi/SWE-bench_Pro-os>。
-
-## 1. 数据与导出
-
-本机已准备的数据根目录是 `/xxx/SWE-bench_Pro`，其中包含 `test.jsonl`、
-`test.parquet`、`test_patches/` 和官方 `run_scripts/`。
+## 准备环境
 
 ```bash
-roller bench export swebench-pro /xxx/SWE-bench_Pro \
-  --output /tmp/swebench-pro.jsonl
+git clone https://github.com/scaleapi/SWE-bench_Pro-os.git "$PWD/.benchmarks/swebench-pro"
+export SWEBENCH_PRO_ROOT="$PWD/.benchmarks/swebench-pro"
 
-roller bench export swebench-pro /xxx/SWE-bench_Pro \
-  --task-id instance_flipt-io__flipt-a0cbc0cb65ae601270bdbe3f5313e2dfd49c80e4 \
-  --output /tmp/swebench-pro.jsonl
+export MODEL_API_BASE_URL=https://api.example.com/v1
+export MODEL_API_KEY=replace-with-your-api-key
+export ROLLER_RUN_ROOT="$PWD/runs/swebench-pro"
+mkdir -p "$ROLLER_RUN_ROOT"
 ```
 
-`--category` 使用仓库名，例如 `flipt-io/flipt`。Adapter 优先读取 `test.jsonl`；
-若数据根目录只有 Parquet，运行 `pip install -e '.[swebench-pro]'`。
-
-## 2. 一键运行脚本
-
-`scripts/run-swebench-pro.sh` 会自动导出任务、采集轨迹并生成
-`<OUTPUT_ROOT>/<RUN_NAME>/report.json`。建议先指定一个实例做 smoke：
+bench 根目录需要包含上游的 `run_scripts/` 目录，以及
+[`ScaleAI/SWE-bench_Pro`](https://huggingface.co/datasets/ScaleAI/SWE-bench_Pro) 数据集的
+test split，文件名为 `test.jsonl`、`data.jsonl`、`test.parquet` 或 `data/test.parquet`。
+Roller 按此顺序读取第一个存在的文件。读取 Parquet 需要安装可选依赖：
 
 ```bash
-export MY_PROXY_BASE_URL=https://api.example.com/v1
-export MY_PROXY_API_KEY=replace-me
+pip install 'roller-agent[swebench-pro]'
+```
 
-SWEBENCH_PRO_ROOT=/path/to/SWE-bench_Pro \
-MODEL=my-openai-proxy/my-model \
-MODEL_CONFIG=examples/config/openclaw/models.json \
+实例镜像以 `jefzda/sweap-images:<dockerhub_tag>` 发布，架构为 `linux/amd64`。Harness 镜像的
+架构须与实例镜像一致；两者不一致时，Roller 在构建前报错退出。OpenClaw 请使用官方
+`linux/amd64` 镜像，该镜像在 `/usr/local/bin/node` 提供 Node，在 `/app` 提供 OpenClaw。
+
+开始较大规模的运行前，先运行一个实例：
+
+```bash
+roller collect --bench swebench-pro --bench-root "$SWEBENCH_PRO_ROOT" \
+  --bench-task-id instance_flipt-io__flipt-a0cbc0cb65ae601270bdbe3f5313e2dfd49c80e4 \
+  --model example/example-model --model-config example.models.json \
+  --parallel 1 --grader-parallel 1 \
+  --output "$ROLLER_RUN_ROOT" --run-name smoke
+```
+
+该命令会生成 `smoke/tasks.jsonl` 和 `smoke/bench-report.json`。`--bench-category` 使用仓库名，
+例如 `flipt-io/flipt`。模型配置的格式与 [PinchBench 指南](pinchbench.md#准备环境)相同。
+
+某个实例首次运行时，Roller 会拉取其镜像并构建派生镜像，需要较多的网络流量和磁盘空间；
+之后的运行复用本地镜像。完整运行会为每个实例拉取一个镜像，请关注 Docker 的磁盘占用。
+
+## 运行脚本
+
+`scripts/run-swebench-pro.sh` 会导出任务、采集轨迹并生成
+`<OUTPUT_ROOT>/<RUN_NAME>/report.json`：
+
+```bash
+SWEBENCH_PRO_ROOT="$PWD/.benchmarks/swebench-pro" \
+MODEL=example/example-model \
+MODEL_CONFIG=example.models.json \
 TASK_IDS=instance_flipt-io__flipt-a0cbc0cb65ae601270bdbe3f5313e2dfd49c80e4 \
 ./scripts/run-swebench-pro.sh
 ```
 
-`HARNESS` 默认为 `openclaw`。`TASK_IDS` 和 `CATEGORIES` 接受逗号分隔列表；
-`PARALLEL`、`RETRIES`、`OUTPUT_ROOT` 和 `RUN_NAME` 可覆盖默认值。使用其他
-Harness 时设置 `HARNESS`、`API_BASE` 和 `API_KEY_ENV`，其中
-`API_KEY_ENV` 是保存 Key 的变量名，不是 Key 本身。可选的 `MAX_STEPS` 会映射到
-Claude Code、Hermes、OpenCode、DeepSeek 和 Pi 对应的步数参数。脚本后的参数会
-追加给 `roller collect`，例如 `--resume`。
+`HARNESS` 默认为 `openclaw`。`TASK_IDS` 和 `CATEGORIES` 接受逗号分隔的列表。`PARALLEL`、
+`RETRIES`、`OUTPUT_ROOT` 和 `RUN_NAME` 可覆盖默认值。使用其他 Harness 时，请设置 `HARNESS`、
+`API_BASE` 和 `API_KEY_ENV`，其中 `API_KEY_ENV` 是保存模型 API Key 的变量名。`MAX_STEPS`
+会映射到 Claude Code、Hermes、OpenCode、DeepSeek 和 Pi 对应的步数参数。脚本后的参数会追加到
+`roller collect`，例如 `--resume`。
 
-## 3. Harness 与模型 API
+## Harness 与镜像
 
-```bash
-export MY_PROXY_BASE_URL=https://api.example.com/v1
-export MY_PROXY_API_KEY=replace-me
+导出的 task 默认写入 `harness: openclaw`，可用 `--harness` 覆盖。Roller 支持 OpenClaw、Codex、
+Claude Code、Hermes、OpenCode、DeepSeek 和 Pi。
 
-roller collect --tasks /tmp/swebench-pro.jsonl \
-  --model my-openai-proxy/my-model \
-  --harness openclaw \
-  --model-config examples/config/openclaw/models.json \
-  --task-timeouts --parallel 1 \
-  --output /tmp/swebench-pro-runs --run-name local-qwen
-```
+Roller 为每个实例将实例镜像与所选 Harness 镜像组合：
 
-Roller 支持 OpenClaw、Codex、Claude Code、Hermes、OpenCode、DeepSeek 和 Pi。
-导出的 task 默认写入 `harness: openclaw`，可用 `--harness` 覆盖。Codex 使用
-Responses API，Claude Code 使用 Anthropic Messages API，其余非 OpenClaw Harness
-使用 OpenAI-compatible Chat Completions API；相应 endpoint 和 key 参数见
-[CLI 参数参考](../start/cli-reference.md)。
+| Harness | 派生镜像 |
+| --- | --- |
+| OpenClaw | 在实例镜像中加入 OpenClaw 运行时。Node 安装在 `/opt/roller-node/bin/node`，项目自身的 Node 保持不变 |
+| 其他 Harness | 在 Harness 镜像中加入从实例镜像复制的 `/app` 仓库。系统依赖来自 Harness 镜像，可能与实例镜像不同 |
 
-每个任务第一次运行时，Roller 会拉取
-`jefzda/sweap-images:<dockerhub_tag>` 并与所选 Harness 镜像组合。OpenClaw 的运行时
-被放入官方实例镜像；其余 Harness 以 Harness 镜像为运行环境，并从官方实例镜像复制
-`/app` 仓库。派生结果按源镜像、Harness 镜像和 Harness 名称缓存。首次运行需要较多
-网络、磁盘和启动时间，后续会复用本地镜像。
+派生镜像的 tag 为 `roller-swebench-pro-<harness>:<digest>`，按实例镜像、Harness 镜像和 Harness
+名称缓存。由于任务初始化需要改写 `/app` 下的仓库，任务容器始终以 root 运行，不受
+`--container-user` 影响。
 
-## 4. 隔离与评分
+## 执行和评分
 
-Agent 在派生镜像的 `/app` 中工作。启动时 Roller reset 到 `base_commit`，记录原仓库
-tracked files，删除上游 `.git` 历史，再创建只有基线快照的新仓库。因此 Agent 无法
-从 Git 历史恢复 gold commit，导出任务也不包含 gold source patch。对非 OpenClaw
-Harness，Agent 的系统依赖来自 Harness 镜像，可能与官方实例镜像不同。
+Agent 在 `/app` 中工作。Agent 启动前，Roller 将仓库重置到 `base_commit`，删除上游的 `.git`
+历史，并将 tracked 文件提交到一个新仓库。因此 Git 中不存在 gold commit，导出的 task 也不包含
+gold patch。
 
-Agent 最后一轮结束后，Roller 先提取 tracked、untracked 和已 commit 的模型改动为
-`model.patch`，去掉官方同样不接受的 binary hunks，再启动一个全新的官方实例镜像
-容器。只有这个独立容器会接收模型补丁、隐藏 `test.patch`、官方 runner 和 parser。
-grader 在干净基线上应用模型补丁，再用隐藏版本覆盖官方测试文件。无论评分成功或
-失败，独立评分容器都会被删除。只有 F2P 与 P2P 测试的并集全部为 `PASSED` 时才算
-resolved，`overall_score` 为 1，否则为 0。
+最后一轮结束后，Roller 将 Agent 的 tracked、untracked 和已提交的改动提取为 `model.patch`，
+并从实例镜像启动一个新容器。只有该容器会收到模型补丁、隐藏的 `test.patch` 以及官方 runner
+和 parser。grader 在基线上应用模型补丁，恢复测试文件的隐藏版本，然后运行官方脚本。评分结束后，
+评分容器会被删除。
 
-每个 sample 的 `results/` 包含 `model.patch`、`test_stdout.log`、
-`test_stderr.log` 和 `test_output.json`；分数位于 sample 根目录的 `score.json`。
+fail-to-pass 和 pass-to-pass 的全部测试都在 parser 的 `PASSED` 集合中时，任务为 resolved。
+resolved 任务的 `overall_score` 为 1，否则为 0。
 
-```bash
-roller bench report /tmp/swebench-pro-runs/local-qwen
-```
+二进制文件的改动不进入评分补丁。Roller 会将其路径写入 `score.json` 的
+`scores.dropped_binary_files` 并输出一条 warning，便于识别依赖二进制改动的分数。
 
-## 5. 可比性边界
+每个 sample 的 `results/` 目录包含 `model.patch`、`test_stdout.log`、`test_stderr.log` 和
+`test_output.json`。分数位于 `score.json`。
 
-- 必须使用全新实例容器评分；不要复用手工修改过的容器。
-- 必须加 `--task-timeouts`；每题 Agent 预算为 3600 秒，grader 另有 3600 秒上限。
-- 当前使用本地 Docker，不实现上游 Modal 后端。
-- 七个 Harness 共用相同的全新官方镜像评分路径。
-- 默认保留容器网络，不等同于上游 `--block_network`。
-- 完整运行会拉取大量按实例区分的镜像；先用 `--task-id` 做 smoke 并监控磁盘。
+## 评分选项
 
-## 6. 可选环境与评分修正
+以下三个环境变量会改变任务初始化和评分，默认全部关闭。Roller 在转换任务时读取这些变量，即在
+`collect --bench` 或 `bench export` 期间，并将取值记录在
+`bench.metadata.evaluation_protocol` 和 `bench.metadata.go_proxy` 中。
 
-OpenClaw 的 Node 位于 `/opt/roller-node/bin/node`，项目原有的 Node 保留不变。
-Python API `SWEBenchProAdapter` 另提供三个默认关闭的选项，导出的 manifest 会记录其值：
+| 变量 | 作用 |
+| --- | --- |
+| `SWEBENCH_PRO_REPAIR_TEST_FIXTURES=1` | 补齐上游 `test.patch` 遗漏的文本测试数据。Roller 从 gold patch 的测试数据目录中提取这些文件，且只在评分容器中应用 |
+| `SWEBENCH_PRO_EXCLUDE_AGENT_TESTS=1` | 评分补丁不包含 Agent 对 Go、Python 和 JavaScript 测试源码的改动，以免与隐藏测试冲突。`model.patch` 保留全部改动，评分补丁另存为 `graded.patch` |
+| `SWEBENCH_PRO_GO_PROXY=<url>` | 在任务容器和评分容器中设置 `GOPROXY`，例如 `https://goproxy.cn,direct`。测试报告缺少 `go.sum` 条目时，grader 会下载依赖，并在同一时间预算内重新运行一次测试。首次运行的日志和依赖改动保存在 `results/` 中 |
 
-- `go_proxy="https://goproxy.cn,direct"`：保留镜像的 Go 缓存路径并补齐登录 shell 的 Go 路径。若测试报告缺少 go.sum，下载依赖后在原评分时间预算内重新测试；依赖改动和首次失败日志单独保存。
-- `repair_test_fixtures=True`：从上游 gold patch 中仅提取测试数据目录的非执行文本数据，评分时补齐遗漏的 fixture。该内容不会进入 Agent 工作区或提示词。
-- `exclude_agent_tests=True`：评分时排除模型对 Go/Python/JS 测试源码的改动，避免新增自测与隐藏测试重名。原始 `model.patch` 保留，实际用于评分的补丁另存为 `graded.patch`。
+布尔变量接受 `1`、`true`、`yes`、`on`、`0`、`false`、`no` 和 `off`。`SWEBENCH_PRO_CACHE_DIR`
+用于设置测试补丁的提取目录，默认为 `~/.cache/roller/benches/swebench-pro`。
 
-这些选项不改变官方通过标准，仅调整运行环境与评分基础设施。实验报告应同时保留原始成绩和修正后成绩。仅重跑失败任务所得的累计结果不能当作独立 pass@1。
+启用这些选项后，分数与上游协议不同。报告分数时请注明所用选项。
 
-## 7. 实现结构
+## 上游参数对应
 
-集成代码位于 `src/roller/benches/swebench_pro/`：
+| SWE-Bench Pro | Roller |
+| --- | --- |
+| 数据集和 `run_scripts/` | `--bench-root` |
+| 实例选择 | `--bench-task-id`、`--bench-category` |
+| Docker 或 Modal 后端 | 仅本地 Docker |
+| `--block_network` | 不提供。容器网络保持开启，用于访问模型 API |
+| worker 数量 | `--parallel`、`--grader-parallel` |
 
-- `adapter.py`：任务导出、Harness 包装及 BenchAdapter 入口；
-- `task_parser.py`：数据集发现和上游字段解析；
-- `workspace.py`：基线初始化、补丁缓存及 fixture 修复；
-- `grader_runtime.py`：模型补丁提取和全新容器评分；
-- `grader.py`：注入评分容器的自包含代码；
-- `images.py`：Harness 派生镜像构建；
-- `report.py`：分数聚合；
-- `__init__.py`：兼容 `roller.benches.swebench_pro` 的原有导入。
-
-后续 Bench 集成也应按解析、工作区准备、运行时、评分和报告等职责拆分，避免核心逻辑重新集中到单个大文件。
+任务超时为 3600 秒，评分另有 3600 秒的上限。`collect --bench` 会自动使用任务超时；从导出的
+task 文件采集时，须添加 `--task-timeouts`。
