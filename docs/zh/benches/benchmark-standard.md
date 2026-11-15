@@ -154,7 +154,7 @@ benchmark:
 | Claude Code | `settings`、`max_turns`、`max_thinking_tokens`、`permission_mode`、`capture_calls`、`unique_tool_ids` |
 | Hermes | `max_iterations`、`context_length`、`vision`、`toolsets` |
 | OpenCode | `max_steps`、`context_length`、`output_tokens`、`vision`、`native_tools`、`deny_tools` |
-| DeepSeek | `max_steps`、`context_length`、`output_tokens`、`profile`、`permission_mode` |
+| DeepSeek | `max_steps`、`context_length`、`output_tokens`、`profile`、`permission_mode`、`input_modalities` |
 | Pi | `max_steps`、`context_length`、`output_tokens`、`input_modalities` |
 
 `config_set` 是 `KEY=VALUE` 字符串列表，每项对应一次 `--openclaw-config-set` 或

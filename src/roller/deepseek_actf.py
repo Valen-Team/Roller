@@ -27,10 +27,50 @@ def native_events(events):
             yield event["payload"]["event"]
 
 
-def _text(blocks):
-    if not isinstance(blocks, list) or any(b.get("type") != "text" or not isinstance(b.get("text"), str) for b in blocks):
-        raise ValueError("DeepSeek content cannot be represented as text-only SFT")
-    return "".join(block["text"] for block in blocks)
+# The native tool result names an image only by attachment id. The model
+# receives its bytes in a user message that follows the tool results.
+TOOL_IMAGES_HEADER = {"type": "text", "text": "Attached image(s) from tool result:"}
+
+
+def _request_images(events) -> list[str]:
+    """Data URLs of the tool-result images the model received, in request order."""
+    images: list[str] = []
+    for event in events:
+        if event.get("type") != "request":
+            continue
+        sent = [
+            block["image_url"]["url"]
+            for message in event["body"].get("messages", [])
+            if message.get("role") == "user" and isinstance(message.get("content"), list)
+            and message["content"][:1] == [TOOL_IMAGES_HEADER]
+            for block in message["content"][1:]
+            if block.get("type") == "image_url"
+        ]
+        # Each request resends the history, so the longest list is the full one.
+        if len(sent) > len(images):
+            images = sent
+    return images
+
+
+def _tool_result_content(blocks, images):
+    """Text, or text and image blocks when the result carries image attachments."""
+    if not isinstance(blocks, list):
+        raise ValueError("DeepSeek tool result content must be a list of blocks")
+    content = []
+    for block in blocks:
+        if block.get("type") == "text" and isinstance(block.get("text"), str):
+            content.append({"type": "text", "text": block["text"]})
+        elif block.get("type") == "image" and isinstance(block.get("attachment"), dict):
+            url = next(images, None)
+            if url is None or not url.startswith("data:") or ";base64," not in url:
+                raise ValueError("DeepSeek tool image was not sent to the model as inline data")
+            media_type, data = url[5:].split(";base64,", 1)
+            content.append({"type": "image", "data": data, "mimeType": media_type})
+        else:
+            raise ValueError("DeepSeek content cannot be represented in SFT")
+    if all(block["type"] == "text" for block in content):
+        return "".join(block["text"] for block in content)
+    return content
 
 
 def deepseek_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: bool = True) -> dict[str, Any]:
@@ -56,6 +96,7 @@ def deepseek_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: 
     if not systems:
         raise ValueError("DeepSeek journal has no captured system prompt")
     rows, calls, results, turns = [], {}, set(), []
+    images = iter(_request_images(events))
     active_turn = None
     for event in native_events(events):
         kind, data = event["type"], event["data"]
@@ -84,7 +125,8 @@ def deepseek_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: 
                 results.add(call_id)
                 rows.append({"type": "message", "timestamp": timestamp, "message": {
                     "role": "toolResult", "toolCallId": call_id, "toolName": calls[call_id],
-                    "content": _text(block["content"]), "isError": block.get("isError", False)}})
+                    "content": _tool_result_content(block["content"], images),
+                    "isError": block.get("isError", False)}})
             continue
         content = []
         for block in message["content"]:
@@ -111,6 +153,8 @@ def deepseek_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: 
             "stopReason": "tool_calls" if any(b["type"] == "toolCall" for b in content) else "stop"}})
     if active_turn is not None or not turns or any(reason != "completed" for reason in turns) or set(calls) != results:
         raise ValueError("DeepSeek journal contains incomplete turns or tool calls")
+    if next(images, None) is not None:
+        raise ValueError("DeepSeek request carries tool images that no tool result declares")
     return openclaw_events_to_actf(rows, system_prompts=["\n\n".join(systems)], tools=list(schemas.values()), keep_thinking=keep_thinking)
 
 

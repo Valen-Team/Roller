@@ -55,6 +55,7 @@ def serve(config):
     os.environ["DSH_CONTEXT_WINDOW"] = str(config["context_length"])
     os.environ["ROLLER_DEEPSEEK_MODEL"] = config["model"]
     os.environ["ROLLER_DEEPSEEK_OUTPUT_TOKENS"] = str(config["output_tokens"])
+    os.environ["ROLLER_DEEPSEEK_INPUT_MODALITIES"] = ",".join(config["input_modalities"])
     journal({"type": "metadata", "schema": "roller.deepseek-events/v1", "version": VERSION,
              "profile": config["profile"], "session_id": config["session_id"], "model": config["model"]})
     # sdk-minimal reads DSH_SYSTEM_PROMPT itself. Other profiles build a native

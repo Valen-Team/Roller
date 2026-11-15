@@ -11,7 +11,7 @@ This page lists the tools each Harness exposes to the model by default and the f
 | Claude Code | Native Claude Code tools | `--claude-settings`, `--claude-permission-mode` |
 | Hermes | The `terminal` and `file` toolsets, plus `vision` unless `--no-hermes-vision` is set | `--hermes-toolset NAME`, repeatable. `native` selects Hermes' own toolset discovery |
 | OpenCode | `bash`, `read`, `write`, `edit`, `apply_patch`, `glob`, `grep`, and `skill` | `--opencode-native-tools`, with `--opencode-deny-tool NAME` for exclusions |
-| DeepSeek | The `sdk-minimal` profile, which provides one persistent `bash` tool | `--deepseek-profile sdk`, `--deepseek-permission-mode MODE` |
+| DeepSeek | The `sdk-minimal` profile, which provides one persistent `bash` tool | `--deepseek-profile sdk`, `--deepseek-permission-mode MODE`, `--deepseek-input-modalities text,image` |
 | Pi Agent | The seven built-in tools `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls` | None |
 
 Without these flags a Harness keeps its default tools, and existing runs resume with their recorded configuration.
@@ -32,7 +32,9 @@ LSP servers, formatters, default plugins, and project configuration discovery st
 
 `--deepseek-profile sdk` selects the full native profile, which adds file and search tools next to the shell. Its Bash tool starts a separate process for each call. `sdk-minimal` keeps one shell, so shell variables persist there and not under `sdk`. Files and the session persist under both. A custom profile name is passed to the SDK unchanged and must exist in the image.
 
-`--deepseek-permission-mode` sets the native permission mode to `read-only`, `workspace-write`, or `danger-full-access`. It applies inside the task container only; host inputs remain read-only mounts. When the flag is omitted the profile's own mode applies.
+`--deepseek-permission-mode` sets the native permission mode to `read-only`, `workspace-write`, or `danger-full-access`. It applies inside the task container only; host inputs remain read-only mounts. When the flag is omitted, `sdk-minimal` keeps its own mode and every other profile runs with `danger-full-access`: the file sandbox those profiles default to has no backend in the container, and shell commands would be refused.
+
+`--deepseek-input-modalities text,image` declares that the model accepts images, so the `read_image` tool of the `sdk` profile sends them to the model.
 
 Under any profile Roller records every model request, enforces `--deepseek-max-steps`, and disables automatic model retries and session uploads to the provider.
 
@@ -44,9 +46,10 @@ Subagent tools are available only when their calls are captured with `--capture-
 | --- | --- | --- | --- |
 | Hermes | `delegation` toolset | Not enabled, including under `--hermes-toolset native`. Naming it explicitly is rejected | Enabled by default, discovered under `native`, or named explicitly |
 | OpenCode | `task` tool | Denied, including under `--opencode-native-tools` | Permitted. The Explore subagent is limited to `bash`, `read`, `glob`, and `grep` |
+| DeepSeek | Delegation tools of the `sdk` profile, such as `subagent` and `workflow` | Not offered to the model | Not offered to the model |
 
 `--capture-calls` requires an explicit API address, `--network host`, and wire tracing.
 
 ## 6. Run configuration
 
-The run configuration records the Hermes toolsets, the OpenCode tool policy and deny list, and the DeepSeek profile and permission mode. Changing any of them requires a new `--run-name`. A `null` tool list in the run configuration means that the native runtime selects the tools.
+The run configuration records the Hermes toolsets, the OpenCode tool policy and deny list, and the DeepSeek profile, permission mode and input modalities. Changing any of them requires a new `--run-name`. A `null` tool list in the run configuration means that the native runtime selects the tools.

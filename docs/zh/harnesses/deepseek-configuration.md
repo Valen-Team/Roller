@@ -67,7 +67,8 @@ roller collect \
 | --- | --- |
 | `--deepseek-image` | 优先于 `--docker-image`。两者均未设置时使用 `ROLLER_DEEPSEEK_IMAGE`，该变量也未设置时使用 `roller-deepseek:0.1.5rc1` |
 | `--deepseek-profile NAME` | 默认 `sdk-minimal`，仅提供 Bash。`sdk` 选择完整的原生 profile，提供文件、搜索和 shell 工具 |
-| `--deepseek-permission-mode MODE` | 默认不设置，使用 profile 自身的权限模式。可选 `read-only`、`workspace-write` 或 `danger-full-access`，仅作用于 task 容器内部 |
+| `--deepseek-permission-mode MODE` | 可选 `read-only`、`workspace-write` 或 `danger-full-access`，仅作用于 task 容器内部。不设置时，`sdk-minimal` 使用自身的权限模式，其他 profile 使用 `danger-full-access`，因为这些 profile 默认的文件沙箱在容器内没有可用后端 |
+| `--deepseek-input-modalities` | 默认 `text`。`text,image` 声明模型接受图片，`sdk` profile 的 `read_image` 工具由此可以把图片发给模型。该参数不会让模型服务获得视觉能力 |
 | `--deepseek-max-steps` | 每条用户消息最多 12 次模型请求，同时受 task 和对话轮次超时的限制 |
 | `--deepseek-context-length` | 默认 128000，至少 1024，按实际服务设置 |
 | `--deepseek-output-tokens` | 默认 8192，必须为正且小于上下文窗口 |
@@ -79,9 +80,9 @@ DeepSeek 作为 Task Agent 或 User Simulator 时均使用这些参数。修改�
 
 ## 5. 多模态能力
 
-DeepSeek Harness 当前固定使用官方最小工具配置 `sdk-minimal`，仅向模型提供持久化 `bash`，不提供图片查看工具。因此适用于文本和普通文件任务，不支持需要模型理解图片内容的任务。
+默认的 `sdk-minimal` 配置仅向模型提供持久化 `bash`，不提供图片查看工具，因此只适用于文本和普通文件任务。
 
-图片文件可通过 `files.inputs` 放入工作区，但仅作为普通文件存在，不会作为图片内容发送给模型。Task 的 `messages[].content` 当前也只支持字符串，不能直接写入图片内容块。不支持 `files.attach_images`。视觉任务应选择支持图片工具的其他 Harness。
+需要模型看图时，选择 `--deepseek-profile sdk` 并加上 `--deepseek-input-modalities text,image`。图片文件通过 `files.inputs` 放入工作区，模型用 `read_image` 工具打开。读到的图片随对应的工具结果保留在 ACTF 和 SFT 中。Task 的 `messages[].content` 只支持字符串，不支持 `files.attach_images`。
 
 ## 6. Session 与工作区
 
@@ -93,7 +94,7 @@ DeepSeek Harness 当前固定使用官方最小工具配置 `sdk-minimal`，仅�
 
 当前 `sdk-minimal` 工具配置只提供一个持续可用的 `bash` 工具。读写文件和搜索内容也通过 Bash 命令完成，不提供单独的图片、Web、MCP 或子 Agent 工具。
 
-`--deepseek-profile sdk` 改用完整的原生 profile，工具由 SDK 提供。其 Bash 工具每次调用启动独立进程，因此 shell 变量不会跨调用保留，文件和 session 仍然保留。配合 `--deepseek-permission-mode danger-full-access` 可使工具在一次性容器内无需审批直接执行。详见 [Harness 工具开放情况](tool-availability.md)。
+`--deepseek-profile sdk` 改用完整的原生 profile，工具由 SDK 提供。其 Bash 工具每次调用启动独立进程，因此 shell 变量不会跨调用保留，文件和 session 仍然保留。该 profile 的委派类工具（`subagent`、`subagent_fork`、`list_agents`、`interrupt_agent`、`send_message`、`workflow` 和 `ralph`）不会提供给模型。详见 [Harness 工具开放情况](tool-availability.md)。
 
 自动压缩已关闭。长 task 需要通过 `--deepseek-context-length` 设置足够大的上下文窗口；所选模型服务须支持 DeepSeek 的请求格式和 thinking 字段。
 
