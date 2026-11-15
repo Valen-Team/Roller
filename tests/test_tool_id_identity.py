@@ -8,10 +8,10 @@ import unittest
 from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
 from urllib.request import ProxyHandler, Request, build_opener
 
 from roller.claude_code_actf import claude_code_events_to_actf
+from roller.collector import Collector
 from roller.harnesses.claude_code import (
     TOOL_ID_MAPPINGS_NAME,
     ClaudeCodeConfig,
@@ -239,6 +239,16 @@ class ToolIdRepairProxyTests(unittest.TestCase):
         self.assertEqual([self.post(proxy), self.post(proxy)], [body, body])
         self.assertEqual(self.request_headers[0]["accept-encoding"], "gzip")
         self.assertFalse((self.root / TOOL_ID_MAPPINGS_NAME).exists())
+
+    def test_mapping_file_survives_sample_pruning(self) -> None:
+        sample = self.root / "sample"
+        sample.mkdir()
+        for name in (TOOL_ID_MAPPINGS_NAME, "trace.jsonl", "claude.log"):
+            (sample / name).write_text("{}\n")
+        Collector._prune_sample(sample)
+        self.assertEqual(
+            sorted(path.name for path in sample.iterdir()), [TOOL_ID_MAPPINGS_NAME, "trace.jsonl"]
+        )
 
     def test_repair_needs_the_request_proxy(self) -> None:
         for options in ({}, {"api_base": "http://example.test", "wire_trace_mode": "off"}):
