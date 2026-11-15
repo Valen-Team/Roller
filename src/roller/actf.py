@@ -8,7 +8,7 @@ from typing import Any, Iterable
 
 from roller.openclaw_delivery import OpenClawDeliveryTracker
 from roller.openclaw_usage import OpenClawUsage
-from roller.wire_trace import extract_wire_image_requests
+from roller.wire_trace import extract_wire_image_requests, wire_text_digest
 
 OPENCLAW_ANNOUNCEMENT_SFT_REASON = (
     "OpenClaw announcement input lacks native response binding; use captured per-call contexts"
@@ -109,24 +109,42 @@ def _append_user_content(
             return deepcopy(item)
         return [{"type": "text", "text": item}]
 
-    return [
-        *blocks(current),
-        {"type": "text", "text": ""},
-        *blocks(value),
-    ]
+    head, tail = blocks(current), blocks(value)
+    last, first = head[-1], tail[0]
+    if (
+        isinstance(last, dict)
+        and isinstance(first, dict)
+        and last.get("type") == first.get("type") == "text"
+    ):
+        # Adjacent prompts keep the paragraph break that plain strings get.
+        last["text"] = f"{last['text']}\n\n{first['text']}"
+        tail = tail[1:]
+    return [*head, *tail]
 
 
 def _attach_wire_images(
     events: list[dict[str, Any]], wire_trace: Path | None
 ) -> None:
-    """Attach OpenClaw image-tool model inputs to their native tool results."""
+    """Attach OpenClaw image-tool model inputs to their native tool results.
+
+    The image tool sends its prompt and images in a separate request without
+    tools. A request belongs to a call when it falls inside the call's time
+    window; calls issued in parallel share one window, so they are told apart
+    by prompt. Parallel calls that stay indistinguishable are only paired when
+    their requests carry the same images.
+    """
 
     if wire_trace is None:
         return
-    requests = extract_wire_image_requests(wire_trace)
+    requests = [
+        request
+        for request in extract_wire_image_requests(wire_trace)
+        if not request["tool_count"]
+    ]
     if not requests:
         return
-    calls: dict[str, tuple[str, datetime | None]] = {}
+    # call id -> (start, prompt digest, parallel calls, parallel calls with this prompt)
+    calls: dict[str, tuple[datetime | None, str, int, int]] = {}
     used_requests: set[int] = set()
     for row in events:
         message = _message_event(row)
@@ -137,19 +155,29 @@ def _attach_wire_images(
             content = message.get("content")
             if not isinstance(content, list):
                 continue
-            for block in content:
-                if (
-                    isinstance(block, dict)
-                    and block.get("type") in {"toolCall", "tool_call"}
-                    and isinstance(block.get("id"), str)
-                ):
-                    calls[block["id"]] = (str(block.get("name", "")), event_time)
+            prompts = {
+                block["id"]: wire_text_digest(
+                    _text(_tool_call(block)["arguments"].get("prompt"))
+                )
+                for block in content
+                if isinstance(block, dict)
+                and block.get("type") in {"toolCall", "tool_call"}
+                and isinstance(block.get("id"), str)
+                and block.get("name") == "image"
+            }
+            for call_id, prompt in prompts.items():
+                calls[call_id] = (
+                    event_time,
+                    prompt,
+                    len(prompts),
+                    list(prompts.values()).count(prompt),
+                )
             continue
         if message.get("role") != "toolResult":
             continue
         call_id = message.get("toolCallId")
         call = calls.get(call_id) if isinstance(call_id, str) else None
-        if call is None or call[0] != "image":
+        if call is None:
             continue
         content = message.get("content")
         if isinstance(content, list) and any(
@@ -157,10 +185,10 @@ def _attach_wire_images(
             for block in content
         ):
             continue
-        start = call[1]
-        selected: int | None = None
+        start, prompt, parallel, same_prompt = call
+        candidates: list[int] = []
         for index, request in enumerate(requests):
-            if index in used_requests or request.get("tool_count") not in {None, 0}:
+            if index in used_requests:
                 continue
             request_time = _event_time(request.get("ts"))
             # Wire timestamps have one-second precision while native session
@@ -178,10 +206,19 @@ def _attach_wire_images(
                 and (request_time - event_time).total_seconds() >= 1
             ):
                 continue
-            selected = index
-            break
-        if selected is None:
+            candidates.append(index)
+        matches = [
+            index for index in candidates if prompt in requests[index]["text_digests"]
+        ]
+        # The requests of indistinguishable parallel calls are the next ones
+        # in wire order; their order among themselves is not recorded.
+        group = matches[:same_prompt] if matches else candidates[:parallel]
+        if not group or any(
+            requests[index]["images"] != requests[group[0]]["images"]
+            for index in group
+        ):
             continue
+        selected = group[0]
         used_requests.add(selected)
         images = requests[selected]["images"]
         if isinstance(content, list):
