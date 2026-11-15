@@ -17,9 +17,9 @@ export ROLLER_RUN_ROOT="$PWD/runs/pinchbench"
 mkdir -p "$ROLLER_RUN_ROOT"
 ```
 
-`prepare-pinchbench.sh` 会在目录不存在时 clone 上游数据，并拉取固定的
-`linux/amd64` OpenClaw 镜像。已有 checkout 不会被自动更新。脚本会打印实际 commit，便于将
-数据版本记入实验记录。脚本不读取或写入 key。如需手工准备，请 clone
+`prepare-pinchbench.sh` 会在目录不存在时获取固定 commit 的上游数据，并拉取固定的
+`linux/amd64` OpenClaw 镜像。目录已存在时，脚本仅校验 commit，不改动数据。脚本会打印实际
+commit，便于将数据版本记入实验记录。脚本不读取或写入 key。如需手工准备，请 clone
 <https://github.com/pinchbench/skill>，再拉取
 `ghcr.io/openclaw/openclaw:2026.7.1-2`。
 
@@ -67,6 +67,14 @@ roller collect --bench pinchbench --bench-root "$PINCHBENCH_ROOT" \
   --model example/example-model --model-config example.models.json \
   --samples 1 --parallel 1 --grader-parallel 1 \
   --output "$ROLLER_RUN_ROOT" --run-name core
+```
+
+同一次运行也可以写成 YAML 文件，并通过 `roller bench run` 启动，见
+[Benchmark 运行配置](benchmark-standard.md)：
+
+```bash
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/pinchbench.yaml
 ```
 
 ## Variant

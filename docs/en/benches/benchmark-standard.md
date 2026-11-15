@@ -1,21 +1,35 @@
-# Benchmark run standard
+# Benchmark run configuration
 
-Roller provides one configuration entry point and a fixed integration layout for benchmarks. Model connection, Harness, and execution settings live in a base configuration. Benchmark task selection and grading settings live in an extra configuration.
+[Documentation](../index.md) · [Bench integration and scoring](bench-format.md) · [CLI reference](../start/cli-reference.md)
+
+`roller collect --bench` takes every setting of a benchmark run as a command-line flag.
+`roller bench run` reads the same settings from layered YAML or JSON files and starts the
+identical `collect --bench` run, so a run can be reviewed, versioned and repeated as a file.
 
 ```bash
-scripts/run-benchmark.sh \
+roller bench run \
   --config examples/benchmarks/base.yaml \
   --extra-config examples/benchmarks/wildclawbench.yaml \
   --dry-run
 ```
 
-Remove `--dry-run` after checking the plan. The command still uses `roller collect --bench` underneath, so existing commands and result formats remain compatible.
+Remove `--dry-run` after checking the plan. The run directory, `tasks.jsonl`, `score.json` and
+`bench-report.json` are the same as those of `collect --bench`. `info.json` additionally records
+the configuration sources under `bench_run_config`.
+
+`roller init` copies the example configurations to `examples/benchmarks/` in the working
+directory. In a source checkout, `scripts/run-benchmark.sh` locates the `roller` executable and
+passes its arguments to `roller bench run`.
 
 ## Configuration layers
 
-`--config` accepts YAML or JSON. Repeat `--extra-config` with a file or an inline JSON object. Later layers override earlier ones. Objects merge recursively; lists and scalar values are replaced. Set an optional object to `null` when the next layer needs to discard it, for example when changing Harnesses and clearing the previous `harness.extra` block.
+`--config` accepts a YAML or JSON file. `--extra-config` accepts a file or an inline JSON object
+and can be repeated; later layers override earlier ones. Objects merge recursively, while lists
+and scalar values are replaced. Setting an optional object to `null` discards it, for example
+to clear the previous layer's `harness.extra` when changing Harnesses.
 
-The machine-readable contract is [`schemas/bench-run.schema.json`](../../../schemas/bench-run.schema.json). It describes one layer, so fields may be omitted and supplied by a later layer. Roller validates the merged configuration before loading any containers.
+The examples keep the model connection and execution settings in `base.yaml` and the benchmark,
+its grading environment and its Harness in one file per benchmark:
 
 ```yaml
 schema_version: roller.bench-run/v1
@@ -33,7 +47,7 @@ benchmark:
 
 model:
   id: ${ROLLER_MODEL_ID}
-  provider: roller              # OpenClaw namespace; ignored by other Harnesses
+  provider: roller              # OpenClaw namespace; other Harnesses ignore it
   base_url: ${ROLLER_MODEL_BASE_URL}
   api_key_env: ROLLER_MODEL_API_KEY
   api_protocol: openai-completions  # optional; inferred from the Harness when omitted
@@ -43,7 +57,6 @@ harness:
   id: openclaw
   image: wildclawbench-ubuntu:v1.3
   extra:
-    model_request_timeout: 600
     max_tokens: 32768
 
 execution:
@@ -59,45 +72,49 @@ execution:
   pass_env: []
 ```
 
-An environment reference must occupy the whole field, as in `${ROLLER_MODEL_BASE_URL}`. Roller rejects forms such as `https://${HOST}/v1`, which prevents unresolved variables and accidental credential concatenation. `model.api_key_env` names the host variable that contains the model key; the key itself stays out of the file.
+An environment reference must occupy the whole value, as in `${ROLLER_MODEL_BASE_URL}`. Roller
+rejects forms such as `https://${HOST}/v1` and references to unset variables.
+`model.api_key_env` names the host variable that holds the model key; the key itself is not
+written to the file. `model.base_url` must not contain user information, a query string or a
+fragment, because the endpoint is passed to the Harness as an argument.
 
-Keep credentials out of `model.base_url`. Roller rejects URL user information, query strings, and fragments because the endpoint is passed to the Harness as an argument.
+Roller checks the merged configuration before it starts any container, and unknown fields are
+errors. [`schemas/bench-run.schema.json`](../../../schemas/bench-run.schema.json) describes one
+layer for editors and CI, so a layer may omit fields that another layer supplies.
 
-## Common fields
+## Fields
 
-| Field | Purpose |
-| --- | --- |
-| `benchmark.id` | Adapter registered by `roller bench list` |
-| `benchmark.root` | Prepared upstream checkout or data directory |
-| `benchmark.variant` | Evaluation condition, such as SkillsBench `with-skill` |
-| `benchmark.categories` / `task_ids` | Optional filters; an empty list applies no filter |
-| `benchmark.timeout_multiplier` | Scales both the task declaration and execution deadline |
-| `benchmark.environment` | Benchmark variables scoped to this process and restored afterward |
-| `benchmark.extra` | Options owned by the selected benchmark; unknown fields fail before execution |
-| `model.id` | Model under test |
-| `model.provider` | Optional OpenClaw provider namespace; other Harnesses still receive `model.id` unchanged |
-| `model.base_url` | Model API endpoint |
-| `model.api_key_env` | Host environment variable containing the model key |
-| `model.api_protocol` | API protocol. OpenClaw writes it into the generated provider; other Harnesses validate it against their native protocol |
-| `model.thinking` | Common thinking or reasoning-effort level, validated and mapped by each Harness |
-| `harness.id` / `image` | Harness and container image |
-| `harness.extra` | Harness-specific settings; unknown fields fail before execution |
-| `execution.*` | Output, concurrency, attempts, retries, trace, and common container settings |
+| Field | `collect` flag | Purpose |
+| --- | --- | --- |
+| `benchmark.id` | `--bench` | Adapter listed by `roller bench list` |
+| `benchmark.root` | `--bench-root` | Prepared upstream checkout or data directory |
+| `benchmark.variant` | `--bench-variant` | Evaluation condition, such as SkillsBench `with-skill` |
+| `benchmark.categories` / `task_ids` | `--bench-category` / `--bench-task-id` | Filters; an empty list selects everything |
+| `benchmark.timeout_multiplier` | `--bench-timeout-multiplier` | Scales each task timeout |
+| `benchmark.environment` | none | Variables set for this process only and restored afterwards, for judges and benchmark tools |
+| `benchmark.extra` | see below | Options of the selected benchmark |
+| `model.id` | `--model` | Model under test |
+| `model.label` | `--model-label` | Local label for sample directories and container names |
+| `model.provider` | none | OpenClaw provider namespace, `roller` by default; other Harnesses receive `model.id` unchanged |
+| `model.base_url` | `--api-base` | Model API endpoint |
+| `model.api_key_env` | `--api-key-env` | Host environment variable that holds the model key |
+| `model.api_protocol` | none | API protocol; written to the generated OpenClaw provider and checked against the native protocol of other Harnesses |
+| `model.params` | none | Extra fields of the generated OpenClaw model entry |
+| `model.thinking` | `--thinking` | Thinking level, validated and mapped by each Harness |
+| `harness.id` / `image` | `--harness` / `--docker-image` | Harness and container image |
+| `harness.extra` | see below | Options of the selected Harness |
 
-OpenClaw uses the same `model.id`, `base_url`, `api_key_env`, and `api_protocol`. Roller creates a temporary models file and removes it after the command. `model.provider` supplies OpenClaw's internal namespace and defaults to `roller` for a plain model ID. The older `provider/model` spelling remains supported when `model.provider` is omitted. Advanced users can set `harness.extra.model_config` instead. Set inherited `model.base_url`, `model.api_key_env`, and `model.api_protocol` fields to `null` in that layer because a custom models file cannot be combined with them.
+For OpenClaw, Roller generates a temporary models file from `model.id`, `base_url`,
+`api_key_env`, `api_protocol` and `params`, and removes it after the command. When
+`model.provider` is omitted, an ID of the form `provider/model` is split at the first slash. To
+supply a complete models file instead, set `harness.extra.model_config` and set the inherited
+`model.base_url`, `model.api_key_env` and `model.api_protocol` to `null` in that layer; the two
+forms cannot be combined.
 
-When switching away from the Harness selected by a benchmark example, override its image and clear its options together:
+Codex uses `openai-responses`, Claude Code uses `anthropic-messages`, and Hermes, OpenCode,
+DeepSeek and Pi use `openai-completions`. Roller rejects a conflicting `api_protocol`.
 
-```yaml
-harness:
-  id: codex
-  image: wildclawbench-codex-ubuntu:v0.0
-  extra: null
-```
-
-Codex uses `openai-responses`, Claude Code uses `anthropic-messages`, and Hermes, OpenCode, DeepSeek, and Pi use `openai-completions`. Roller rejects a conflicting `api_protocol` instead of silently ignoring it.
-
-Use `benchmark.environment` for judge and benchmark tool settings. For example, PinchBench can map shared judge variables to its upstream names:
+`benchmark.environment` maps shared variables to the names a benchmark expects:
 
 ```yaml
 benchmark:
@@ -107,33 +124,72 @@ benchmark:
     PINCHBENCH_JUDGE_MODEL: ${ROLLER_JUDGE_MODEL}
 ```
 
-These values are not placed on the command line. Dry-run output and run metadata record the effective non-secret settings, configuration paths, a digest of the redacted configuration, and environment variable names. Secret values are not recorded.
+These values do not appear on the command line. The dry-run output and `info.json` record the
+effective settings, the configuration paths, a digest of the redacted configuration and the
+names of the environment variables, without secret values.
 
-`benchmark.extra` is intentionally separate from `harness.extra`. The only current field is
-QwenClawBench's `runs_per_task`, which duplicates each selected task and preserves the upstream
-run index in benchmark metadata. Use `execution.samples` for ordinary repeated sampling; do not
-combine the two unless the resulting multiplication is intended.
+`benchmark.extra` currently has one field, QwenClawBench's `runs_per_task`
+(`--bench-runs-per-task`). It duplicates each selected task and keeps the upstream run index in
+the bench metadata. `execution.samples` is the ordinary repeated sampling; setting both
+multiplies the number of trajectories.
 
-## Harness-specific settings
+### Execution
 
-`harness.extra` uses names without a Harness prefix. Roller maps them to the existing `collect` options.
-
-| Harness | Supported `extra` fields |
+| Field | `collect` flag |
 | --- | --- |
-| OpenClaw | `model_config`, `gateway_port`, `gateway_port_step`, `gateway_startup_timeout`, `model_request_timeout`, `max_tokens`, `session_id`, `search_provider`, `collect_paths`, `set_image_model`, `cache_trace` |
-| Codex | `config`, `reasoning_summary`, `web_search`, `websockets` |
-| Claude Code | `settings`, `max_turns`, `max_thinking_tokens`, `permission_mode` |
+| `output`, `run_name` | `--output`, `--run-name` |
+| `parallel`, `launch_interval`, `grader_parallel` | `--parallel`, `--launch-interval`, `--grader-parallel` |
+| `samples`, `retries`, `timeout` | `--samples`, `--retries`, `--timeout` |
+| `start_index`, `limit`, `resume` | `--start-index`, `--limit`, `--resume` |
+| `wire_trace`, `keep_thinking` | `--wire-trace`, `--keep-thinking` / `--no-keep-thinking` |
+| `capture_calls`, `capture_debug` | `--capture-calls`, `--capture-debug` |
+| `thinking_capabilities` | `--thinking-capabilities` |
+| `pass_env` | `--pass-env`, once per name |
+| `container_user`, `network`, `docker_binary` | `--container-user`, `--network`, `--docker-binary` |
+| `keep_container_on_error`, `rebuild_task_images` | `--keep-container-on-error`, `--rebuild-task-images` |
+| `max_input_file_bytes`, `max_task_input_bytes` | `--max-input-file-bytes`, `--max-task-input-bytes` |
+
+### Harness options
+
+`harness.extra` uses names without the Harness prefix:
+
+| Harness | `extra` fields |
+| --- | --- |
+| OpenClaw | `model_config`, `gateway_port`, `gateway_port_step`, `gateway_startup_timeout`, `model_request_timeout`, `max_tokens`, `session_id`, `search_provider`, `collect_paths`, `set_image_model`, `cache_trace`, `config_set` |
+| Codex | `config`, `config_set`, `reasoning_summary`, `web_search`, `websockets` |
+| Claude Code | `settings`, `max_turns`, `max_thinking_tokens`, `permission_mode`, `capture_calls` |
 | Hermes | `max_iterations`, `context_length`, `vision` |
 | OpenCode | `max_steps`, `context_length`, `output_tokens`, `vision` |
-| DeepSeek / Pi | `max_steps`, `context_length`, `output_tokens` |
+| DeepSeek | `max_steps`, `context_length`, `output_tokens` |
+| Pi | `max_steps`, `context_length`, `output_tokens`, `input_modalities` |
 
-`model_request_timeout` requires an OpenClaw release whose provider schema accepts `timeoutSeconds`; the older WildClawBench image does not, so its example leaves this field unset.
+`config_set` is a list of `KEY=VALUE` strings, one `--openclaw-config-set` or
+`--codex-config-set` each. `model_request_timeout` requires an OpenClaw release whose provider
+schema accepts `timeoutSeconds`; `wildclawbench-ubuntu:v1.3` does not, so the WildClawBench
+example leaves it unset.
 
-## The three-stage workflow
+When a layer changes the Harness that a benchmark example selects, it overrides the image and
+clears the options together:
 
-### 1. Prepare
+```yaml
+harness:
+  id: codex
+  image: wildclawbench-codex-ubuntu:v0.0
+  extra: null
+```
 
-Every maintained adapter provides `scripts/prepare-<name>.sh [ROOT]`. Use the dispatcher when scripting several benchmarks:
+### Flags without a field
+
+A configuration describes one benchmark on one Harness. `--tasks`, `--prompt-key`, `--id-key`
+and `--workspace` belong to task-file runs. The per-Harness `--<harness>-image`,
+`--<harness>-api-base` and `--<harness>-api-key-env` overrides belong to mixed-Harness task
+files; `harness.image`, `model.base_url` and `model.api_key_env` set the same values here.
+`--task-timeouts` is always on with a benchmark, and `--log-level` keeps its default.
+
+## Prepare, run, report
+
+Each benchmark with an example configuration has `scripts/prepare-<id>.sh [ROOT]`, and
+`scripts/prepare-benchmark.sh` dispatches to it by ID:
 
 ```bash
 scripts/prepare-benchmark.sh wildclawbench "$WILDCLAWBENCH_ROOT"
@@ -142,59 +198,49 @@ scripts/prepare-benchmark.sh qwenclawbench "$QWENCLAWBENCH_ROOT"
 scripts/prepare-benchmark.sh skillsbench "$SKILLSBENCH_ROOT"
 ```
 
-Preparation scripts fetch the expected data and image, check an existing checkout, and print its resolved revision. They do not read or write model or judge keys.
-
-### 2. Run and grade
+A preparation script fetches the pinned upstream revision and the Harness image. It reports an
+error when an existing checkout is at another revision and leaves that checkout unchanged. It
+does not read or write model or judge keys.
 
 ```bash
-export ROLLER_MODEL_ID=example/model
+export ROLLER_MODEL_ID=example-model
 export ROLLER_MODEL_BASE_URL=https://api.example.com/v1
 export ROLLER_MODEL_API_KEY=replace-with-your-api-key
 export ROLLER_BENCH_OUTPUT="$PWD/runs"
 
-scripts/run-benchmark.sh \
+roller bench run \
   --config examples/benchmarks/base.yaml \
   --extra-config examples/benchmarks/wildclawbench.yaml \
   --dry-run
 
-scripts/run-benchmark.sh \
+roller bench run \
   --config examples/benchmarks/base.yaml \
   --extra-config examples/benchmarks/wildclawbench.yaml
 ```
 
-`--dry-run` loads the adapter, filters tasks, and validates the endpoint, key variable, thinking level, and Harness-specific fields. It prints the effective configuration, task and trajectory counts, image, and per-task timeout without starting containers or creating a run directory.
+`--dry-run` loads the adapter, selects the tasks and validates the endpoint, key variable,
+thinking level and Harness options. It prints the effective configuration, the task and
+trajectory counts, the image and the per-task timeouts without starting a container or creating
+a run directory.
 
-Roller grades each task before its agent container is removed. A completed run contains `tasks.jsonl`, trajectories, `score.json`, `info.json`, and `bench-report.json`.
-
-### 3. Rebuild a report
-
-The run command creates the report automatically. Rebuild it after auditing or repairing samples with:
+The run writes `bench-report.json`. To rebuild it after auditing or repairing samples:
 
 ```bash
 roller bench report runs/<run-name> --output runs/<run-name>/bench-report.json
 ```
 
-## Reference configurations
+## Example configurations
 
-| Benchmark | Extra configuration | Preparation script |
+| Benchmark | Layer after `base.yaml` | Preparation script |
 | --- | --- | --- |
-| WildClawBench | `examples/benchmarks/wildclawbench.yaml` | `scripts/prepare-wildclawbench.sh` |
-| PinchBench | `examples/benchmarks/pinchbench.yaml` | `scripts/prepare-pinchbench.sh` |
-| QwenClawBench | `examples/benchmarks/knclawbench.yaml` | `scripts/prepare-knclawbench.sh` |
-| SkillsBench with skill | `examples/benchmarks/skillsbench.yaml` | `scripts/prepare-skillsbench.sh` |
-| SkillsBench without skill | Add `examples/benchmarks/skillsbench-no-skill.yaml` after the previous layer | Same as above |
+| [WildClawBench](wildclawbench.md) | `examples/benchmarks/wildclawbench.yaml` | `scripts/prepare-wildclawbench.sh` |
+| [PinchBench](pinchbench.md) | `examples/benchmarks/pinchbench.yaml` | `scripts/prepare-pinchbench.sh` |
+| [QwenClawBench](qwenclawbench.md) | `examples/benchmarks/qwenclawbench.yaml` | `scripts/prepare-qwenclawbench.sh` |
+| [SkillsBench](skillsbench.md), with skill | `examples/benchmarks/skillsbench.yaml` | `scripts/prepare-skillsbench.sh` |
+| SkillsBench, no skill | `skillsbench.yaml`, then `examples/benchmarks/skillsbench-no-skill.yaml` | Same as above |
 
-WildClawBench is the full reference integration because it exercises an independent judge, search configuration, task-level timeouts, several Harnesses, and delayed ground-truth staging. PinchBench, QwenClawBench, and SkillsBench use the same entry point with smaller overlays.
-
-## Requirements for a new benchmark
-
-A new benchmark should include:
-
-1. A `BenchAdapter` implementation and registry entry.
-2. An idempotent `scripts/prepare-<name>.sh` that does not silently switch an existing checkout to another revision.
-3. `examples/benchmarks/<name>.yaml` containing only public defaults and environment references.
-4. English and Chinese pages organized as preparation, configuration, dry run, execution, scoring, and limitations.
-5. Adapter unit tests, a configuration dry-run test, and at least one container smoke test that does not depend on an LLM judge.
-6. A parameter mapping table that names unsupported upstream options.
-
-The adapter must stage ground truth through `bench.grade.stage` after the agent exits. Grader failures and valid zero scores must remain distinct. For an LLM judge, record the judge model, endpoint source, and request parameters without persisting its key.
+Each bench guide lists the settings that must match upstream and the environment variables its
+graders read. An example for another bench is named `examples/benchmarks/<id>.yaml` after the
+adapter ID, with `scripts/prepare-<id>.sh` beside it, and contains only public defaults and
+environment references. [Adding a new bench](bench-format.md#6-adding-a-new-bench) covers the
+adapter itself.
