@@ -11,6 +11,8 @@
 <p align="center">
   <a href="#harnesses"><img src="https://img.shields.io/badge/Harnesses-7-00866F?style=flat&amp;labelColor=4B5563" alt="7 Harnesses"></a>
   <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-5-00866F?style=flat&amp;labelColor=4B5563" alt="5 benchmark adapters"></a>
+  <a href="https://pypi.org/project/roller-agent/"><img src="https://img.shields.io/pypi/v/roller-agent?style=flat&amp;labelColor=4B5563&amp;color=00866F" alt="PyPI version"></a>
+  <a href="https://github.com/Valen-Team/Roller/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/Valen-Team/Roller/tests.yml?branch=main&amp;style=flat&amp;labelColor=4B5563&amp;label=tests" alt="Test status"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-6B7280?style=flat&amp;labelColor=4B5563" alt="License: Apache 2.0"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.10%2B-6B7280?style=flat&amp;logo=python&amp;logoColor=FFD43B&amp;labelColor=4B5563" alt="Python 3.10+"></a>
 </p>
@@ -382,6 +384,9 @@ ruff format --check
     </td>
     <td align="center">
       <a href="https://github.com/MqLeet"><img src="https://github.com/MqLeet.png?size=128" width="64" height="64" alt="MqLeet"><br><sub><b>MqLeet</b></sub></a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/llreda"><img src="https://github.com/llreda.png?size=128" width="64" height="64" alt="llreda"><br><sub><b>llreda</b></sub></a>
     </td>
     <td align="center">
       <a href="https://github.com/yuhangzang"><img src="https://github.com/yuhangzang.png?size=128" width="64" height="64" alt="yuhangzang"><br><sub><b>yuhangzang</b></sub></a>

@@ -28,7 +28,7 @@ ruff format --check     # formatting; drop --check to apply it
 
 The tests run on Linux and macOS without Docker or network access. Tests that execute real containers are skipped unless their environment variables are set.
 
-To check a change against a real Harness, build its image as described in the Harness guide and run `scripts/test_subagents_e2e.py` or a small task list with `roller collect`.
+To check a change against a real Harness, build its image as described in the Harness guide and run a small task list with `roller collect`, or one of the acceptance scripts: `scripts/test_multimodal_e2e.py` for image inputs and `scripts/test_subagents_e2e.py` for subagents. Both need a model endpoint and take the API key from an environment variable.
 
 ## Where things live
 
@@ -59,6 +59,12 @@ To check a change against a real Harness, build its image as described in the Ha
 python -m pip install -r docs/requirements-docs.txt
 cd docs && make html
 ```
+
+## Releasing
+
+1. Set the version in `src/roller/version.py`.
+2. In `CHANGELOG.md`, rename the Unreleased section to `## <version> - <date>` and start a new empty Unreleased section. A test fails while the changelog has no section for the package version.
+3. Merge, then push the tag `v<version>`. The release workflow builds the package, publishes it to PyPI and creates the GitHub release from that changelog section.
 
 ## Code of conduct
 

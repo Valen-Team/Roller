@@ -17,6 +17,8 @@ jobs:
       - run: python -m twine check dist/*
       - name: Check tag matches package version
         run: test -f "dist/roller_agent-${GITHUB_REF_NAME#v}-py3-none-any.whl"
+      - name: Check the changelog has this version
+        run: python scripts/release_notes.py "${GITHUB_REF_NAME#v}" > release-notes.md
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -33,3 +35,21 @@ jobs:
           name: dist
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+  github-release:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - name: Create the GitHub release from the changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/release_notes.py "${GITHUB_REF_NAME#v}" > release-notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+            --title "Roller ${GITHUB_REF_NAME#v}" --notes-file release-notes.md
