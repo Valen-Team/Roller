@@ -19,6 +19,8 @@ Claude Code Harness 适合以下场景：
 
 ## 2. 镜像准备
 
+Claude Code 的许可不允许再分发，因此不提供预构建镜像，需要在本地构建。
+
 Roller 使用 [`docker/claude-code/Dockerfile`](../../../docker/claude-code/Dockerfile)，基础镜像为
 `node:22-bookworm-slim`，默认固定安装 `@anthropic-ai/claude-code@2.1.222`。Codex 已使用的
 Node 22 离线归档可直接复用，无需重新下载基础镜像。

@@ -19,6 +19,15 @@ Codex Harness 适用于以下场景：
 
 ## 2. 镜像准备
 
+拉取预构建镜像，并标记为 Roller 默认使用的名称：
+
+```bash
+docker pull ghcr.io/valen-team/roller-codex:0.149.0
+docker tag ghcr.io/valen-team/roller-codex:0.149.0 roller-codex:0.149.0
+```
+
+预构建镜像的平台为 `linux/amd64`。本节其余部分说明如何自行构建。
+
 Roller 使用 [`docker/codex/Dockerfile`](../../../docker/codex/Dockerfile)，基础镜像为
 `node:22-bookworm-slim`，默认固定安装 `@openai/codex@0.149.0`。镜像还包含 Git、ripgrep、
 Python、curl、jq、SSH client 等常用 task 工具。

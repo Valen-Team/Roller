@@ -60,6 +60,10 @@ python -m pip install -r docs/requirements-docs.txt
 cd docs && make html
 ```
 
+## Harness images
+
+`scripts/prebuilt_images.py` lists the Harness images published to `ghcr.io/valen-team`. The Images workflow builds them on every release tag and can be started by hand. Changing a pinned Harness version means changing the default image name in `src/roller/harnesses/` and the `ARG` in the Dockerfile together; a test compares the two.
+
 ## Releasing
 
 1. Set the version in `src/roller/version.py`.

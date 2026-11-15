@@ -19,7 +19,14 @@ The Hermes Harness does not currently accept images or video directly in task me
 
 ## 2. Image preparation
 
-Build the Hermes image from the Roller repository root:
+Pull the prebuilt image and give it the name Roller uses by default:
+
+```bash
+docker pull ghcr.io/valen-team/roller-hermes:d15ed4445207
+docker tag ghcr.io/valen-team/roller-hermes:d15ed4445207 roller-hermes:d15ed4445207
+```
+
+The prebuilt image is `linux/amd64`. To build the image yourself instead, run this from the Roller repository root:
 
 ```bash
 docker build -t roller-hermes:d15ed4445207 docker/hermes

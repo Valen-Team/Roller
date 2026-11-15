@@ -19,7 +19,14 @@ DeepSeek Harness 适合以下场景：
 
 ## 2. 镜像准备
 
-在 Roller 仓库根目录构建 DeepSeek 镜像：
+拉取预构建镜像，并标记为 Roller 默认使用的名称：
+
+```bash
+docker pull ghcr.io/valen-team/roller-deepseek:0.1.5rc1
+docker tag ghcr.io/valen-team/roller-deepseek:0.1.5rc1 roller-deepseek:0.1.5rc1
+```
+
+预构建镜像的平台为 `linux/amd64`。如需自行构建，在 Roller 仓库根目录执行：
 
 ```bash
 docker build -t roller-deepseek:0.1.5rc1 docker/deepseek

@@ -19,7 +19,14 @@ This tool configuration has no image viewer, so it is not suitable for tasks tha
 
 ## 2. Image preparation
 
-Build the DeepSeek image from the Roller repository root:
+Pull the prebuilt image and give it the name Roller uses by default:
+
+```bash
+docker pull ghcr.io/valen-team/roller-deepseek:0.1.5rc1
+docker tag ghcr.io/valen-team/roller-deepseek:0.1.5rc1 roller-deepseek:0.1.5rc1
+```
+
+The prebuilt image is `linux/amd64`. To build the image yourself instead, run this from the Roller repository root:
 
 ```bash
 docker build -t roller-deepseek:0.1.5rc1 docker/deepseek

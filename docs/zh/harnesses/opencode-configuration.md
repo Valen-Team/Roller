@@ -19,7 +19,14 @@ OpenCode Harness 适合以下场景：
 
 ## 2. 镜像准备
 
-在 Roller 仓库根目录构建 OpenCode 镜像：
+拉取预构建镜像，并标记为 Roller 默认使用的名称：
+
+```bash
+docker pull ghcr.io/valen-team/roller-opencode:1.18.30
+docker tag ghcr.io/valen-team/roller-opencode:1.18.30 roller-opencode:1.18.30
+```
+
+预构建镜像的平台为 `linux/amd64`。如需自行构建，在 Roller 仓库根目录执行：
 
 ```bash
 docker build -t roller-opencode:1.18.30 docker/opencode

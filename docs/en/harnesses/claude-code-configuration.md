@@ -19,6 +19,8 @@ An endpoint that only supports OpenAI Chat Completions or Responses cannot be us
 
 ## 2. Image preparation
 
+No prebuilt image is published for Claude Code, because its licence does not allow redistribution. Build it locally.
+
 Roller uses [`docker/claude-code/Dockerfile`](../../../docker/claude-code/Dockerfile). The base image is
 `node:22-bookworm-slim`, and the default pinned install is `@anthropic-ai/claude-code@2.1.222`. The Node 22
 offline archive already used by Codex can be reused, so the base image does not need to be downloaded again.
