@@ -29,7 +29,7 @@ Docker 中的 Agent Harness
 - 制作统一结构的轨迹或 SFT JSONL。
 - 继续中断的采集，并在内置 Viewer 中检查结果。
 
-Roller 需要 Python 3.10+。项目目前使用 Task schema <code>roller.task/v1</code>，处于 Alpha 阶段，采用 Apache 2.0 许可证。源码见 [GitHub](https://github.com/Liuziyu77/Roller)。
+Roller 需要 Python 3.10+。项目目前使用 Task schema <code>roller.task/v1</code>，处于 Alpha 阶段，采用 Apache 2.0 许可证。源码见 [GitHub](https://github.com/Valen-Team/Roller)。
 
 ## 选择 Harness
 

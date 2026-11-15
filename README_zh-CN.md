@@ -100,7 +100,7 @@ Roller 以单个宿主机进程运行。Collector 并行调度 rollout，并为�
 环境要求：Python 3.10 及以上版本，以及正在运行的 Docker daemon。
 
 ```bash
-git clone https://github.com/Liuziyu77/Roller.git
+git clone https://github.com/Valen-Team/Roller.git
 cd Roller
 conda create -n roller python=3.11 -y
 conda activate roller
@@ -313,7 +313,7 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
 
 ## 参与贡献
 
-缺陷请通过 [Issues](https://github.com/Liuziyu77/Roller/issues) 提交。新的 Harness、bench 及文档改进可通过 [Pull Requests](https://github.com/Liuziyu77/Roller/pulls) 提交。代码结构如下：
+缺陷请通过 [Issues](https://github.com/Valen-Team/Roller/issues) 提交。新的 Harness、bench 及文档改进可通过 [Pull Requests](https://github.com/Valen-Team/Roller/pulls) 提交。代码结构如下：
 
 | 模块 | 位置 |
 | --- | --- |
