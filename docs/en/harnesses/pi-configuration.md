@@ -69,6 +69,7 @@ This table lists Pi-specific runtime flags only. See section 3 for API addresses
 | `--pi-max-steps` | At most 12 model requests per user message, also bounded by task and turn deadlines |
 | `--pi-context-length` | 128000 by default, minimum 1024. Set it to match the actual model service |
 | `--pi-output-tokens` | 8192 by default. Must be positive and smaller than the context window. Sent as `max_tokens` |
+| `--pi-input-modalities` | `text,image` by default. Use `text` for a text-only model. It declares what the model accepts and does not add vision to the model service. Recorded in the run lock and checked on resume |
 | `--thinking` / `runtime.thinking` | `off/minimal/low/medium/high/xhigh/max`. Defaults to `off`, with `none` as an alias |
 | `--wire-trace` | Every mode records native requests. `full` additionally captures HTTP requests and requires an explicit API address with `--network host` |
 | `--no-keep-thinking` | Removes reasoning only from ACTF/SFT. Native events and continuation history retain it |

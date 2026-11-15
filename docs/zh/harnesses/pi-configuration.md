@@ -69,6 +69,7 @@ roller collect \
 | `--pi-max-steps` | 每条用户消息最多 12 次模型请求，同时受 task 和轮次超时的限制 |
 | `--pi-context-length` | 默认 128000，至少 1024。按实际模型服务设置 |
 | `--pi-output-tokens` | 默认 8192，必须为正且小于上下文窗口。以 `max_tokens` 发送 |
+| `--pi-input-modalities` | 默认 `text,image`，纯文本模型使用 `text`。声明模型接受的输入类型，不会让模型服务获得视觉能力。写入 run lock，resume 时检查一致性 |
 | `--thinking` / `runtime.thinking` | `off/minimal/low/medium/high/xhigh/max`。默认 `off`，`none` 为别名 |
 | `--wire-trace` | 各模式均记录原生请求。`full` 额外采集 HTTP 请求，要求显式 API 地址和 `--network host` |
 | `--no-keep-thinking` | 仅移除 ACTF/SFT 中的 reasoning，原始事件与续聊历史保持完整 |

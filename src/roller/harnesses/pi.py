@@ -40,6 +40,7 @@ class PiConfig:
     max_steps: int = 12
     context_length: int = 128000
     output_tokens: int = 8192
+    input_modalities: tuple[str, ...] = ("text", "image")
     capture_calls: bool = False
     capture_debug: str = "on-error"
     wire_trace_mode: str = "actf"
@@ -49,6 +50,8 @@ class PiConfig:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "reasoning_effort", pi_effort(self.reasoning_effort) or "off")
+        if self.input_modalities not in (("text",), ("text", "image")):
+            raise ValueError("Pi input modalities must be text or text,image")
         validate_bridge_config(self, "Pi")
         validate_step_limits(self, "Pi")
 
@@ -75,7 +78,7 @@ class PiSession(BridgeSession):
         return {
             "turn": self.turns, "max_steps": config.max_steps,
             "context_length": config.context_length, "output_tokens": config.output_tokens,
-            "tools": list(PI_TOOLS),
+            "input_modalities": list(config.input_modalities), "tools": list(PI_TOOLS),
             "context_paths": [item.target for item in self.request.task.context_files if item.role != "skill"],
         }
 
@@ -90,7 +93,8 @@ class PiSession(BridgeSession):
 
     def settings(self) -> dict[str, Any]:
         config = self.harness.config
-        return {"max_steps": config.max_steps, "context_length": config.context_length, "output_tokens": config.output_tokens, "tools": list(PI_TOOLS)}
+        return {"max_steps": config.max_steps, "context_length": config.context_length, "output_tokens": config.output_tokens,
+                "input_modalities": list(config.input_modalities), "tools": list(PI_TOOLS)}
 
     def collect_diagnostics(self) -> None:
         # Startup/import failures may precede the native journal.
