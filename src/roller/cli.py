@@ -5,6 +5,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -12,7 +13,7 @@ import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from roller.collector import CollectionConfig, Collector, check_retired_cot_samples
 from roller.benches import (
@@ -27,7 +28,6 @@ from roller.bundles import BundlePolicy, TaskBundleStore
 from roller.conversation import ConversationManager
 from roller.image_build import prepare_task_images
 from roller.harnesses.claude_code import (
-    COMMON_ENV_NAMES as CLAUDE_CODE_COMMON_ENV_NAMES,
     DEFAULT_CLAUDE_CODE_IMAGE,
     CLAUDE_PERMISSION_MODES,
     ClaudeCodeConfig,
@@ -36,31 +36,37 @@ from roller.harnesses.claude_code import (
     redact_anthropic_base_url,
 )
 from roller.harness_registry import HARNESSES, HARNESS_NAMES
+from roller.harnesses.config_overrides import (
+    parse_config_assignment,
+    recorded_config_assignments,
+)
+from roller.harnesses.container import PROXY_ENV_NAMES
 from roller.harnesses.deepseek import (
-    COMMON_ENV_NAMES as DEEPSEEK_COMMON_ENV_NAMES,
     DEFAULT_DEEPSEEK_IMAGE, DEEPSEEK_VERSION, DEEPSEEK_TOOLS,
     DeepSeekConfig, DeepSeekHarness, deepseek_effort,
 )
 from roller.harnesses.pi import (
-    COMMON_ENV_NAMES as PI_COMMON_ENV_NAMES,
     DEFAULT_PI_IMAGE, PI_VERSION, PI_TOOLS,
     PiConfig, PiHarness, pi_effort,
 )
 from roller.harnesses.opencode import (
-    COMMON_ENV_NAMES as OPENCODE_COMMON_ENV_NAMES,
     DEFAULT_OPENCODE_IMAGE, OPENCODE_VERSION, OPENCODE_TOOLS,
     OpenCodeConfig, OpenCodeHarness, opencode_effort,
 )
 from roller.harnesses.hermes import (
-    COMMON_ENV_NAMES as HERMES_COMMON_ENV_NAMES,
     DEFAULT_HERMES_IMAGE, HERMES_REVISION, HermesConfig, HermesHarness, hermes_effort,
 )
 from roller.harnesses.codex import (
-    COMMON_ENV_NAMES as CODEX_COMMON_ENV_NAMES,
     DEFAULT_CODEX_IMAGE,
     CodexConfig,
     CodexHarness,
+    codex_effort,
     redact_api_base,
+)
+from roller.harnesses.gateway_ports import (
+    DEFAULT_GATEWAY_PORT,
+    GatewayPortReservation,
+    reserve_gateway_ports,
 )
 from roller.harnesses.openclaw import (
     COMMON_ENV_NAMES as OPENCLAW_COMMON_ENV_NAMES,
@@ -78,7 +84,13 @@ from roller.run_lock import (
 from roller.storage import atomic_write_json, safe_component
 from roller.tasks import TaskFormatError, build_requests, load_tasks
 from roller.thinking import THINKING_LEVELS, normalize_thinking, resolve_thinking
+from roller.trajectory_audit import training_summary
+from roller.thinking_capabilities import (
+    ThinkingCapabilities,
+    load_thinking_capabilities,
+)
 from roller.version import __version__
+from roller.viewer import DEFAULT_PORT as VIEWER_DEFAULT_PORT
 from roller.viewer import serve as serve_viewer
 
 logger = logging.getLogger(__name__)
@@ -103,10 +115,18 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"Roller {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    init = subparsers.add_parser("init", help="write the example tasks and configuration templates")
+    init.add_argument("directory", nargs="?", default=".", help="target directory (default: current directory)")
+
     view = subparsers.add_parser("view", help="browse a Roller run in a local web UI")
     view.add_argument("run_dir", help="Roller run directory containing info.json/samples")
     view.add_argument("--host", default="127.0.0.1", help="listen host (default: loopback)")
-    view.add_argument("--port", type=int, default=8765, help="listen port (default: 8765)")
+    view.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help=f"listen port (default: {VIEWER_DEFAULT_PORT}, or a free port when it is busy)",
+    )
 
     bench = subparsers.add_parser("bench", help="work with benchmark adapters")
     bench_sub = bench.add_subparsers(dest="bench_command", required=True)
@@ -215,6 +235,16 @@ def _build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--timeout", type=int, default=600, help="per-trajectory timeout in seconds")
     collect.add_argument("--parallel", type=int, default=1)
     collect.add_argument(
+        "--launch-interval",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help=(
+            "minimum seconds between two rollout launches, so --parallel workers "
+            "do not all start at once (default: 0)"
+        ),
+    )
+    collect.add_argument(
         "--grader-parallel",
         type=int,
         help="maximum concurrent benchmark graders (default: --parallel)",
@@ -288,6 +318,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="rebuild task-specific benchmark images even when their tags exist locally",
     )
     runtime.add_argument("--network", default="host")
+    runtime.add_argument("--capture-debug", choices=["off", "on-error", "full"], default="on-error",
+        help="retain call capture debug evidence: on-error (default), off, or full")
+    runtime.add_argument("--capture-calls", action="store_true",
+        help="save full model calls and native subagent relations for all harness participants")
     runtime.add_argument(
         "--thinking",
         type=normalize_thinking,
@@ -296,6 +330,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Harness reasoning/thinking level; 'none' aliases 'off'. Each Harness "
             "applies its own validation and effort mapping"
+        ),
+    )
+    runtime.add_argument(
+        "--thinking-capabilities",
+        metavar="PATH",
+        help=(
+            "optional versioned JSON capability declarations keyed by harness, "
+            "model, and endpoint; unsupported efforts fail before rollout"
         ),
     )
     runtime.add_argument(
@@ -330,9 +372,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
     openclaw = collect.add_argument_group("OpenClaw")
     openclaw.add_argument("--model-config", help="OpenClaw models JSON; supports ${ENV_NAME}")
-    openclaw.add_argument("--gateway-port", type=int, default=18789)
+    openclaw.add_argument(
+        "--gateway-port",
+        type=int,
+        help=(
+            "first OpenClaw gateway port (default: the first range from "
+            f"{DEFAULT_GATEWAY_PORT} that no other run on this host holds)"
+        ),
+    )
     openclaw.add_argument("--gateway-port-step", type=int, default=10)
-    openclaw.add_argument("--gateway-startup-timeout", type=float, default=30.0)
+    openclaw.add_argument("--gateway-startup-timeout", type=float, default=240.0)
     openclaw.add_argument(
         "--openclaw-model-request-timeout",
         type=int,
@@ -347,6 +396,17 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="TOKENS",
         help="override maxTokens for the selected OpenClaw model",
+    )
+    openclaw.add_argument(
+        "--openclaw-config-set",
+        action="append",
+        default=[],
+        type=_config_assignment,
+        metavar="KEY=VALUE",
+        help=(
+            "run `openclaw config set KEY VALUE` in every OpenClaw container after "
+            "Roller's own settings; repeatable. Paths Roller manages are rejected"
+        ),
     )
     openclaw.add_argument("--session-id", default="roller")
     openclaw.add_argument("--search-provider")
@@ -440,6 +500,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     pi = collect.add_argument_group("Pi")
     pi.add_argument("--pi-max-steps", type=int, default=12, help="maximum model steps per Pi user turn (default: 12)")
+    pi.add_argument("--pi-input-modalities", choices=("text", "text,image"), default="text,image", help="Pi model input capabilities (default: text,image)")
     pi.add_argument("--pi-context-length", type=int, default=128000, help="Pi model context window (default: 128000 tokens)")
     pi.add_argument("--pi-output-tokens", type=int, default=8192, help="Pi maximum output tokens (default: 8192)")
 
@@ -447,6 +508,17 @@ def _build_parser() -> argparse.ArgumentParser:
     codex.add_argument(
         "--codex-config",
         help="optional Codex config.toml copied into the disposable container",
+    )
+    codex.add_argument(
+        "--codex-config-set",
+        action="append",
+        default=[],
+        type=_config_assignment,
+        metavar="KEY=VALUE",
+        help=(
+            "pass `-c KEY=VALUE` to every codex exec after Roller's own overrides; "
+            "repeatable. Paths Roller manages are rejected"
+        ),
     )
     codex.add_argument(
         "--reasoning-summary",
@@ -469,6 +541,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     claude = collect.add_argument_group("Claude Code")
+    claude.add_argument(
+        "--claude-capture-calls", action="store_true",
+        help="save Claude main/subagent native files, full HTTP calls and participant relations",
+    )
     claude.add_argument(
         "--claude-settings",
         help="optional Claude Code settings.json copied into the disposable container",
@@ -493,6 +569,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _deduplicate(values: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value for value in values if value))
+
+
+def _config_assignment(text: str) -> tuple[str, str]:
+    try:
+        return parse_config_assignment(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def _docker_preflight(binary: str, image: str) -> str:
@@ -551,6 +634,7 @@ def _dry_run_payload(args: argparse.Namespace, requests: list) -> dict:
         "model_labels": list(dict.fromkeys(request.display_model for request in requests)),
         "trajectories": len(requests),
         "parallel": args.parallel,
+        "launch_interval": args.launch_interval,
         "grader_parallel": args.grader_parallel or args.parallel,
         "samples": args.samples,
         "opencode_max_steps": args.opencode_max_steps,
@@ -616,6 +700,35 @@ def _with_task_timeout(request):
     return dataclasses.replace(request, timeout_seconds=declared)
 
 
+def _validate_thinking_requests(
+    requests: Sequence[Any],
+    *,
+    cli_harness: str | None,
+    harness: str,
+    api_base: str | None | Callable[[str], str | None],
+    default_effort: str | None,
+    effort_validator: Callable[[str | None], str | None],
+    capabilities: ThinkingCapabilities | None,
+) -> None:
+    def validate(model: str, selected: str | None) -> None:
+        effort = resolve_thinking(selected, default_effort)
+        effort_validator(effort)
+        if capabilities is not None:
+            capabilities.validate(
+                harness=harness,
+                model=model,
+                api_base=api_base(model) if callable(api_base) else api_base,
+                effort=effort,
+            )
+
+    for request in requests:
+        if (cli_harness or request.task.harness) == harness:
+            validate(request.model, request.task.thinking)
+        spec = request.task.user_simulator
+        if spec is not None and spec.harness == harness:
+            validate(spec.model or request.model, spec.thinking)
+
+
 def _collect(args: argparse.Namespace) -> int:
     if args.samples is None:
         args.samples = 3 if args.bench == "skillsbench" else 1
@@ -625,6 +738,8 @@ def _collect(args: argparse.Namespace) -> int:
         args.opencode_output_tokens = 32768 if args.bench == "skillsbench" else 8192
     if args.parallel < 1:
         raise ValueError("--parallel must be at least 1")
+    if not math.isfinite(args.launch_interval) or args.launch_interval < 0:
+        raise ValueError("--launch-interval must be a finite number of seconds >= 0")
     if args.grader_parallel is not None and args.grader_parallel < 1:
         raise ValueError("--grader-parallel must be at least 1")
     if args.samples < 1:
@@ -722,6 +837,8 @@ def _collect(args: argparse.Namespace) -> int:
         if request.task.user_simulator is not None
     }
     selected_harnesses = agent_harnesses | simulator_harnesses
+    if args.claude_capture_calls and "claude-code" not in selected_harnesses:
+        raise ValueError("--claude-capture-calls requires a Claude Code participant")
     cli_harness = args.harness
     args._cli_harness = cli_harness
     # Resolve the historical global default after loading tasks.  This keeps
@@ -790,6 +907,33 @@ def _collect(args: argparse.Namespace) -> int:
         raise ValueError("--openclaw-model-request-timeout requires --model-config")
     if args.openclaw_max_tokens is not None and model_config is None:
         raise ValueError("--openclaw-max-tokens requires --model-config")
+    if args.openclaw_config_set and "openclaw" not in selected_harnesses:
+        raise ValueError(
+            "--openclaw-config-set is only valid when an OpenClaw participant is selected"
+        )
+    if args.codex_config_set and "codex" not in selected_harnesses:
+        raise ValueError(
+            "--codex-config-set is only valid when a Codex participant is selected"
+        )
+
+    thinking_capabilities: ThinkingCapabilities | None = None
+    thinking_capabilities_path: Path | None = None
+    thinking_capabilities_digest: str | None = None
+    if args.thinking_capabilities:
+        thinking_capabilities_path = (
+            Path(args.thinking_capabilities).expanduser().resolve()
+        )
+        if not thinking_capabilities_path.is_file():
+            raise FileNotFoundError(
+                "thinking capabilities not found: "
+                f"{thinking_capabilities_path}"
+            )
+        thinking_capabilities = load_thinking_capabilities(
+            thinking_capabilities_path
+        )
+        thinking_capabilities_digest = hashlib.sha256(
+            thinking_capabilities_path.read_bytes()
+        ).hexdigest()
 
     codex_config_path: Path | None = None
     codex_config_digest: str | None = None
@@ -802,7 +946,8 @@ def _collect(args: argparse.Namespace) -> int:
         codex_config_digest = hashlib.sha256(codex_config_path.read_bytes()).hexdigest()
 
     claude_settings_path: Path | None = None
-    claude_settings_fingerprint: str | None = None
+    claude_settings_content: bytes | None = None
+    claude_settings_sha256: str | None = None
     if args.claude_settings:
         if "claude-code" not in selected_harnesses:
             raise ValueError("--claude-settings is only valid when a Claude Code participant is selected")
@@ -811,8 +956,9 @@ def _collect(args: argparse.Namespace) -> int:
             raise FileNotFoundError(
                 f"Claude Code settings file not found: {claude_settings_path}"
             )
-        claude_settings_fingerprint = hashlib.blake2b(
-            claude_settings_path.read_bytes(), digest_size=16
+        claude_settings_content = claude_settings_path.read_bytes()
+        claude_settings_sha256 = hashlib.sha256(
+            claude_settings_content
         ).hexdigest()
 
     hermes_config: HermesConfig | None = None
@@ -828,7 +974,10 @@ def _collect(args: argparse.Namespace) -> int:
             container_user=(
                 None if args.container_user == "image" else args.container_user
             ),
-            gateway_port_start=args.gateway_port,
+            # Placeholder until the run reserves its range (host network only).
+            gateway_port_start=(
+                DEFAULT_GATEWAY_PORT if args.gateway_port is None else args.gateway_port
+            ),
             gateway_port_step=args.gateway_port_step,
             gateway_startup_timeout=args.gateway_startup_timeout,
             network=args.network,
@@ -841,11 +990,24 @@ def _collect(args: argparse.Namespace) -> int:
             thinking=args.thinking,
             capture_cache_trace=args.cache_trace,
             wire_trace_mode=args.wire_trace,
+            capture_calls=args.capture_calls, capture_debug=args.capture_debug,
             keep_thinking=args.keep_thinking,
             collect_paths=tuple(args.collect_path),
             keep_container_on_error=args.keep_container_on_error,
             set_image_model=args.set_image_model,
             docker_binary=args.docker_binary,
+            config_set=tuple(args.openclaw_config_set),
+        )
+        def openclaw_endpoint(model: str) -> str | None:
+            providers = (model_config or {}).get("providers", {})
+            provider = providers.get(model.split("/", 1)[0], {}) if isinstance(providers, dict) else {}
+            endpoint = provider.get("baseUrl") if isinstance(provider, dict) else None
+            return endpoint if isinstance(endpoint, str) else None
+
+        _validate_thinking_requests(
+            requests, cli_harness=cli_harness, harness="openclaw",
+            api_base=openclaw_endpoint, default_effort=args.thinking,
+            effort_validator=normalize_thinking, capabilities=thinking_capabilities,
         )
     if "codex" in selected_harnesses:
         if args.collect_path and "openclaw" not in selected_harnesses:
@@ -859,15 +1021,22 @@ def _collect(args: argparse.Namespace) -> int:
             config_path=codex_config_path,
             api_base=codex_api_base,
             api_key_env=codex_api_key_env,
-            pass_env=_deduplicate((*CODEX_COMMON_ENV_NAMES, *args.pass_env)),
+            pass_env=_deduplicate((*PROXY_ENV_NAMES, *args.pass_env)),
             reasoning_effort=args.thinking,
             reasoning_summary=args.reasoning_summary,
             web_search=args.codex_web_search,
             supports_websockets=args.codex_websockets,
             wire_trace_mode=args.wire_trace,
+            capture_calls=args.capture_calls, capture_debug=args.capture_debug,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
             docker_binary=args.docker_binary,
+            config_set=tuple(args.codex_config_set),
+        )
+        _validate_thinking_requests(
+            requests, cli_harness=cli_harness, harness="codex",
+            api_base=codex_api_base, default_effort=args.thinking,
+            effort_validator=codex_effort, capabilities=thinking_capabilities,
         )
     if "claude-code" in selected_harnesses:
         if args.collect_path and "openclaw" not in selected_harnesses:
@@ -879,100 +1048,83 @@ def _collect(args: argparse.Namespace) -> int:
             ),
             network=args.network,
             settings_path=claude_settings_path,
-            settings_fingerprint=claude_settings_fingerprint,
+            config_sha256=claude_settings_sha256,
             api_base=claude_api_base,
             api_key_env=claude_api_key_env,
             pass_env=_deduplicate(
-                (*CLAUDE_CODE_COMMON_ENV_NAMES, *args.pass_env)
+                (*PROXY_ENV_NAMES, *args.pass_env)
             ),
             reasoning_effort=args.thinking,
             max_thinking_tokens=args.claude_max_thinking_tokens,
             max_turns=args.claude_max_turns,
+            capture_calls=args.claude_capture_calls or args.capture_calls, capture_debug=args.capture_debug,
             permission_mode=args.claude_permission_mode,
             wire_trace_mode=args.wire_trace,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
             docker_binary=args.docker_binary,
         )
-        for request in requests:
-            if (cli_harness or request.task.harness) == "claude-code":
-                claude_effort(resolve_thinking(request.task.thinking, claude_code_config.reasoning_effort))
-            spec = request.task.user_simulator
-            if spec is not None and spec.harness == "claude-code":
-                claude_effort(resolve_thinking(spec.thinking, claude_code_config.reasoning_effort))
+        _validate_thinking_requests(
+            requests, cli_harness=cli_harness, harness="claude-code",
+            api_base=claude_code_config.api_base, default_effort=args.thinking,
+            effort_validator=claude_effort, capabilities=thinking_capabilities,
+        )
+
+    def bridge_options(name: str, api_base: str | None, api_key_env: str) -> dict[str, Any]:
+        """Config fields shared by the Hermes, OpenCode, DeepSeek and Pi bridges."""
+
+        return dict(
+            docker_image=images[name],
+            container_user=None if args.container_user == "image" else args.container_user,
+            network=args.network, api_base=api_base, api_key_env=api_key_env,
+            pass_env=_deduplicate((*PROXY_ENV_NAMES, *args.pass_env)),
+            reasoning_effort=args.thinking, wire_trace_mode=args.wire_trace,
+            capture_calls=args.capture_calls, capture_debug=args.capture_debug,
+            keep_thinking=args.keep_thinking,
+            keep_container_on_error=args.keep_container_on_error, docker_binary=args.docker_binary,
+        )
 
     if "hermes" in selected_harnesses:
         hermes_config = HermesConfig(
-            docker_image=images["hermes"],
-            container_user=None if args.container_user == "image" else args.container_user,
-            network=args.network, api_base=hermes_api_base, api_key_env=hermes_api_key_env,
-            pass_env=_deduplicate((*HERMES_COMMON_ENV_NAMES, *args.pass_env)),
-            reasoning_effort=args.thinking, max_iterations=args.hermes_max_iterations,
+            **bridge_options("hermes", hermes_api_base, hermes_api_key_env),
+            max_iterations=args.hermes_max_iterations,
             context_length=args.hermes_context_length, vision=args.hermes_vision,
-            wire_trace_mode=args.wire_trace, keep_thinking=args.keep_thinking,
-            keep_container_on_error=args.keep_container_on_error, docker_binary=args.docker_binary,
         )
-        for request in requests:
-            if (cli_harness or request.task.harness) == "hermes":
-                hermes_effort(resolve_thinking(request.task.thinking, hermes_config.reasoning_effort))
-            spec = request.task.user_simulator
-            if spec is not None and spec.harness == "hermes":
-                hermes_effort(resolve_thinking(spec.thinking, hermes_config.reasoning_effort))
-
     if "opencode" in selected_harnesses:
         opencode_config = OpenCodeConfig(
-            docker_image=images["opencode"],
-            container_user=None if args.container_user == "image" else args.container_user,
-            network=args.network, api_base=opencode_api_base, api_key_env=opencode_api_key_env,
-            pass_env=_deduplicate((*OPENCODE_COMMON_ENV_NAMES, *args.pass_env)),
-            reasoning_effort=args.thinking, max_steps=args.opencode_max_steps,
-            context_length=args.opencode_context_length, output_tokens=args.opencode_output_tokens,
-            vision=args.opencode_vision,
-            wire_trace_mode=args.wire_trace, keep_thinking=args.keep_thinking,
-            keep_container_on_error=args.keep_container_on_error, docker_binary=args.docker_binary,
+            **bridge_options("opencode", opencode_api_base, opencode_api_key_env),
+            max_steps=args.opencode_max_steps, context_length=args.opencode_context_length,
+            output_tokens=args.opencode_output_tokens, vision=args.opencode_vision,
         )
-        for request in requests:
-            if (cli_harness or request.task.harness) == "opencode":
-                opencode_effort(resolve_thinking(request.task.thinking, opencode_config.reasoning_effort))
-            spec = request.task.user_simulator
-            if spec is not None and spec.harness == "opencode":
-                opencode_effort(resolve_thinking(spec.thinking, opencode_config.reasoning_effort))
-
     if "deepseek" in selected_harnesses:
         deepseek_config = DeepSeekConfig(
-            docker_image=images["deepseek"],
-            container_user=None if args.container_user == "image" else args.container_user,
-            network=args.network, api_base=deepseek_api_base, api_key_env=deepseek_api_key_env,
-            pass_env=_deduplicate((*DEEPSEEK_COMMON_ENV_NAMES, *args.pass_env)),
-            reasoning_effort=args.thinking, max_steps=args.deepseek_max_steps,
-            context_length=args.deepseek_context_length, output_tokens=args.deepseek_output_tokens,
-            wire_trace_mode=args.wire_trace, keep_thinking=args.keep_thinking,
-            keep_container_on_error=args.keep_container_on_error, docker_binary=args.docker_binary,
+            **bridge_options("deepseek", deepseek_api_base, deepseek_api_key_env),
+            max_steps=args.deepseek_max_steps, context_length=args.deepseek_context_length,
+            output_tokens=args.deepseek_output_tokens,
         )
-        for request in requests:
-            if (cli_harness or request.task.harness) == "deepseek":
-                deepseek_effort(resolve_thinking(request.task.thinking, deepseek_config.reasoning_effort))
-            spec = request.task.user_simulator
-            if spec is not None and spec.harness == "deepseek":
-                deepseek_effort(resolve_thinking(spec.thinking, deepseek_config.reasoning_effort))
-
     if "pi" in selected_harnesses:
         pi_config = PiConfig(
-            docker_image=images["pi"],
-            container_user=None if args.container_user == "image" else args.container_user,
-            network=args.network, api_base=pi_api_base, api_key_env=pi_api_key_env,
-            pass_env=_deduplicate((*PI_COMMON_ENV_NAMES, *args.pass_env)),
-            reasoning_effort=args.thinking, max_steps=args.pi_max_steps,
-            context_length=args.pi_context_length, output_tokens=args.pi_output_tokens,
-            wire_trace_mode=args.wire_trace, keep_thinking=args.keep_thinking,
-            keep_container_on_error=args.keep_container_on_error, docker_binary=args.docker_binary,
+            **bridge_options("pi", pi_api_base, pi_api_key_env),
+            max_steps=args.pi_max_steps, context_length=args.pi_context_length,
+            output_tokens=args.pi_output_tokens,
+            input_modalities=tuple(args.pi_input_modalities.split(",")),
         )
-        for request in requests:
-            if (cli_harness or request.task.harness) == "pi":
-                pi_effort(resolve_thinking(request.task.thinking, pi_config.reasoning_effort))
-            spec = request.task.user_simulator
-            if spec is not None and spec.harness == "pi":
-                pi_effort(resolve_thinking(spec.thinking, pi_config.reasoning_effort))
+    for name, bridge_config, effort_validator, default_api_base in (
+        ("hermes", hermes_config, hermes_effort, "https://api.openai.com/v1"),
+        ("opencode", opencode_config, opencode_effort, "https://api.openai.com/v1"),
+        ("deepseek", deepseek_config, deepseek_effort, "https://api.deepseek.com"),
+        ("pi", pi_config, pi_effort, "https://api.openai.com/v1"),
+    ):
+        if bridge_config is not None:
+            _validate_thinking_requests(
+                requests,
+                cli_harness=cli_harness,
+                harness=name,
+                api_base=bridge_config.api_base or default_api_base,
+                default_effort=bridge_config.reasoning_effort,
+                effort_validator=effort_validator,
+                capabilities=thinking_capabilities,
+            )
 
     if args.dry_run:
         # Exercise all path, hash, collision and size checks without leaving a run directory.
@@ -1044,7 +1196,7 @@ def _collect(args: argparse.Namespace) -> int:
             ),
             "model_request_timeout_seconds": args.openclaw_model_request_timeout,
             "model_max_tokens": args.openclaw_max_tokens,
-            "gateway_port_start": args.gateway_port,
+            "gateway_port_start": openclaw_config.gateway_port_start,
             "gateway_port_step": args.gateway_port_step,
             "network": args.network,
             "session_id": args.session_id,
@@ -1055,6 +1207,9 @@ def _collect(args: argparse.Namespace) -> int:
             "wire_trace": args.wire_trace,
             "pass_env_names": list(openclaw_config.pass_env),
             "collect_paths": args.collect_path,
+            **({"capture_calls": True, "capture_debug": args.capture_debug} if openclaw_config.capture_calls else {}),
+            # Absent when unused so locks written before the option still match.
+            **({"config_set": recorded_config_assignments(openclaw_config.config_set)} if openclaw_config.config_set else {}),
         }
     if codex_config is not None:
         harness_configurations["codex"] = {
@@ -1072,6 +1227,8 @@ def _collect(args: argparse.Namespace) -> int:
             "web_search": args.codex_web_search,
             "supports_websockets": args.codex_websockets,
             "pass_env_names": list(codex_config.pass_env),
+            **({"capture_calls": True, "capture_debug": args.capture_debug} if codex_config.capture_calls else {}),
+            **({"config_set": recorded_config_assignments(codex_config.config_set)} if codex_config.config_set else {}),
         }
     if claude_code_config is not None:
         harness_configurations["claude-code"] = {
@@ -1080,7 +1237,7 @@ def _collect(args: argparse.Namespace) -> int:
             "settings_path": (
                 str(claude_settings_path) if claude_settings_path else None
             ),
-            "settings_fingerprint": claude_settings_fingerprint,
+            "config_sha256": claude_settings_sha256,
             "network": args.network,
             "api_base": (
                 redact_anthropic_base_url(claude_api_base)
@@ -1095,6 +1252,7 @@ def _collect(args: argparse.Namespace) -> int:
             "wire_trace": args.wire_trace,
             "keep_thinking": args.keep_thinking,
             "pass_env_names": list(claude_code_config.pass_env),
+            **({"capture_calls": True, "capture_debug": args.capture_debug} if claude_code_config.capture_calls else {}),
         }
 
     if hermes_config is not None:
@@ -1104,9 +1262,10 @@ def _collect(args: argparse.Namespace) -> int:
             "api_key_env": hermes_api_key_env, "reasoning_effort": args.thinking,
             "max_iterations": args.hermes_max_iterations, "hermes_revision": HERMES_REVISION,
             "context_length": args.hermes_context_length, "vision": args.hermes_vision,
-            "toolsets": ["terminal", "file", *(["vision"] if args.hermes_vision else [])], "api_mode": "chat_completions",
+            "toolsets": ["terminal", "file", *(["delegation"] if hermes_config.capture_calls else []), *(["vision"] if args.hermes_vision else [])], "api_mode": "chat_completions",
             "wire_trace": args.wire_trace,
             "keep_thinking": args.keep_thinking, "pass_env_names": list(hermes_config.pass_env),
+            **({"capture_calls": True, "capture_debug": args.capture_debug} if hermes_config.capture_calls else {}),
         }
 
     if opencode_config is not None:
@@ -1121,6 +1280,7 @@ def _collect(args: argparse.Namespace) -> int:
             "wire_trace": args.wire_trace,
             "keep_thinking": args.keep_thinking, "pass_env_names": list(opencode_config.pass_env),
             "compaction": {"auto": False, "prune": False},
+            **({"capture_calls": True, "capture_debug": args.capture_debug, "subagent_profile_policy": "explore-tool-restrictions/v1"} if opencode_config.capture_calls else {}),
         }
 
     if deepseek_config is not None:
@@ -1134,6 +1294,7 @@ def _collect(args: argparse.Namespace) -> int:
             "wire_trace": args.wire_trace,
             "keep_thinking": args.keep_thinking, "pass_env_names": list(deepseek_config.pass_env),
             "profile": "sdk-minimal", "retry_count": 0,
+            **({"capture_calls": True, "capture_debug": args.capture_debug} if deepseek_config.capture_calls else {}),
         }
 
     if pi_config is not None:
@@ -1143,12 +1304,19 @@ def _collect(args: argparse.Namespace) -> int:
             "api_key_env": pi_api_key_env, "reasoning_effort": pi_config.reasoning_effort,
             "max_steps": args.pi_max_steps, "pi_version": PI_VERSION,
             "context_length": args.pi_context_length, "output_tokens": args.pi_output_tokens,
+            "input_modalities": list(pi_config.input_modalities),
             "tools": list(PI_TOOLS), "api_mode": "chat_completions",
             "wire_trace": args.wire_trace,
             "keep_thinking": args.keep_thinking, "pass_env_names": list(pi_config.pass_env),
             "compaction": {"auto": False}, "retry_count": 0,
+            **({"capture_calls": True, "capture_debug": args.capture_debug} if pi_config.capture_calls else {}),
         }
 
+    # OpenClaw user simulators run in the worker slots after the agents', so
+    # their gateways get ports of their own.
+    simulator_gateway_slot_offset = (
+        args.parallel if "openclaw" in simulator_harnesses else None
+    )
     run_info = {
         "schema_version": "roller.run/v1",
         "roller_version": __version__,
@@ -1167,6 +1335,7 @@ def _collect(args: argparse.Namespace) -> int:
             "workspace": str(workspace) if workspace else None,
             "timeout_seconds": args.timeout,
             "parallel": args.parallel,
+            "launch_interval": args.launch_interval,
             "grader_parallel": args.grader_parallel or args.parallel,
             "samples": args.samples,
             "retries": args.retries,
@@ -1174,13 +1343,17 @@ def _collect(args: argparse.Namespace) -> int:
             "limit": args.limit,
             "resume": args.resume,
             "task_schema": "roller.task/v1",
+            "thinking_capabilities_path": (
+                str(thinking_capabilities_path)
+                if thinking_capabilities_path
+                else None
+            ),
+            "thinking_capabilities_sha256": thinking_capabilities_digest,
             "conversation": {
                 "user_simulator_tasks": sum(
                     task.user_simulator is not None for task in tasks
                 ),
-                "simulator_gateway_slot_offset": (
-                    args.parallel if "openclaw" in simulator_harnesses else None
-                ),
+                "simulator_gateway_slot_offset": simulator_gateway_slot_offset,
             },
             "bundle_policy": {
                 "max_input_file_bytes": args.max_input_file_bytes,
@@ -1209,47 +1382,97 @@ def _collect(args: argparse.Namespace) -> int:
         )
 
     results: list[dict] | None = None
+    gateway_ports: GatewayPortReservation | None = None
     with tempfile.TemporaryDirectory(prefix=".roller-bundle-", dir=output_root) as temporary:
         bundle_store = TaskBundleStore(Path(temporary), bundle_policy)
         try:
+            if openclaw_config is not None and args.network == "host":
+                # Host-network gateways share the host's ports with any other
+                # run here; hold this run's range until collection ends.
+                gateway_ports = reserve_gateway_ports(
+                    args.gateway_port,
+                    args.gateway_port_step,
+                    args.parallel + (simulator_gateway_slot_offset or 0),
+                )
+                ports = gateway_ports.ports
+                openclaw_config = dataclasses.replace(
+                    openclaw_config, gateway_port_start=ports.start
+                )
+                # The same dict is in run_info, so info.json records it too.
+                harness_configurations["openclaw"]["gateway_port_start"] = ports.start
+                logger.info(
+                    "OpenClaw gateway ports %d-%d (every %d)",
+                    ports.start, ports[-1], ports.step,
+                )
             bundles = bundle_store.prepare_all(tasks)
             requests = bundle_store.attach(requests, bundles)
             run_dir.mkdir(parents=True, exist_ok=True)
             if tasks_snapshot is not None and not tasks_snapshot.exists():
                 tasks_snapshot.write_bytes(bench_manifest or b"")
+            execution = {
+                "harness": run_label,
+                "agent_harnesses": sorted(agent_harnesses),
+                "simulator_harnesses": sorted(simulator_harnesses),
+                "task_schema": "roller.task/v1",
+                "output_collection": "all",
+                "thinking_capabilities_sha256": thinking_capabilities_digest,
+                "task_images": {
+                    task.id: {
+                        "image": task.docker_image,
+                        "digest": task_image_digests.get(task.id),
+                    }
+                    for task in tasks
+                    if task.docker_image is not None
+                },
+                **{
+                    name: {
+                        **payload,
+                        "docker_image": images[name],
+                        "docker_image_digest": docker_image_digests[name],
+                    }
+                    for name, payload in harness_configurations.items()
+                },
+            }
+            lock_model_config = (
+                model_config if "openclaw" in selected_harnesses else None
+            )
             run_lock = build_run_lock(
                 requests,
                 roller_version=__version__,
-                execution={
-                    "harness": run_label,
-                    "agent_harnesses": sorted(agent_harnesses),
-                    "simulator_harnesses": sorted(simulator_harnesses),
-                    "task_schema": "roller.task/v1",
-                    "output_collection": "all",
-                    "task_images": {
-                        task.id: {
-                            "image": task.docker_image,
-                            "digest": task_image_digests.get(task.id),
-                        }
-                        for task in tasks
-                        if task.docker_image is not None
-                    },
-                    **{
-                        name: {
-                            **payload,
-                            "docker_image": images[name],
-                            "docker_image_digest": docker_image_digests[name],
-                        }
-                        for name, payload in harness_configurations.items()
-                    },
-                },
-                model_config=model_config if "openclaw" in selected_harnesses else None,
+                execution=execution,
+                model_config=lock_model_config,
             )
+            compatible_run_locks = []
+            claude_execution = execution.get("claude-code")
+            if args.resume and existing_run and isinstance(claude_execution, dict):
+                # Previous v1 locks used a short BLAKE2b settings fingerprint.
+                legacy_fingerprint = (
+                    hashlib.blake2b(
+                        claude_settings_content, digest_size=16
+                    ).hexdigest()
+                    if claude_settings_content is not None
+                    else None
+                )
+                legacy_claude_execution = dict(claude_execution)
+                legacy_claude_execution.pop("config_sha256", None)
+                legacy_claude_execution["settings_fingerprint"] = legacy_fingerprint
+                compatible_run_locks.append(
+                    build_run_lock(
+                        requests,
+                        roller_version=__version__,
+                        execution={
+                            **execution,
+                            "claude-code": legacy_claude_execution,
+                        },
+                        model_config=lock_model_config,
+                    )
+                )
             lock_decision = ensure_run_lock(
                 run_dir / "lock.json",
                 run_lock,
                 resume=args.resume,
                 existing_run=existing_run,
+                compatible_expected=compatible_run_locks,
             )
             bundle_store.persist_full_context(bundles.values(), run_dir)
             if lock_decision.legacy_run:
@@ -1277,44 +1500,39 @@ def _collect(args: argparse.Namespace) -> int:
                 args.grader_parallel or args.parallel
             )
 
+            harness_types = {
+                "openclaw": (OpenClawHarness, openclaw_config),
+                "codex": (CodexHarness, codex_config),
+                "claude-code": (ClaudeCodeHarness, claude_code_config),
+                "hermes": (HermesHarness, hermes_config),
+                "opencode": (OpenCodeHarness, opencode_config),
+                "deepseek": (DeepSeekHarness, deepseek_config),
+                "pi": (PiHarness, pi_config),
+            }
+
             def make_harness(
                 name: str,
                 slot: int,
                 task_image: str | None = None,
                 task_workspace: str | None = None,
+                task_image_digest: str | None = None,
             ):
-                replacements = {"docker_image": task_image} if task_image else {}
+                if name not in harness_types:
+                    raise ValueError(f"unknown Harness: {name}")
+                harness_type, base_config = harness_types[name]
+                assert base_config is not None
+                replacements = {
+                    "preflight_image_digest": (
+                        task_image_digest
+                        if task_image is not None
+                        else docker_image_digests[name]
+                    )
+                }
+                if task_image:
+                    replacements["docker_image"] = task_image
                 if task_workspace:
                     replacements["workspace_container_path"] = task_workspace
-                if name == "openclaw":
-                    assert openclaw_config is not None
-                    config = dataclasses.replace(openclaw_config, **replacements)
-                    return OpenClawHarness(config, slot)
-                if name == "codex":
-                    assert codex_config is not None
-                    config = dataclasses.replace(codex_config, **replacements)
-                    return CodexHarness(config, slot)
-                if name == "claude-code":
-                    assert claude_code_config is not None
-                    config = dataclasses.replace(claude_code_config, **replacements)
-                    return ClaudeCodeHarness(config, slot)
-                if name == "hermes":
-                    assert hermes_config is not None
-                    config = dataclasses.replace(hermes_config, **replacements)
-                    return HermesHarness(config, slot)
-                if name == "opencode":
-                    assert opencode_config is not None
-                    config = dataclasses.replace(opencode_config, **replacements)
-                    return OpenCodeHarness(config, slot)
-                if name == "deepseek":
-                    assert deepseek_config is not None
-                    config = dataclasses.replace(deepseek_config, **replacements)
-                    return DeepSeekHarness(config, slot)
-                if name == "pi":
-                    assert pi_config is not None
-                    config = dataclasses.replace(pi_config, **replacements)
-                    return PiHarness(config, slot)
-                raise ValueError(f"unknown Harness: {name}")
+                return harness_type(dataclasses.replace(base_config, **replacements), slot)
 
             def harness_factory(slot: int, request):
                 agent = make_harness(
@@ -1322,6 +1540,11 @@ def _collect(args: argparse.Namespace) -> int:
                     slot,
                     request.task.docker_image,
                     request.task.workspace_container_path,
+                    (
+                        task_image_digests.get(request.task.id)
+                        if request.task.docker_image is not None
+                        else None
+                    ),
                 )
                 binding = binding_from_task_row(getattr(request.task, "raw", None) or {})
                 if binding is not None and binding.grade is not None:
@@ -1344,7 +1567,9 @@ def _collect(args: argparse.Namespace) -> int:
                 if spec is None:
                     return agent
                 simulator_slot = (
-                    slot + args.parallel if spec.harness == "openclaw" else slot
+                    slot + simulator_gateway_slot_offset
+                    if spec.harness == "openclaw"
+                    else slot
                 )
                 simulator = make_harness(spec.harness, simulator_slot)
                 return ConversationManager(
@@ -1356,6 +1581,7 @@ def _collect(args: argparse.Namespace) -> int:
                 CollectionConfig(
                     run_dir=run_dir,
                     parallel=args.parallel,
+                    launch_interval=args.launch_interval,
                     retries=args.retries,
                     resume=lock_decision.reuse_existing_samples,
                     keep_aux_traces=keep_aux_traces,
@@ -1371,9 +1597,20 @@ def _collect(args: argparse.Namespace) -> int:
                 complete_legacy_adoption(run_dir / "lock.json")
         finally:
             bundle_store.cleanup_runtime()
+            if gateway_ports is not None:
+                gateway_ports.release()
     assert results is not None
     failed = sum(result.get("status") in {"error", "timeout"} for result in results)
     print(f"Collected {len(results)} trajectories ({failed} failed).")
+    training = training_summary(results)
+    print(
+        f"SFT: {training['sft_included']} included, "
+        f"{training['sft_segmented']} segmented, "
+        f"{training['sft_excluded']} excluded. "
+        f"Thinking audit: {training['thinking_mismatch']} mismatch; "
+        f"wire {training['wire_unverified']} unverified, "
+        f"{training['wire_not_observable']} not observable."
+    )
     print(f"Run directory: {run_dir}")
     print(f"Info: {run_dir / 'info.json'}")
     if bench_context is not None:
@@ -1518,6 +1755,30 @@ def _bench_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _init(args: argparse.Namespace) -> int:
+    """Copy the starter examples to ``<directory>/examples``, keeping existing files."""
+
+    package = Path(__file__).resolve().parent
+    # Wheels ship the examples inside the package; a source checkout keeps them at the repository root.
+    source = package / "examples" if (package / "examples").is_dir() else package.parents[1] / "examples"
+    target = Path(args.directory) / "examples"
+    written = kept = 0
+    for name in ("tasks", "config", "env"):
+        for path in sorted((source / name).rglob("*")):
+            if not path.is_file() or path.suffix == ".env":
+                continue
+            destination = target / path.relative_to(source)
+            if destination.exists():
+                kept += 1
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, destination)
+            written += 1
+    print(f"Wrote {written} files to {target}" + (f" ({kept} existing files kept)" if kept else ""))
+    print(f"Next: cp {target / 'env' / 'api.env.example'} {target / 'env' / 'api.env'} and set the model service URL and API key")
+    return 0
+
+
 def _view(args: argparse.Namespace) -> int:
     return serve_viewer(Path(args.run_dir), host=args.host, port=args.port)
 
@@ -1537,6 +1798,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             exit_code = _bench(args)
         elif args.command == "view":
             exit_code = _view(args)
+        elif args.command == "init":
+            exit_code = _init(args)
         else:
             parser.error(f"unsupported command: {args.command}")
             return
