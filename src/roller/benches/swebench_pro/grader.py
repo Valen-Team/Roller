@@ -56,16 +56,15 @@ def _copy(source, destination):
 
 def _strip_binary_hunks(patch):
     sections = re.split(r"(?=^diff --git )", patch, flags=re.MULTILINE)
-    kept = []
+    kept, dropped = [], []
     for section in sections:
         if not section.strip():
             continue
-        if re.search(r"^Binary files .* differ$", section, re.MULTILINE):
-            continue
-        if re.search(r"^GIT binary patch$", section, re.MULTILINE):
-            continue
-        kept.append(section)
-    return "".join(kept)
+        if re.search(r"^(?:Binary files .* differ|GIT binary patch)$", section, re.MULTILINE):
+            dropped.append(section.splitlines()[0].rsplit(" b/", 1)[-1].rstrip('"'))
+        else:
+            kept.append(section)
+    return "".join(kept), dropped
 
 
 def _error(message, **details):
@@ -147,7 +146,7 @@ def roller_grade(
         )
         if diff.returncode != 0:
             return _error("could not extract model patch: %s" % _detail(diff))
-        model_patch = _strip_binary_hunks(diff.stdout)
+        model_patch, dropped_binary_files = _strip_binary_hunks(diff.stdout)
         model_patch_path.write_text(model_patch, encoding="utf-8")
         grading_patch = model_patch
         excluded = []
@@ -350,6 +349,7 @@ def roller_grade(
             "passed_fail_to_pass_tests": len(set(fail_to_pass) & passed),
             "passed_pass_to_pass_tests": len(set(pass_to_pass) & passed),
             "excluded_agent_test_files": excluded,
+            "dropped_binary_files": dropped_binary_files,
             "supplemental_test_fixtures": list(supplemental_test_fixtures or []),
             "dependency_preparation": dependency_preparation,
             "model_patch_bytes": len(model_patch.encode("utf-8")),

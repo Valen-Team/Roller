@@ -28,15 +28,22 @@ _GRADER_SOURCE = "\n" + resources.files("roller.benches.swebench_pro").joinpath(
 ).read_text(encoding="utf-8")
 
 
-def _strip_binary_hunks(patch: str) -> str:
-    sections = re.split(r"(?=^diff --git )", patch, flags=re.MULTILINE)
-    return "".join(
-        section
-        for section in sections
-        if section.strip()
-        and not re.search(r"^Binary files .* differ$", section, re.MULTILINE)
-        and not re.search(r"^GIT binary patch$", section, re.MULTILINE)
-    )
+def _strip_binary_hunks(patch: str) -> tuple[str, list[str]]:
+    """Drop binary file sections; return the text patch and the dropped paths."""
+
+    kept: list[str] = []
+    dropped: list[str] = []
+    for section in re.split(r"(?=^diff --git )", patch, flags=re.MULTILINE):
+        if not section.strip():
+            continue
+        if re.search(
+            r"^(?:Binary files .* differ|GIT binary patch)$", section, re.MULTILINE
+        ):
+            header = section.splitlines()[0]
+            dropped.append(header.rsplit(" b/", 1)[-1].rstrip('"'))
+        else:
+            kept.append(section)
+    return "".join(kept), dropped
 
 
 class SWEBenchProGradedHarness(GradedHarness):
@@ -65,7 +72,7 @@ class SWEBenchProGradedHarness(GradedHarness):
         if result.returncode:
             detail = (result.stderr or result.stdout or "").strip()[-2000:]
             return None, f"model patch extraction failed: {detail}"
-        return _strip_binary_hunks(result.stdout or ""), None
+        return result.stdout or "", None
 
     def _copy_grade_outputs(
         self, runtime: Any, grader_container: str, agent_container: str
@@ -121,6 +128,7 @@ class SWEBenchProGradedHarness(GradedHarness):
 
         runtime: Any = getattr(self.inner, "runtime", None)
         grader_container: str | None = None
+        dropped: list[str] = []
         try:
             if runtime is None:
                 raise RuntimeError("harness exposes no docker runtime")
@@ -130,6 +138,15 @@ class SWEBenchProGradedHarness(GradedHarness):
                     {"overall_score": 0.0, "resolved": 0, "error": error},
                     time.monotonic() - started,
                     error,
+                )
+            patch, dropped = _strip_binary_hunks(patch or "")
+            if dropped:
+                logger.warning(
+                    "[%s] model patch has %d binary file change(s) that are not "
+                    "graded: %s",
+                    request.task.id,
+                    len(dropped),
+                    ", ".join(dropped),
                 )
             source_image = self.binding.metadata["source_image"]
             base_commit = self.binding.metadata["base_commit"]
@@ -214,11 +231,17 @@ class SWEBenchProGradedHarness(GradedHarness):
                 workspace_path=WORKSPACE_CONTAINER_PATH,
                 transcript_container_path=None,
             )
+            outcome.scores["dropped_binary_files"] = dropped
             self._copy_grade_outputs(runtime, grader_container, session.container)
             return outcome
         except Exception as exc:  # noqa: BLE001 - grading failures become score metadata
             return GradeOutcome(
-                {"overall_score": 0.0, "resolved": 0, "error": str(exc)},
+                {
+                    "overall_score": 0.0,
+                    "resolved": 0,
+                    "error": str(exc),
+                    "dropped_binary_files": dropped,
+                },
                 time.monotonic() - started,
                 str(exc),
             )

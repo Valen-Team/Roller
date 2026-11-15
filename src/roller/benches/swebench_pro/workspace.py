@@ -30,8 +30,8 @@ git checkout {base_commit}
 git ls-files -z > /tmp/roller-swebench-tracked
 rm -rf .git
 git init -q
-git config user.name zqy
-git config user.email zqy@localhost
+git config user.name roller
+git config user.email roller@localhost
 cat > .git/info/exclude <<'EOF'
 {OUTPUT_DIR_NAME}/
 {GRADE_DIR_NAME}/

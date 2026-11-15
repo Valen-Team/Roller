@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from roller.benches import get_bench
 from roller.benches.base import BenchBinding, BenchFormatError, GradeSpec
 from roller.benches.grading import GradedHarness, GradeOutcome
 from roller.benches.swebench_pro import (
@@ -21,7 +22,9 @@ from roller.benches.swebench_pro import (
     _test_fixture_patch,
     SWEBenchProAdapter,
     SWEBenchProGradedHarness,
+    ensure_harness_image,
 )
+from roller.cli import main
 from roller.harnesses.hermes import HermesConfig, HermesHarness
 from roller.harnesses.openclaw import OpenClawConfig, OpenClawHarness
 from roller.models import HarnessResult, RunRequest, Task
@@ -86,7 +89,7 @@ class SWEBenchProAdapterTests(unittest.TestCase):
     def test_packaged_grader_source_matches_protocol_revision(self) -> None:
         self.assertEqual(
             hashlib.sha256(_GRADER_SOURCE.encode()).hexdigest(),
-            "b1c859a985311e8e23e3f0046765274b2e70f247a41e67d27bae972bfe2db5ce",
+            "ce712519edd15de60da0b4cc73c996055af7445a85e1438a833dfc6ea3c09a14",
         )
         compile(_GRADER_SOURCE, "swebench_pro_grader.py", "exec")
 
@@ -158,6 +161,72 @@ class SWEBenchProAdapterTests(unittest.TestCase):
             self.assertEqual(Path(spec.stage[-1][0]).read_text(), fixture)
             self.assertTrue(spec.kwargs["exclude_agent_tests"])
 
+    def test_grading_options_reach_the_registered_adapter_from_the_environment(
+        self,
+    ) -> None:
+        options = {
+            "SWEBENCH_PRO_REPAIR_TEST_FIXTURES": "1",
+            "SWEBENCH_PRO_EXCLUDE_AGENT_TESTS": "true",
+            "SWEBENCH_PRO_GO_PROXY": "https://goproxy.example,direct",
+        }
+        fixture = (
+            "diff --git a/testdata/sorted.json b/testdata/sorted.json\n"
+            "new file mode 100644\n--- /dev/null\n"
+            "+++ b/testdata/sorted.json\n@@ -0,0 +1 @@\n"
+            '+{"expected": true}\n'
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            record = _record()
+            record["patch"] = fixture
+            _write_fixture(root, record)
+            cache = {"SWEBENCH_PRO_CACHE_DIR": str(root / "cache")}
+            output = root / "tasks.jsonl"
+
+            with patch.dict(os.environ, {**options, **cache}):
+                with self.assertRaises(SystemExit) as exited:
+                    main(["bench", "export", "swebench-pro", str(root), "-o", str(output)])
+            self.assertEqual(exited.exception.code, 0)
+            row = json.loads(output.read_text())
+            binding = BenchBinding.from_dict(row["bench"])
+            assert binding.grade is not None
+            self.assertEqual(
+                binding.metadata["evaluation_protocol"]["repair_test_fixtures"], True
+            )
+            self.assertEqual(
+                binding.metadata["evaluation_protocol"]["exclude_agent_tests"], True
+            )
+            self.assertEqual(binding.metadata["go_proxy"], options["SWEBENCH_PRO_GO_PROXY"])
+            self.assertTrue(binding.grade.kwargs["exclude_agent_tests"])
+            self.assertTrue(binding.grade.kwargs["prepare_go_dependencies"])
+            self.assertEqual(
+                binding.grade.kwargs["supplemental_test_fixtures"],
+                ["testdata/sorted.json"],
+            )
+            self.assertIn(
+                "GOPROXY=https://goproxy.example,direct", row["runtime"]["setup"][0]
+            )
+
+            unset = {name: "" for name in options}
+            with patch.dict(os.environ, {**unset, **cache}):
+                row = get_bench("swebench-pro").load(root)[0]
+            binding = BenchBinding.from_dict(row["bench"])
+            assert binding.grade is not None
+            self.assertEqual(
+                binding.metadata["evaluation_protocol"]["repair_test_fixtures"], False
+            )
+            self.assertIsNone(binding.metadata["go_proxy"])
+            self.assertFalse(binding.grade.kwargs["exclude_agent_tests"])
+            self.assertEqual(len(binding.grade.stage), 3)
+
+            with patch.dict(
+                os.environ, {**cache, "SWEBENCH_PRO_EXCLUDE_AGENT_TESTS": "maybe"}
+            ):
+                with self.assertRaisesRegex(
+                    BenchFormatError, "SWEBENCH_PRO_EXCLUDE_AGENT_TESTS must be a boolean"
+                ):
+                    get_bench("swebench-pro").load(root)
+
     def test_load_rejects_unknown_and_unsafe_ids(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -175,13 +244,17 @@ class SWEBenchProAdapterTests(unittest.TestCase):
 
 
 class _FakeDockerRuntime:
-    def __init__(self, harness_image: str) -> None:
+    def __init__(self, harness_image: str, architectures=None) -> None:
         self.images = {harness_image: "sha256:harness"}
+        self.architectures = architectures or {}
         self.dockerfile = ""
 
     def run(self, args, timeout=None):
         del timeout
         arguments = list(args)
+        if arguments[:2] == ["image", "inspect"] and "{{.Architecture}}" in arguments:
+            architecture = self.architectures.get(arguments[2], "amd64")
+            return subprocess.CompletedProcess(arguments, 0, f"{architecture}\n", "")
         if arguments[:2] == ["image", "inspect"]:
             image_id = self.images.get(arguments[2])
             return subprocess.CompletedProcess(
@@ -280,6 +353,127 @@ class SWEBenchProImageTests(unittest.TestCase):
         self.assertIn("then \\\n", runtime.dockerfile)
         self.assertIn("printf '%s\\n'", runtime.dockerfile)
         self.assertIn("ENTRYPOINT []", runtime.dockerfile)
+
+    def test_wrap_keeps_gateway_port_capture_and_runtime_of_the_harness(self) -> None:
+        suffix = uuid.uuid4().hex
+        source = f"registry.example/source:{suffix}"
+        image = f"registry.example/openclaw:{suffix}"
+        runtime = _FakeDockerRuntime(image)
+        config = OpenClawConfig(
+            docker_image=image,
+            model_config=Path("models.json"),
+            wire_trace_mode="full",
+            capture_calls=True,
+            gateway_port_start=20000,
+            container_user=None,
+            preflight_image_digest="sha256:harness",
+        )
+        harness = OpenClawHarness(config, 3, runtime)
+        binding = BenchBinding(
+            name="swebench-pro",
+            metadata={"source_image": source, "base_commit": "a" * 40},
+            grade=GradeSpec(code="def grade(workspace_path): return {}"),
+        )
+
+        _DERIVED_IMAGES.clear()
+
+        inner = get_bench("swebench-pro").wrap_harness(harness, binding).inner
+
+        self.assertIsInstance(inner, OpenClawHarness)
+        self.assertIs(inner.runtime, runtime)
+        self.assertEqual(inner.worker_slot, 3)
+        self.assertEqual(inner.gateway_port, harness.gateway_port)
+        self.assertEqual(inner.gateway_port, 20030)
+        self.assertTrue(inner.config.capture_calls)
+        self.assertEqual(inner.config.wire_trace_mode, "full")
+        self.assertIsNone(inner.capture)
+        self.assertTrue(
+            inner.config.docker_image.startswith("roller-swebench-pro-openclaw:")
+        )
+        self.assertEqual(inner.config.container_user, "0")
+        # The stock image digest must not be compared with the derived image.
+        self.assertIsNone(inner.config.preflight_image_digest)
+
+    def test_derived_image_follows_the_image_architecture(self) -> None:
+        suffix = uuid.uuid4().hex
+        source = f"registry.example/source:{suffix}"
+        image = f"registry.example/openclaw:{suffix}"
+        runtime = _FakeDockerRuntime(image, {source: "arm64", image: "arm64"})
+        _DERIVED_IMAGES.clear()
+
+        ensure_harness_image(runtime, source, image, "openclaw")
+
+        self.assertIn(
+            "COPY --from=harness /lib/aarch64-linux-gnu /opt/roller-glibc",
+            runtime.dockerfile,
+        )
+        self.assertIn(
+            "exec /opt/roller-glibc/ld-linux-aarch64.so.1 --library-path",
+            runtime.dockerfile,
+        )
+        self.assertNotIn("x86", runtime.dockerfile)
+
+    def test_mismatched_or_unknown_architecture_fails_before_building(self) -> None:
+        for architectures, harness_name, message in (
+            ({"harness": "arm64"}, "hermes", "is amd64 but hermes image .* is arm64"),
+            ({"harness": "s390x", "source": "s390x"}, "openclaw", "supports amd64, arm64"),
+        ):
+            with self.subTest(harness=harness_name):
+                suffix = uuid.uuid4().hex
+                source = f"registry.example/source:{suffix}"
+                image = f"registry.example/harness:{suffix}"
+                runtime = _FakeDockerRuntime(
+                    image,
+                    {
+                        {"harness": image, "source": source}[name]: value
+                        for name, value in architectures.items()
+                    },
+                )
+                _DERIVED_IMAGES.clear()
+                with self.assertRaisesRegex(RuntimeError, message):
+                    ensure_harness_image(runtime, source, image, harness_name)
+                self.assertEqual(runtime.dockerfile, "")
+
+    def test_slow_pull_of_one_image_does_not_block_another(self) -> None:
+        suffix = uuid.uuid4().hex
+        slow = f"registry.example/slow:{suffix}"
+        fast = f"registry.example/fast:{suffix}"
+        pulling = threading.Event()
+        release = threading.Event()
+
+        class Runtime:
+            def __init__(self) -> None:
+                self.pulled: set[str] = set()
+
+            def run(self, args, timeout=None):
+                del timeout
+                arguments = list(args)
+                if arguments[:1] == ["pull"]:
+                    if arguments[1] == slow:
+                        pulling.set()
+                        release.wait(30)
+                    self.pulled.add(arguments[1])
+                    return subprocess.CompletedProcess(arguments, 0, "", "")
+                present = arguments[2] in self.pulled
+                return subprocess.CompletedProcess(
+                    arguments, 0 if present else 1, "sha256:id\n" if present else "", ""
+                )
+
+        runtime = Runtime()
+        worker = threading.Thread(target=_image_id, args=(runtime, slow))
+        worker.start()
+        try:
+            self.assertTrue(pulling.wait(30))
+            finished = threading.Event()
+            other = threading.Thread(
+                target=lambda: (_image_id(runtime, fast), finished.set())
+            )
+            other.start()
+            self.assertTrue(finished.wait(30))
+            other.join()
+        finally:
+            release.set()
+            worker.join()
 
     def test_wrap_non_openclaw_copies_repo_into_harness_image(self) -> None:
         suffix = uuid.uuid4().hex
@@ -529,6 +723,61 @@ class SWEBenchProGraderTests(unittest.TestCase):
         self.assertEqual(grade.call_args.args[1], grader_container)
         self.assertIn(["rm", "-f", grader_container], runtime.calls)
 
+    def test_dropped_binary_changes_are_recorded_in_the_score(self) -> None:
+        class Runtime:
+            def __init__(self) -> None:
+                self.patch = None
+
+            def run(self, args, timeout=None):
+                del timeout
+                arguments = list(args)
+                if arguments[0] == "cp" and arguments[2].endswith(":/tmp/model.patch"):
+                    self.patch = Path(arguments[1]).read_text()
+                stdout = (
+                    "sha256:source\n" if arguments[:2] == ["image", "inspect"] else ""
+                )
+                return subprocess.CompletedProcess(arguments, 0, stdout, "")
+
+        text = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\n"
+        binary = (
+            "diff --git a/assets/logo.png b/assets/logo.png\n"
+            "index 1111111..2222222 100644\nGIT binary patch\nliteral 1\nIcmZPo000310RR91\n\n"
+            "diff --git a/bin/tool b/bin/tool\nnew file mode 100755\n"
+            "Binary files /dev/null and b/bin/tool differ\n"
+        )
+        runtime = Runtime()
+        binding = BenchBinding(
+            name="swebench-pro",
+            metadata={"source_image": "registry.example/source:test", "base_commit": "a" * 40},
+            grade=GradeSpec(code="def roller_grade(workspace_path): return {}"),
+        )
+        harness = SWEBenchProGradedHarness(
+            HermesHarness(HermesConfig(), 0, runtime), binding
+        )
+        session = SimpleNamespace(container_started=True, container="agent-container")
+        request = SimpleNamespace(task=SimpleNamespace(id="instance-test"))
+
+        with (
+            patch.object(harness, "_extract_patch", return_value=(text + binary, None)),
+            patch(
+                "roller.benches.swebench_pro.ContainerGrader.grade",
+                return_value=GradeOutcome(
+                    {"overall_score": 0.0, "dropped_binary_files": []}, 0.1
+                ),
+            ),
+            self.assertLogs(
+                "roller.benches.swebench_pro.grader_runtime", "WARNING"
+            ) as logs,
+        ):
+            outcome = harness._grade(session, request, "ok")
+
+        assert outcome is not None
+        self.assertEqual(runtime.patch, text)
+        self.assertEqual(
+            outcome.scores["dropped_binary_files"], ["assets/logo.png", "bin/tool"]
+        )
+        self.assertIn("assets/logo.png, bin/tool", logs.output[0])
+
     def test_opt_in_grading_preserves_patch_and_excludes_test_sources(self) -> None:
         for exclude_tests, with_fixtures, expected in [
             (False, True, 0.0),
@@ -541,8 +790,8 @@ class SWEBenchProGraderTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as temporary:
                     workspace = Path(temporary)
                     self._git(workspace, "init", "-q")
-                    self._git(workspace, "config", "user.name", "zqy")
-                    self._git(workspace, "config", "user.email", "zqy@test.invalid")
+                    self._git(workspace, "config", "user.name", "roller")
+                    self._git(workspace, "config", "user.email", "roller@test.invalid")
                     (workspace / "app.go").write_text("BASE\n")
                     self._git(workspace, "add", ".")
                     self._git(workspace, "commit", "-qm", "baseline")
@@ -615,8 +864,8 @@ class SWEBenchProGraderTests(unittest.TestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             self._git(workspace, "init", "-q")
-            self._git(workspace, "config", "user.name", "zqy")
-            self._git(workspace, "config", "user.email", "zqy@test.invalid")
+            self._git(workspace, "config", "user.name", "roller")
+            self._git(workspace, "config", "user.email", "roller@test.invalid")
             (workspace / "go.mod").write_text("module example.test/repaired\n")
             (workspace / "hidden_test.go").write_text("BASE\n")
             self._git(workspace, "add", ".")

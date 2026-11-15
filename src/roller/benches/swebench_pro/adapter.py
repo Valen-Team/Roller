@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import math
+import os
 import re
-import threading
 from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -49,6 +49,18 @@ from roller.benches.swebench_pro.workspace import (
 )
 
 _INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+REPAIR_TEST_FIXTURES_VARIABLE = "SWEBENCH_PRO_REPAIR_TEST_FIXTURES"
+EXCLUDE_AGENT_TESTS_VARIABLE = "SWEBENCH_PRO_EXCLUDE_AGENT_TESTS"
+GO_PROXY_VARIABLE = "SWEBENCH_PRO_GO_PROXY"
+
+
+def _env_flag(name: str) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in {"", "0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    raise BenchFormatError(f"{name} must be a boolean, got {raw!r}")
 
 
 class SWEBenchProAdapter(BenchAdapter):
@@ -59,16 +71,36 @@ class SWEBenchProAdapter(BenchAdapter):
         self,
         cache_root: Path | None = None,
         *,
-        repair_test_fixtures: bool = False,
-        exclude_agent_tests: bool = False,
+        repair_test_fixtures: bool | None = None,
+        exclude_agent_tests: bool | None = None,
         go_proxy: str | None = None,
     ) -> None:
         self.cache_root = (
             cache_root.expanduser().resolve() if cache_root else _default_cache_root()
         )
-        self.repair_test_fixtures = repair_test_fixtures
-        self.exclude_agent_tests = exclude_agent_tests
-        self.go_proxy = go_proxy
+        # Options left as None are read from the environment on every load, so
+        # the registered adapter follows the variables of the current run.
+        self._repair_test_fixtures = repair_test_fixtures
+        self._exclude_agent_tests = exclude_agent_tests
+        self._go_proxy = go_proxy
+
+    @property
+    def repair_test_fixtures(self) -> bool:
+        if self._repair_test_fixtures is None:
+            return _env_flag(REPAIR_TEST_FIXTURES_VARIABLE)
+        return self._repair_test_fixtures
+
+    @property
+    def exclude_agent_tests(self) -> bool:
+        if self._exclude_agent_tests is None:
+            return _env_flag(EXCLUDE_AGENT_TESTS_VARIABLE)
+        return self._exclude_agent_tests
+
+    @property
+    def go_proxy(self) -> str | None:
+        if self._go_proxy is None:
+            return os.environ.get(GO_PROXY_VARIABLE, "").strip() or None
+        return self._go_proxy
 
     def load(
         self,
@@ -84,6 +116,9 @@ class SWEBenchProAdapter(BenchAdapter):
         multiplier = validate_timeout_multiplier(timeout_multiplier)
         root = root.expanduser().resolve()
         records = _load_dataset(_dataset_path(root))
+        repair_test_fixtures = self.repair_test_fixtures
+        exclude_agent_tests = self.exclude_agent_tests
+        go_proxy = self.go_proxy
         requested_categories = set(categories or ())
         requested_ids = set(task_ids or ())
         known_categories: set[str] = set()
@@ -128,7 +163,7 @@ class SWEBenchProAdapter(BenchAdapter):
             )
             fixture_paths: list[str] = []
             fixture_stage: tuple[tuple[str, str], ...] = ()
-            if self.repair_test_fixtures:
+            if repair_test_fixtures:
                 fixture_patch, fixture_paths = _test_fixture_patch(
                     record.get("patch") or ""
                 )
@@ -172,11 +207,11 @@ class SWEBenchProAdapter(BenchAdapter):
                     ),
                     "base_commit": base_commit,
                     "source_image": source_image,
-                    "go_proxy": self.go_proxy,
+                    "go_proxy": go_proxy,
                     "evaluation_protocol": {
                         "revision": EVALUATION_PROTOCOL_REVISION,
-                        "repair_test_fixtures": self.repair_test_fixtures,
-                        "exclude_agent_tests": self.exclude_agent_tests,
+                        "repair_test_fixtures": repair_test_fixtures,
+                        "exclude_agent_tests": exclude_agent_tests,
                     },
                     "issue_specificity": _string_list(
                         record.get("issue_specificity"),
@@ -196,9 +231,9 @@ class SWEBenchProAdapter(BenchAdapter):
                         "selected_test_files": selected,
                         "test_files": restore_files,
                         "test_timeout_seconds": TEST_TIMEOUT_SECONDS,
-                        "exclude_agent_tests": self.exclude_agent_tests,
+                        "exclude_agent_tests": exclude_agent_tests,
                         "supplemental_test_fixtures": fixture_paths,
-                        "prepare_go_dependencies": bool(self.go_proxy),
+                        "prepare_go_dependencies": bool(go_proxy),
                     },
                     timeout_seconds=GRADE_TIMEOUT_SECONDS,
                     needs_transcript=False,
@@ -222,7 +257,7 @@ class SWEBenchProAdapter(BenchAdapter):
                     ),
                     "files": {"output_dir": OUTPUT_DIR_NAME},
                     "runtime": {
-                        "setup": [_setup_command(base_commit, go_proxy=self.go_proxy)]
+                        "setup": [_setup_command(base_commit, go_proxy=go_proxy)]
                     },
                     "bench": binding.as_dict(),
                 }
@@ -243,7 +278,7 @@ class SWEBenchProAdapter(BenchAdapter):
         harness: Any,
         binding: BenchBinding,
         *,
-        grading_semaphore: threading.Semaphore | None = None,
+        grading_semaphore: Any = None,
     ) -> Any:
         source_image = binding.metadata.get("source_image")
         if not isinstance(source_image, str) or not source_image:
@@ -260,7 +295,10 @@ class SWEBenchProAdapter(BenchAdapter):
             harness.config,
             docker_image=image,
             workspace_container_path=WORKSPACE_CONTAINER_PATH,
+            # Task setup rewrites the root-owned repository under /app.
             container_user="0",
+            # The preflight digest belongs to the stock Harness image.
+            preflight_image_digest=None,
         )
         prepared = type(harness)(
             config,
