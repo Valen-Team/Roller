@@ -325,7 +325,8 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
 提交 Pull Request 前请运行测试：
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+python -m pip install -e ".[test]"
+python -m pytest
 ```
 
 ### 贡献者

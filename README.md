@@ -325,7 +325,8 @@ Report defects through [Issues](https://github.com/Valen-Team/Roller/issues). Ne
 Run the test suite before submitting a pull request:
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+python -m pip install -e ".[test]"
+python -m pytest
 ```
 
 ### Contributors

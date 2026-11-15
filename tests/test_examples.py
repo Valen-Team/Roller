@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import tempfile
-import tomllib
 import unittest
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 from roller.bundles import TaskBundleStore
 from roller.tasks import load_tasks
