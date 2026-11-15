@@ -10,6 +10,8 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
+import yaml
+
 from roller.benches import BENCHES
 from roller.benches.run_config import load_bench_run_plan
 from roller.harness_registry import HARNESS_NAMES
@@ -175,7 +177,7 @@ class ExampleFilesTests(unittest.TestCase):
         cases = (
             ("wildclawbench.yaml", (), "wildclawbench", "openclaw"),
             ("pinchbench.yaml", (), "pinchbench", "openclaw"),
-            ("knclawbench.yaml", (), "qwenclawbench", "openclaw"),
+            ("qwenclawbench.yaml", (), "qwenclawbench", "openclaw"),
             ("skillsbench.yaml", (), "skillsbench", "opencode"),
             (
                 "skillsbench.yaml",
@@ -230,21 +232,32 @@ class ExampleFilesTests(unittest.TestCase):
             set(HARNESS_NAMES),
         )
 
-    def test_every_registered_benchmark_has_standard_entry_files(self) -> None:
-        files = {
-            "pinchbench": ("pinchbench.yaml", "prepare-pinchbench.sh"),
-            "qwenclawbench": ("knclawbench.yaml", "prepare-knclawbench.sh"),
-            "skillsbench": ("skillsbench.yaml", "prepare-skillsbench.sh"),
-            "wildclawbench": ("wildclawbench.yaml", "prepare-wildclawbench.sh"),
-        }
-        self.assertEqual(set(files), set(BENCHES))
-        for config_name, script_name in files.values():
-            self.assertTrue(
-                (self.examples_root / "benchmarks" / config_name).is_file()
+    def test_every_benchmark_example_names_a_registered_bench(self) -> None:
+        named = set()
+        for path in sorted((self.examples_root / "benchmarks").glob("*.yaml")):
+            benchmark = yaml.safe_load(path.read_text(encoding="utf-8")).get(
+                "benchmark", {}
             )
-            script = self.project_root / "scripts" / script_name
-            self.assertTrue(script.is_file())
-            self.assertTrue(script.stat().st_mode & 0o111)
+            if "id" not in benchmark:
+                continue
+            with self.subTest(config=path.name):
+                self.assertIn(benchmark["id"], BENCHES)
+                self.assertEqual(path.stem, benchmark["id"])
+                script = self.project_root / "scripts" / f"prepare-{path.stem}.sh"
+                self.assertTrue(script.is_file())
+                self.assertTrue(script.stat().st_mode & 0o111)
+            named.add(benchmark["id"])
+        self.assertTrue(named)
+
+    def test_benchmark_examples_ship_with_the_package(self) -> None:
+        build = tomllib.loads(
+            (self.project_root / "pyproject.toml").read_text(encoding="utf-8")
+        )["tool"]["hatch"]["build"]["targets"]
+        self.assertEqual(
+            build["wheel"]["force-include"]["examples/benchmarks"],
+            "roller/examples/benchmarks",
+        )
+        self.assertIn("/examples/benchmarks", build["sdist"]["include"])
 
 
 if __name__ == "__main__":

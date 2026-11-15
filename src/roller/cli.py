@@ -1831,7 +1831,7 @@ def _init(args: argparse.Namespace) -> int:
     source = package / "examples" if (package / "examples").is_dir() else package.parents[1] / "examples"
     target = Path(args.directory) / "examples"
     written = kept = 0
-    for name in ("tasks", "config", "env"):
+    for name in ("tasks", "config", "benchmarks", "env"):
         for path in sorted((source / name).rglob("*")):
             if not path.is_file() or path.suffix == ".env":
                 continue

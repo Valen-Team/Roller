@@ -17,5 +17,5 @@ harness:
     max_tokens: 32768
 
 execution:
-  run_name: knclawbench
+  run_name: qwenclawbench
   samples: 1

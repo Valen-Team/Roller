@@ -41,10 +41,11 @@ packages = ["src/roller"]
 [tool.hatch.build.targets.wheel.force-include]
 "examples/tasks" = "roller/examples/tasks"
 "examples/config" = "roller/examples/config"
+"examples/benchmarks" = "roller/examples/benchmarks"
 "examples/env/api.env.example" = "roller/examples/env/api.env.example"
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/examples/tasks", "/examples/config", "/examples/env/api.env.example"]
+include = ["/src", "/tests", "/examples/tasks", "/examples/config", "/examples/benchmarks", "/examples/env/api.env.example"]
 
 # PyPI does not resolve relative paths, so README links and images are pinned
 # to the release tag when the package metadata is built.

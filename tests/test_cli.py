@@ -30,6 +30,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(models.read_text(), "edited")
             self.assertTrue((root / "examples" / "tasks" / "tasks.jsonl").is_file())
             self.assertTrue((root / "examples" / "env" / "api.env.example").is_file())
+            self.assertTrue((root / "examples" / "benchmarks" / "base.yaml").is_file())
             self.assertEqual(list((root / "examples").rglob("*.env")), [])
             self.assertIn("1 existing files kept", output.getvalue())
             args = _build_parser().parse_args([

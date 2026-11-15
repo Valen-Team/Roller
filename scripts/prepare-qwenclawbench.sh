@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-bench_root="${1:-$repo_root/.benchmarks/knclawbench-v1.1}"
+bench_root="${1:-$repo_root/.benchmarks/qwenclawbench-v1.1}"
 expected_revision="ca8af7f914f76082b4c27c21481da2495a5d5125"
 image_tag="ghcr.io/openclaw/openclaw:2026.7.1-2"
 
