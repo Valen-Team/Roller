@@ -583,6 +583,15 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=CLAUDE_PERMISSION_MODES,
         default="bypassPermissions",
     )
+    claude.add_argument(
+        "--claude-unique-tool-ids",
+        action="store_true",
+        help=(
+            "replace tool-use IDs the Anthropic-compatible endpoint issues more "
+            "than once before Claude Code receives them; needs the request "
+            "recording proxy"
+        ),
+    )
     return parser
 
 
@@ -1083,6 +1092,7 @@ def _collect(args: argparse.Namespace) -> int:
             max_turns=args.claude_max_turns,
             capture_calls=args.claude_capture_calls or args.capture_calls, capture_debug=args.capture_debug,
             permission_mode=args.claude_permission_mode,
+            unique_tool_ids=args.claude_unique_tool_ids,
             wire_trace_mode=args.wire_trace,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
@@ -1294,6 +1304,7 @@ def _collect(args: argparse.Namespace) -> int:
             "keep_thinking": args.keep_thinking,
             "pass_env_names": list(claude_code_config.pass_env),
             **({"capture_calls": True, "capture_debug": args.capture_debug} if claude_code_config.capture_calls else {}),
+            **({"unique_tool_ids": True} if claude_code_config.unique_tool_ids else {}),
         }
 
     if hermes_config is not None:

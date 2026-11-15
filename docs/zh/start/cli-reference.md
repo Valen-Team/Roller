@@ -234,6 +234,7 @@ Wire trace 用于决定是否记录模型服务的实际 HTTP 请求，常规采
 | 参数 | Harness | 用途 |
 | --- | --- | --- |
 | `--codex-image-detail auto\|low\|high\|original` | Codex | Codex 发出的 Responses 图片输入未带 `detail` 时，补上该值 |
+| `--claude-unique-tool-ids` | Claude Code | 替换 API 服务重复签发的工具调用 ID，并记录到 `tool_id_mappings.jsonl` |
 
 如需核对当前使用的 Roller 版本支持的完整参数列表，请运行：
 

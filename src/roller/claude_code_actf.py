@@ -11,6 +11,7 @@ from typing import Any, Iterable, Mapping
 
 from roller.actf import append_user_content, user_content
 from roller.storage import atomic_write_json
+from roller.tool_id_identity import scope_claude_tool_ids
 
 CLAUDE_COMPACTION_SFT_REASON = (
     "Claude context compaction cannot be represented by the linear ACTF projection; "
@@ -139,6 +140,11 @@ def _assistant_parts(
                 "id": call_id,
                 "name": name,
                 "arguments": deepcopy(arguments),
+                **(
+                    {"original_tool_call_id": block["roller_original_tool_id"]}
+                    if "roller_original_tool_id" in block
+                    else {}
+                ),
             }
         )
     return "\n\n".join(visible), "\n\n".join(reasoning), calls
@@ -334,6 +340,7 @@ def claude_code_events_to_actf(
             seen_uuids.add(event_uuid)
         rows.append(row)
     rows.sort(key=lambda row: str(row.get("timestamp", "")))
+    rows = scope_claude_tool_ids(rows)
 
     expected_users = tuple(user_messages) if user_messages is not None else None
     expected_index = 0

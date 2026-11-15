@@ -238,6 +238,7 @@ The following Harness flags adapt the traffic of an OpenAI- or Anthropic-compati
 | Flag | Harness | Purpose |
 | --- | --- | --- |
 | `--codex-image-detail auto\|low\|high\|original` | Codex | Sets `detail` on Responses image inputs that Codex sends without one |
+| `--claude-unique-tool-ids` | Claude Code | Replaces tool-call IDs that the API service issues more than once and records them in `tool_id_mappings.jsonl` |
 
 To inspect the complete flag set supported by the Roller version currently in use, run:
 

@@ -28,6 +28,7 @@ from roller.response_metadata import ResponseMetadata
 
 from roller.codex_tools import tool_snapshot
 from roller.capture import CallRecorder
+from roller.tool_id_identity import ToolIdRegistry
 
 
 HOP_BY_HOP_HEADERS = {
@@ -522,6 +523,9 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 and normalized_key not in proxy.drop_request_headers
             ):
                 outgoing.add_header(key, value)
+        if proxy.tool_id_mappings_path is not None:
+            # Tool IDs can only be repaired in an uncompressed response.
+            outgoing.add_header("Accept-Encoding", "identity")
         try:
             response = proxy.open_upstream(outgoing, request_seq)
         except Exception as exc:
@@ -580,8 +584,35 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             and self.path.split("?", 1)[0].rstrip("/").endswith("/chat/completions")
             and content_encoding in ("", "identity")
         )
+        repair_tool_ids = (
+            proxy.tool_id_mappings_path is not None
+            and self.command == "POST"
+            and self.path.split("?", 1)[0].rstrip("/").endswith("/messages")
+            and content_encoding in ("", "identity")
+        )
         try:
-            if normalize_reasoning and "text/event-stream" in content_type:
+            if repair_tool_ids and "text/event-stream" in content_type:
+                while True:
+                    line = response.readline()
+                    if not line:
+                        break
+                    # Records and captures keep the IDs Claude Code received.
+                    line = self._repair_sse_tool_id_line(proxy, line)
+                    observe(line)
+                    self.wfile.write(line)
+                    self.wfile.flush()
+            elif repair_tool_ids and "json" in content_type:
+                payload = response.read()
+                try:
+                    message = json.loads(payload)
+                    if proxy.repair_tool_ids(message):
+                        payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+                observe(payload)
+                self.wfile.write(payload)
+                self.wfile.flush()
+            elif normalize_reasoning and "text/event-stream" in content_type:
                 while True:
                     line = response.readline()
                     if not line:
@@ -629,6 +660,21 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 close_response()
 
     @staticmethod
+    def _repair_sse_tool_id_line(proxy: WireTraceProxy, line: bytes) -> bytes:
+        newline = b"\r\n" if line.endswith(b"\r\n") else b"\n" if line.endswith(b"\n") else b""
+        content = line[: -len(newline)] if newline else line
+        if not content.startswith(b"data:") or b"tool_use" not in content:
+            return line
+        try:
+            event = json.loads(content[5:])
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return line
+        if not proxy.repair_tool_ids(event):
+            return line
+        repaired = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+        return b"data: " + repaired.encode("utf-8") + newline
+
+    @staticmethod
     def _normalize_sse_reasoning_line(line: bytes) -> bytes:
         newline = b"\r\n" if line.endswith(b"\r\n") else b"\n" if line.endswith(b"\n") else b""
         content = line[: -len(newline)] if newline else line
@@ -672,6 +718,7 @@ class WireTraceProxy:
         capture_run_header: str | None = None,
         encrypted_content_retries: int = 0,
         responses_image_detail: str | None = None,
+        tool_id_mappings_path: Path | None = None,
     ) -> None:
         if mode not in ("tools", "full"):
             raise ValueError(f"unknown wire trace mode: {mode}")
@@ -704,6 +751,9 @@ class WireTraceProxy:
         self.timeout_seconds = timeout_seconds
         self.encrypted_content_retries = encrypted_content_retries
         self.responses_image_detail = responses_image_detail
+        # Set to repair repeated Anthropic tool-use IDs; receives one row per repair.
+        self.tool_id_mappings_path = tool_id_mappings_path
+        self.tool_ids = ToolIdRegistry()
         self._lock = threading.Lock()
         self._stopping = threading.Event()
         self._seq = 0
@@ -818,6 +868,18 @@ class WireTraceProxy:
         assert self.responses_tools_path is not None
         with self._lock, self.responses_tools_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def repair_tool_ids(self, event: Any) -> bool:
+        """Make repeated tool-use IDs in ``event`` unique; True when it changed."""
+
+        assert self.tool_id_mappings_path is not None
+        with self._lock:
+            mappings = self.tool_ids.repair(event)
+            if mappings:
+                with self.tool_id_mappings_path.open("a", encoding="utf-8") as stream:
+                    for mapping in mappings:
+                        stream.write(json.dumps(mapping, ensure_ascii=False) + "\n")
+        return bool(mappings)
 
     def image_refs(self, images: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
         refs: list[dict[str, Any]] = []

@@ -290,6 +290,7 @@ class Collector:
             SFT_SEGMENTS_DIR,
             "tools_capture.jsonl",  # Exact Codex Responses tool snapshots.
             "signature_recovery.jsonl",  # Preserve historical artifacts; never generated now.
+            "tool_id_mappings.jsonl",  # Native IDs behind --claude-unique-tool-ids repairs.
             "info.json",
             "results",
             "conversation.json",

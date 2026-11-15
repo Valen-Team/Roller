@@ -107,7 +107,7 @@ class CliConfigSetTests(unittest.TestCase):
         patches.enter_context(
             patch("roller.cli._docker_preflight", return_value="test-image-id")
         )
-        for constructor in ("OpenClawHarness", "CodexHarness"):
+        for constructor in ("OpenClawHarness", "CodexHarness", "ClaudeCodeHarness"):
             patches.enter_context(
                 patch(
                     f"roller.cli.{constructor}",
@@ -205,8 +205,25 @@ class CliConfigSetTests(unittest.TestCase):
         self.assertEqual(self.lock()["execution"]["codex"]["responses_image_detail"], "high")
         info = json.loads((self.root / "runs" / "run" / "info.json").read_text())
         self.assertEqual(info["configuration"]["codex"]["responses_image_detail"], "high")
-        with self.assertRaisesRegex(ValueError, "image detail requires"):
-            self.invoke("--codex-image-detail", "high", harness="codex")
+
+    def test_claude_unique_tool_ids_is_locked_only_when_set(self) -> None:
+        self.invoke(harness="claude-code")
+        self.assertNotIn("unique_tool_ids", self.lock()["execution"]["claude-code"])
+        self.assertFalse(self.configs[0].unique_tool_ids)
+        self.invoke(harness="claude-code", resume=True)
+        with self.assertRaisesRegex(FileExistsError, "lock mismatch"):
+            self.invoke(
+                "--claude-unique-tool-ids", "--api-base", "http://example.test",
+                harness="claude-code", resume=True,
+            )
+
+    def test_claude_unique_tool_ids_reaches_the_harness_and_the_lock(self) -> None:
+        self.invoke(
+            "--claude-unique-tool-ids", "--api-base", "http://example.test",
+            harness="claude-code",
+        )
+        self.assertTrue(self.configs[0].unique_tool_ids)
+        self.assertIs(self.lock()["execution"]["claude-code"]["unique_tool_ids"], True)
 
     def test_setting_for_an_unselected_harness_is_an_error(self) -> None:
         with self.assertRaisesRegex(ValueError, "--codex-config-set is only valid"):

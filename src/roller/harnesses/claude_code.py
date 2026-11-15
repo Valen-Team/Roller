@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CLAUDE_CODE_IMAGE = "roller-claude-code:2.1.222"
 CLAUDE_HOME_CONTAINER_PATH = "/roller/claude-home"
+# Native and delivered IDs of every tool call --claude-unique-tool-ids repaired.
+TOOL_ID_MAPPINGS_NAME = "tool_id_mappings.jsonl"
 # Stream-json user message of a turn that carries images.
 CLAUDE_INPUT_CONTAINER_PATH = "/roller/claude-input.jsonl"
 
@@ -131,6 +133,8 @@ class ClaudeCodeConfig:
     preflight_image_digest: str | None = None
     capture_calls: bool = False
     capture_debug: str = "on-error"
+    # Let the proxy replace tool-use IDs the endpoint issues more than once.
+    unique_tool_ids: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -172,6 +176,8 @@ class ClaudeCodeConfig:
             raise ValueError("Claude call capture requires --claude-api-base and --network host")
         if self.capture_calls and self.wire_trace_mode == "off":
             raise ValueError("Claude call capture requires wire tracing")
+        if self.unique_tool_ids and (not self.api_base or self.wire_trace_mode == "off"):
+            raise ValueError("Claude tool ID repair requires --claude-api-base and wire tracing")
         if (
             self.wire_trace_mode != "off"
             and self.api_base
@@ -222,6 +228,8 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             return
         log_path = output_dir / "wire_trace.jsonl"
         log_path.unlink(missing_ok=True)
+        mappings_path = output_dir / TOOL_ID_MAPPINGS_NAME
+        mappings_path.unlink(missing_ok=True)
         if self.config.capture_calls:
             self.capture = CaptureRuntime(output_dir, attempt, "claude-code", self.config.capture_debug)
         self._wire_proxy = WireTraceProxy(
@@ -234,6 +242,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             # Messages path but reject this transport-only query flag.
             drop_query_parameters=("beta",),
             drop_request_headers=("anthropic-beta",),
+            tool_id_mappings_path=mappings_path if self.config.unique_tool_ids else None,
         )
         self._wire_proxy.start()
 
@@ -868,6 +877,7 @@ class ClaudeCodeSession(InteractiveSession):
                 "max_turns": config.max_turns,
                 "permission_mode": config.permission_mode,
                 "wire_trace": config.wire_trace_mode,
+                **({"unique_tool_ids": True} if config.unique_tool_ids else {}),
                 "keep_thinking": config.keep_thinking,
                 "config_sha256": config.config_sha256,
                 "output_collection": output_collection_metadata(artifact_result, self.request, self.output_dir),

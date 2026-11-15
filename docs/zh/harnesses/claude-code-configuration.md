@@ -115,6 +115,7 @@ roller collect \
 | `--claude-max-turns` | 无 | 每条预定义用户消息的 Agent 执行轮数上限 |
 | `--claude-max-thinking-tokens` | 无 | 设置传给 Claude Code 的 `MAX_THINKING_TOKENS` |
 | `--claude-permission-mode` | `bypassPermissions` | 选择 Claude Code permission mode |
+| `--claude-unique-tool-ids` | 关闭 | API 服务重复签发工具调用 ID 时，在 Claude Code 收到响应前替换重复的 ID，见 9.5 节 |
 
 单一 Claude Code 运行可使用通用参数形式。混合 Harness 运行应使用 `--claude-code-image`、`--claude-api-base` 和 `--claude-api-key-env` 等专属形式，以免设置作用于其他参与者。
 
@@ -206,6 +207,24 @@ SFT 使用统一的 `messages` 和 `tools` 结构。Claude 原生工具调用转
 ```
 
 此时 sample 会额外保留 `wire_trace.jsonl`。该文件可能包含完整消息、工具参数和 thinking 配置，仅适用于排错或审计。`--wire-trace off` 不记录这些请求信息，但仍保留 Claude Code 原生 session。
+
+### 9.5 重复的工具调用 ID
+
+部分 Anthropic 兼容服务会在多个响应中签发相同的 `tool_use` ID，例如每个响应都使用 `call_0`。此时 Claude Code 中有两个调用共用一个 ID，后续请求可能被拒绝，或与错误的结果配对。
+
+如果前一个调用已经收到结果，ACTF 转换会将这类调用区分开：后一个调用改为 `<id>__occurrence_<n>`，其结果随之改名，调用中以 `original_tool_call_id` 记录原始 ID。如果 ID 在前一个结果到达之前被再次使用，配对存在歧义，转换失败。
+
+如需在运行过程中修复 ID，请添加 `--claude-unique-tool-ids`：
+
+```bash
+roller collect ... --harness claude-code --api-base https://example.test --claude-unique-tool-ids
+```
+
+- 请求记录代理将流式和非流式 Messages 响应中重复的 ID 替换为新的 `toolu_roller_...` ID。Claude Code、`trace.jsonl`、ACTF 和记录的请求均使用替换后的 ID。
+- 每次替换写入 sample 目录下的 `tool_id_mappings.jsonl`，包含 `native_id` 和 `delivered_id`。
+- 启用该参数后，代理要求服务返回未压缩的响应，因为压缩的响应无法改写。
+- 该参数依赖请求记录代理，要求同时使用 `--api-base`，以及 `--wire-trace actf` 或 `full`。
+- 设置后，该参数写入 `lock.json` 和 `info.json`。修改后请使用新的 `--run-name`。
 
 ## 10. 首次运行检查
 
