@@ -299,7 +299,7 @@ task/model、usage、时间戳或其他运行 metadata。Run 根目录的 `sft.j
 语义的选项。`--parallel`、`--retries`、gateway 端口/启动超时、路径位置和 bundle 大小
 上限属于执行调度或约束，不影响已成功 sample 的语义，因此可以在 Resume 时调整。
 
-每个 rollout 会再次检查镜像 ID。镜像 tag 解析出的 ID 与 preflight 时不同时，Roller 记一条 warning，并在 sample provenance 中记录 rollout 时的实际 ID。
+每个 rollout 会再次检查镜像 ID，并直接用这个 ID 启动容器，因此即使 tag 在此期间被移动，sample provenance 中记录的也是实际运行的镜像。tag 解析出的 ID 与 preflight 时不同时，Roller 记一条 warning。
 
 credential 与 pass-through environment 的值不会保存到锁，也不会触发不一致。若这些
 值除认证外还会改变模型或服务的实际行为，应使用新的 `--run-name`。

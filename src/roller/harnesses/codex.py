@@ -308,7 +308,7 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
         return environment
 
     def _start_container(
-        self, container: str, request: RunRequest
+        self, container: str, request: RunRequest, image: str | None = None
     ) -> dict[str, str]:
         environment = self._environment(request)
         args = docker_run_args(
@@ -316,7 +316,7 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
             extra_env={"CODEX_HOME": CODEX_HOME_CONTAINER_PATH},
         )
         args.extend(
-            [self.config.docker_image, "/bin/bash", "-c", "tail -f /dev/null"]
+            [image or self.config.docker_image, "/bin/bash", "-c", "tail -f /dev/null"]
         )
         self._checked(args, "Codex container startup", timeout=60)
         return environment
@@ -641,7 +641,9 @@ class CodexSession(InteractiveSession):
         self.harness._start_wire_proxy(self.output_dir, self.attempt)
         # Mark before run: a timed-out Docker client may already have created it.
         self.container_started = True
-        self.environment = self.harness._start_container(self.container, self.request)
+        self.environment = self.harness._start_container(
+            self.container, self.request, self.image_digest
+        )
         self.harness._prepare_workspace(self.container, self.request)
         self.harness._prepare_context_and_setup(self.container, self.request)
         self.harness._prepare_config(self.container)

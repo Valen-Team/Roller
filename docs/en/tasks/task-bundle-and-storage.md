@@ -298,7 +298,7 @@ reports the difference and stops without mixing samples from different configura
 order, timeout, Task Bundle digest, model configuration, image ID, thinking, and trajectory policy, all of which affect the collected sample. `--parallel`, `--retries`, gateway port/startup timeout, path locations, and bundle size
 limits are scheduling or constraint settings and do not change the semantics of already-successful samples, so they may be adjusted on Resume.
 
-Each rollout inspects the image ID again. If an image tag resolves to a different ID than it did during preflight, Roller logs a warning and records the rollout-time ID in the sample provenance.
+Each rollout inspects the image ID again and starts its container from that ID, so the ID in the sample provenance is the image that ran even if the tag moves meanwhile. If the tag resolves to a different ID than it did during preflight, Roller logs a warning.
 
 Credential and pass-through environment values are not stored in the lock and do not trigger a mismatch. If these
 values are used for more than authentication and change the model or service behavior, use a new `--run-name`.

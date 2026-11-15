@@ -625,6 +625,27 @@ class OpenClawHelpersTests(unittest.TestCase):
         gateway = next(i for i, c in enumerate(runtime.commands) if "openclaw gateway" in c[-1])
         return result, tails.index(setting), gateway
 
+    def test_container_runs_the_inspected_image_id_or_the_tag(self) -> None:
+        for image_id, expected in (("sha256:inspected", "sha256:inspected"), ("", "test-image")):
+            class Runtime(FakeDockerRuntime):
+                def run(self, args, timeout=None):
+                    result = super().run(args, timeout)
+                    if list(args[:2]) == ["image", "inspect"]:
+                        return subprocess.CompletedProcess(args, 0, image_id, "")
+                    return result
+
+            runtime = Runtime()
+            harness = OpenClawHarness(
+                OpenClawConfig(docker_image="test-image", set_image_model=False), 0, runtime=runtime,
+            )
+            request = RunRequest(0, Task("task", ("hi",), 0), "provider/model", 30)
+            with self.subTest(image_id=image_id), tempfile.TemporaryDirectory() as temporary:
+                result = harness.run(request, Path(temporary), attempt=1)
+                self.assertEqual(result.status, "ok", result.error)
+                start = next(c for c in runtime.commands if c[0] == "run")
+                # A tag that moves after inspection cannot change the image in use.
+                self.assertEqual(start[-4], expected)
+
     def test_session_transcript_redaction_is_disabled_before_the_gateway_starts(self) -> None:
         result, setting, gateway = self._run_with_redaction_setting(0)
         self.assertEqual(result.status, "ok")

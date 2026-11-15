@@ -822,6 +822,45 @@ def _repeat_bench_rows(
     return repeated
 
 
+def _validate_openclaw_models(
+    requests: Sequence[Any], *, cli_harness: str | None, model_config: Mapping[str, Any]
+) -> None:
+    """Check OpenClaw models against the providers ``--model-config`` declares.
+
+    A provider in the file must list the requested model. A provider missing
+    from the file may be one OpenClaw ships, so it only earns a warning.
+    """
+    providers = model_config.get("providers")
+    if not isinstance(providers, dict):
+        return
+    models: set[str] = set()
+    for request in requests:
+        if (cli_harness or request.task.harness) == "openclaw":
+            models.add(request.model)
+        spec = request.task.user_simulator
+        if spec is not None and spec.harness == "openclaw":
+            models.add(spec.model or request.model)
+    for model in sorted(models):
+        provider_name, _, model_id = model.partition("/")
+        provider = providers.get(provider_name)
+        if not isinstance(provider, dict):
+            logger.warning(
+                "model %s: provider %r is not in --model-config, so OpenClaw has to "
+                "know it already and its requests are not traced",
+                model, provider_name,
+            )
+            continue
+        listed = provider.get("models")
+        declared = [
+            item["id"] for item in listed if isinstance(item, dict) and isinstance(item.get("id"), str)
+        ] if isinstance(listed, list) else []
+        if model_id not in declared:
+            raise ValueError(
+                f"model {model!r} is not declared for provider {provider_name!r} in "
+                f"--model-config; declared models: {', '.join(declared) or 'none'}"
+            )
+
+
 def _validate_thinking_requests(
     requests: Sequence[Any],
     *,
@@ -1139,6 +1178,10 @@ def _collect(args: argparse.Namespace) -> int:
             api_base=openclaw_endpoint, default_effort=args.thinking,
             effort_validator=normalize_thinking, capabilities=thinking_capabilities,
         )
+        if model_config is not None:
+            _validate_openclaw_models(
+                requests, cli_harness=cli_harness, model_config=model_config
+            )
     if "codex" in selected_harnesses:
         if args.collect_path and "openclaw" not in selected_harnesses:
             raise ValueError("--collect-path requires an OpenClaw participant")

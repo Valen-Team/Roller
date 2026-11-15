@@ -203,6 +203,11 @@ class ContainerCommands:
         )
 
     def _image_digest(self) -> str | None:
+        """Id of the image a tag points at now; sessions start their container from it.
+
+        Running by id keeps the recorded id equal to the image in use even if
+        the tag moves between this inspection and container creation.
+        """
         result = self.runtime.run(
             ["image", "inspect", self.config.docker_image, "--format", "{{.Id}}"]
         )

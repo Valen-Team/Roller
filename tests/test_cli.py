@@ -331,6 +331,35 @@ def grade(transcript, workspace_path):
         self.assertEqual(row["input_tree_digest"], bundle.input_tree_digest)
         self.assertEqual(row["context_manifest_digest"], bundle.context_manifest_digest)
 
+    def test_openclaw_model_must_be_declared_by_its_configured_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tasks = root / "tasks.jsonl"
+            tasks.write_text(json.dumps({"id": "hello", "prompt": "say hello"}) + "\n", encoding="utf-8")
+            config = root / "models.json"
+            config.write_text(json.dumps({"providers": {"proxy": {
+                "baseUrl": "http://127.0.0.1:9/v1", "apiKey": "placeholder",
+                "models": [{"id": "served-model"}, {"id": "other-model"}],
+            }}}), encoding="utf-8")
+
+            def dry_run(model: str) -> int:
+                args = _build_parser().parse_args([
+                    "collect", "--tasks", str(tasks), "--model", model,
+                    "--model-config", str(config), "--dry-run",
+                ])
+                with contextlib.redirect_stdout(io.StringIO()):
+                    return _collect(args)
+
+            self.assertEqual(dry_run("proxy/served-model"), 0)
+            with self.assertRaisesRegex(
+                ValueError, "'proxy/typo' is not declared for provider 'proxy'.*served-model, other-model"
+            ):
+                dry_run("proxy/typo")
+            # A provider outside the file may be one OpenClaw ships itself.
+            with self.assertLogs("roller.cli", "WARNING") as logs:
+                self.assertEqual(dry_run("builtin/model"), 0)
+            self.assertIn("provider 'builtin' is not in --model-config", logs.output[0])
+
     def test_collect_help_groups_shared_options_by_scope(self) -> None:
         parser = _build_parser()
         collect_parser = parser._subparsers._group_actions[0].choices["collect"]
