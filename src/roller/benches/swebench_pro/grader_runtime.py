@@ -232,7 +232,13 @@ class SWEBenchProGradedHarness(GradedHarness):
                 transcript_container_path=None,
             )
             outcome.scores["dropped_binary_files"] = dropped
-            self._copy_grade_outputs(runtime, grader_container, session.container)
+            try:
+                self._copy_grade_outputs(runtime, grader_container, session.container)
+            except (OSError, subprocess.SubprocessError) as exc:
+                # The grade is already computed; its artifacts are best-effort.
+                logger.warning(
+                    "[%s] grade outputs were not copied: %s", request.task.id, exc
+                )
             return outcome
         except Exception as exc:  # noqa: BLE001 - grading failures become score metadata
             return GradeOutcome(

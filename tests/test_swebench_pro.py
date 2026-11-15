@@ -778,6 +778,49 @@ class SWEBenchProGraderTests(unittest.TestCase):
         )
         self.assertIn("assets/logo.png, bin/tool", logs.output[0])
 
+    def test_failed_artifact_copy_keeps_the_computed_grade(self) -> None:
+        class Runtime:
+            def run(self, args, timeout=None):
+                del timeout
+                arguments = list(args)
+                stdout = (
+                    "sha256:source\n" if arguments[:2] == ["image", "inspect"] else ""
+                )
+                return subprocess.CompletedProcess(arguments, 0, stdout, "")
+
+        binding = BenchBinding(
+            name="swebench-pro",
+            metadata={"source_image": "registry.example/source:test", "base_commit": "a" * 40},
+            grade=GradeSpec(code="def roller_grade(workspace_path): return {}"),
+        )
+        harness = SWEBenchProGradedHarness(
+            HermesHarness(HermesConfig(), 0, Runtime()), binding
+        )
+        session = SimpleNamespace(container_started=True, container="agent-container")
+        request = SimpleNamespace(task=SimpleNamespace(id="instance-test"))
+
+        with (
+            patch.object(harness, "_extract_patch", return_value=("", None)),
+            patch(
+                "roller.benches.swebench_pro.ContainerGrader.grade",
+                return_value=GradeOutcome({"overall_score": 1.0, "resolved": 1}, 0.1),
+            ),
+            patch.object(
+                harness,
+                "_copy_grade_outputs",
+                side_effect=subprocess.TimeoutExpired("docker cp", 120),
+            ),
+            self.assertLogs(
+                "roller.benches.swebench_pro.grader_runtime", "WARNING"
+            ) as logs,
+        ):
+            outcome = harness._grade(session, request, "ok")
+
+        assert outcome is not None
+        self.assertEqual(outcome.scores["overall_score"], 1.0)
+        self.assertIsNone(outcome.error)
+        self.assertIn("grade outputs were not copied", logs.output[0])
+
     def test_opt_in_grading_preserves_patch_and_excludes_test_sources(self) -> None:
         for exclude_tests, with_fixtures, expected in [
             (False, True, 0.0),
