@@ -13,5 +13,5 @@
 ## Checklist
 
 - [ ] `python -m pytest` and `ruff check` pass
-- [ ] Documentation updated in `docs/en` and `docs/zh` where behaviour changed
+- [ ] Handbook updated in the website repository, in English and Chinese, where behaviour changed
 - [ ] `CHANGELOG.md` updated for a change users will notice

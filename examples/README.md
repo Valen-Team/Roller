@@ -1,6 +1,6 @@
 # Roller Examples
 
-[项目首页](../README_zh-CN.md) · [快速上手](../docs/zh/start/getting-started.md) · [Task 格式](../docs/zh/tasks/task-format.md) · [产物说明](../docs/zh/traces/trajectory-outputs.md)
+[项目首页](../README_zh-CN.md) · [快速上手](https://valen-team.github.io/zh-Hans/roller/start/getting-started/) · [Task 格式](https://valen-team.github.io/zh-Hans/roller/tasks/task-format/) · [产物说明](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/)
 
 本目录包含配置模板、task 和运行命令。安装步骤、task 字段和轨迹格式见对应指南。
 
@@ -78,7 +78,7 @@ RUNS_PER_TASK=1 \
 给 `roller collect`，例如 `./scripts/run-qwenclawbench.sh --resume`。
 
 完整的运行与评分约束见
-[QwenClawBench 文档](../docs/zh/benches/qwenclawbench.md)。
+[QwenClawBench 文档](https://valen-team.github.io/zh-Hans/roller/benches/qwenclawbench/)。
 
 ### 用 YAML 配置运行
 
@@ -90,7 +90,7 @@ roller bench run --config examples/benchmarks/base.yaml \
   --extra-config examples/benchmarks/qwenclawbench.yaml --dry-run
 ```
 
-字段和分层规则见 [Benchmark 运行配置](../docs/zh/benches/benchmark-standard.md)。
+字段和分层规则见 [Benchmark 运行配置](https://valen-team.github.io/zh-Hans/roller/benches/benchmark-standard/)。
 
 ## Coverage 功能测试
 
@@ -119,7 +119,7 @@ python examples/coverage/suite.py run --case formats/jsonl/codex --dry-run
 
 ### 配置后运行一组任务
 
-按 [Getting Started](../docs/zh/start/getting-started.md) 准备 Roller 和所选 Harness 的镜像，然后复制 Coverage 的 [环境配置模板](coverage/config/.env.example)。以下以 Codex 的 4 条加法任务为例：
+按 [Getting Started](https://valen-team.github.io/zh-Hans/roller/start/getting-started/) 准备 Roller 和所选 Harness 的镜像，然后复制 Coverage 的 [环境配置模板](coverage/config/.env.example)。以下以 Codex 的 4 条加法任务为例：
 
 ```bash
 cp examples/coverage/config/.env.example examples/coverage/config/.env
@@ -150,7 +150,7 @@ python examples/coverage/suite.py check --case formats/jsonl/codex
 
 ## 基础样例的采集准备
 
-先按照 [Getting Started](../docs/zh/start/getting-started.md#1-准备运行环境) 安装 Roller，并准备至少一个 Harness 镜像。
+先按照 [Getting Started](https://valen-team.github.io/zh-Hans/roller/start/getting-started/#1-准备运行环境) 安装 Roller，并准备至少一个 Harness 镜像。
 
 复制并编辑本地 API 环境文件：
 
@@ -183,7 +183,7 @@ set +a
   Messages API；二者的 model、endpoint、Key 环境变量和 effort 均通过 CLI 设置；
 - `--codex-config` 和 `--claude-settings` 是可选的 Harness 原生配置入口，不是模型注册表。
 
-完整规则见 [OpenClaw Harness 指南](../docs/zh/harnesses/openclaw-configuration.md#31-模型配置)。
+完整规则见 [OpenClaw Harness 指南](https://valen-team.github.io/zh-Hans/roller/harnesses/openclaw-configuration/#31-模型配置)。
 
 ## 基础 Task 清单
 
@@ -248,11 +248,11 @@ roller collect \
 
 `--codex-config` 可省略；示例文件仅设置 Roller 未覆盖的 text verbosity，并保留一个已注释的
 MCP 模板。第四条 task 通过 `codex exec resume --last` 延续 session。镜像、API 和 reasoning
-的详细说明见 [Codex Harness 指南](../docs/zh/harnesses/codex-configuration.md)。
+的详细说明见 [Codex Harness 指南](https://valen-team.github.io/zh-Hans/roller/harnesses/codex-configuration/)。
 
 ## OpenCode：原生会话与文件工具
 
-按 [OpenCode 指南](../docs/zh/harnesses/opencode-configuration.md) 构建固定版本镜像，并配置流式 Chat Completions 服务：
+按 [OpenCode 指南](https://valen-team.github.io/zh-Hans/roller/harnesses/opencode-configuration/) 构建固定版本镜像，并配置流式 Chat Completions 服务：
 
 ```bash
 python examples/coverage/suite.py run --case data/txt/opencode \
@@ -265,7 +265,7 @@ python examples/coverage/suite.py check --case data/txt/opencode
 
 ## DeepSeek Harness：原生 SDK 与持久化 Bash
 
-按 [DeepSeek 指南](../docs/zh/harnesses/deepseek-configuration.md) 构建镜像，并配置 DeepSeek 兼容服务：
+按 [DeepSeek 指南](https://valen-team.github.io/zh-Hans/roller/harnesses/deepseek-configuration/) 构建镜像，并配置 DeepSeek 兼容服务：
 
 ```bash
 python examples/coverage/suite.py run --case data/txt/deepseek \
@@ -279,7 +279,7 @@ python examples/coverage/suite.py check --case data/txt/deepseek
 
 ## Pi Agent Harness：原生会话与文件工具
 
-按 [Pi 指南](../docs/zh/harnesses/pi-configuration.md) 构建镜像，并配置支持工具调用的流式 Chat Completions 服务：
+按 [Pi 指南](https://valen-team.github.io/zh-Hans/roller/harnesses/pi-configuration/) 构建镜像，并配置支持工具调用的流式 Chat Completions 服务：
 
 ```bash
 python examples/coverage/suite.py run --case data/txt/pi \
@@ -293,7 +293,7 @@ python examples/coverage/suite.py check --case data/txt/pi
 
 ## Hermes：文本、文件与多轮任务
 
-按 [Hermes 指南](../docs/zh/harnesses/hermes-configuration.md) 构建镜像并配置 Chat Completions API，然后执行：
+按 [Hermes 指南](https://valen-team.github.io/zh-Hans/roller/harnesses/hermes-configuration/) 构建镜像并配置 Chat Completions API，然后执行：
 
 ```bash
 python examples/coverage/suite.py run --case data/txt/hermes \
@@ -325,7 +325,7 @@ roller collect \
 
 `--claude-settings` 可省略；示例文件仅关闭 commit co-author 标记，不改变 permission mode、thinking
 或工具行为。第四条 task 通过 `claude --continue` 延续 session。镜像、endpoint 和 thinking
-配置见 [Claude Code Harness 指南](../docs/zh/harnesses/claude-code-configuration.md)。
+配置见 [Claude Code Harness 指南](https://valen-team.github.io/zh-Hans/roller/harnesses/claude-code-configuration/)。
 
 ## 进阶案例
 
@@ -343,7 +343,7 @@ roller collect \
   --run-name examples-user-simulator
 ```
 
-Task 已内置 `model: my-openai-proxy/my-model`。动态对话额外生成 `conversation.json` 和 `user_simulator/` 轨迹；Task Agent 与 Simulator 可在各自字段中选择 OpenClaw、Codex、Claude Code、Hermes、OpenCode、DeepSeek 或 Pi。详见 [User Simulator](../docs/zh/tasks/user-simulator.md)。
+Task 已内置 `model: my-openai-proxy/my-model`。动态对话额外生成 `conversation.json` 和 `user_simulator/` 轨迹；Task Agent 与 Simulator 可在各自字段中选择 OpenClaw、Codex、Claude Code、Hermes、OpenCode、DeepSeek 或 Pi。详见 [User Simulator](https://valen-team.github.io/zh-Hans/roller/tasks/user-simulator/)。
 
 ### 多模态输入
 
@@ -389,4 +389,4 @@ roller view runs/examples-openclaw
 - 每个成功 sample 是否有 `trace.jsonl`、`trace_ACTF.json`、`trace_SFT.json` 和 `info.json`；
 - run 根目录 `sft.jsonl` 是否按 request 顺序汇总成功样本。
 
-编写 task 时参见 [Task](../docs/zh/tasks/task-format.md)；如需选择训练、调试与审计所需的文件，参见 [轨迹产出文件指南](../docs/zh/traces/trajectory-outputs.md)。
+编写 task 时参见 [Task](https://valen-team.github.io/zh-Hans/roller/tasks/task-format/)；如需选择训练、调试与审计所需的文件，参见 [轨迹产出文件指南](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/)。

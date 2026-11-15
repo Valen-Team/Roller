@@ -21,7 +21,7 @@ These checks validate parsing, routing, bundles, capture policies, expected erro
 
 ## Run four tasks
 
-Install Roller and prepare the Harness images as described in [Getting Started](../../docs/en/start/getting-started.md). Then copy and edit the environment template:
+Install Roller and prepare the Harness images as described in [Getting Started](https://valen-team.github.io/roller/start/getting-started/). Then copy and edit the environment template:
 
 ```bash
 cp examples/coverage/config/.env.example examples/coverage/config/.env
@@ -121,10 +121,10 @@ python examples/coverage/validate_merged.py
 
 To import another complete dataset, run `generate.py --data-root /path/to/Roller_Data`, then merge and validate. Add new scenarios, each with four expectations, in the generator instead of editing only the generated JSON. Keep credentials, local configurations and reports out of the public suite; `runs/` is ignored by Git.
 
-Hermes uses the pinned `terminal` and `file` toolsets. Vision tools are outside the initial adapter scope; Hermes vision cases document unsupported visual inputs and are excluded from the required passing set. See the [Hermes guide](../../docs/en/harnesses/hermes-configuration.md).
+Hermes uses the pinned `terminal` and `file` toolsets. Vision tools are outside the initial adapter scope; Hermes vision cases document unsupported visual inputs and are excluded from the required passing set. See the [Hermes guide](https://valen-team.github.io/roller/harnesses/hermes-configuration/).
 
-OpenCode uses native CLI sessions and text/file tools. Its optional vision cases document unsupported visual inputs. See the [OpenCode guide](../../docs/en/harnesses/opencode-configuration.md).
+OpenCode uses native CLI sessions and text/file tools. Its optional vision cases document unsupported visual inputs. See the [OpenCode guide](https://valen-team.github.io/roller/harnesses/opencode-configuration/).
 
-DeepSeek uses the official `sdk-minimal` profile with persistent Bash. Vision cases are outside the scope of the initial acceptance. See the [DeepSeek guide](../../docs/en/harnesses/deepseek-configuration.md).
+DeepSeek uses the official `sdk-minimal` profile with persistent Bash. Vision cases are outside the scope of the initial acceptance. See the [DeepSeek guide](https://valen-team.github.io/roller/harnesses/deepseek-configuration/).
 
-Pi uses a native AgentSession and seven text/file tools. Conversation history and files persist across turns; vision cases document unsupported visual inputs. See the [Pi guide](../../docs/en/harnesses/pi-configuration.md).
+Pi uses a native AgentSession and seven text/file tools. Conversation history and files persist across turns; vision cases document unsupported visual inputs. See the [Pi guide](https://valen-team.github.io/roller/harnesses/pi-configuration/).

@@ -11,6 +11,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 ### Changed
 
 - The project status is Beta, in the package classifiers and the documentation.
+- The handbook moved to [valen-team.github.io/roller](https://valen-team.github.io/roller/) and is maintained in the website repository. `docs/` and the Sphinx build are removed from this repository.
 
 ## 0.3.0 - 2026-11-15
 

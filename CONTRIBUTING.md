@@ -40,25 +40,22 @@ To check a change against a real Harness, build its image as described in the Ha
 | Bench adapters | `src/roller/benches/` |
 | SFT export | `src/roller/sft.py`, `src/roller/compaction_sft.py` |
 | Viewer | `src/roller/viewer/` |
-| Documentation | `docs/en/` and `docs/zh/` |
+| Documentation | `roller/` and its Chinese counterpart in the [website repository](https://github.com/Valen-Team/valen-team.github.io) |
 | Machine-readable schemas | `schemas/` |
 
 ## Pull requests
 
 - Keep a pull request to one change. Describe the problem, the change and how you verified it.
 - Add or update tests for behaviour you change.
-- Update the documentation in both `docs/en` and `docs/zh`, and the two READMEs when they are affected. The pages mirror each other section by section.
+- When behaviour changes, update the handbook in the [website repository](https://github.com/Valen-Team/valen-team.github.io), in `roller/` and `i18n/zh-Hans/docusaurus-plugin-content-docs-roller/current/`, and the two READMEs when they are affected. The English and Chinese pages mirror each other section by section.
 - A new `roller collect` option also needs an entry in `src/roller/benches/run_config.py`, either mapped to a YAML key or listed as collect-only. A test fails otherwise.
 - A setting that changes what a sample contains belongs in the run lock, so that `--resume` refuses to mix samples collected with different settings. A new option must leave the lock of existing runs unchanged when it is not used.
 - Commit subjects follow the `type(scope): summary` form used in the history, for example `fix(openclaw): turn off heartbeat polls during a rollout`.
 - Add a line to the Unreleased section of [CHANGELOG.md](CHANGELOG.md) for a change users will notice.
 
-## Building the documentation
+## Documentation
 
-```bash
-python -m pip install -r docs/requirements-docs.txt
-cd docs && make html
-```
+The handbook is published at [valen-team.github.io/roller](https://valen-team.github.io/roller/) and is built with the website. Its source is in the [website repository](https://github.com/Valen-Team/valen-team.github.io).
 
 ## Harness images
 

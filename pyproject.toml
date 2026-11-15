@@ -28,7 +28,7 @@ swebench-pro = ["pyarrow>=14"]
 
 [project.urls]
 Homepage = "https://github.com/Valen-Team/Roller"
-Documentation = "https://github.com/Valen-Team/Roller/blob/main/docs/en/index.md"
+Documentation = "https://valen-team.github.io/roller/"
 Issues = "https://github.com/Valen-Team/Roller/issues"
 
 [project.scripts]
