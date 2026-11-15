@@ -95,13 +95,85 @@ class DeepSeekProfileTests(unittest.TestCase):
         self.assertEqual(session.turn_options(60)["profile"], "sdk")
         self.assertEqual(session.harness_environment("https://deepseek.example/v1")["DSH_PERMISSION_MODE"], "danger-full-access")
 
+    def test_other_profiles_run_commands_unconfined_unless_a_mode_is_chosen(self):
+        # Their default file sandbox has no backend in the task container.
+        locked = locked_configuration("--deepseek-profile", "sdk")
+        self.assertEqual(locked["permission_mode"], "danger-full-access")
+        session = self.session(profile="sdk")
+        self.assertEqual(session.harness_environment("https://deepseek.example/v1")["DSH_PERMISSION_MODE"], "danger-full-access")
+        self.assertEqual(session.version_fields()["permission_mode"], "danger-full-access")
+        chosen = self.session(profile="sdk", permission_mode="read-only")
+        self.assertEqual(chosen.harness_environment("https://deepseek.example/v1")["DSH_PERMISSION_MODE"], "read-only")
+
+    def test_input_modalities_are_declared_to_the_sdk(self):
+        self.assertNotIn("input_modalities", locked_configuration())
+        locked = locked_configuration("--deepseek-profile", "sdk", "--deepseek-input-modalities", "text,image")
+        self.assertEqual(locked["input_modalities"], ["text", "image"])
+        session = self.session(profile="sdk", input_modalities=("text", "image"))
+        self.assertEqual(session.turn_options(60)["input_modalities"], ["text", "image"])
+        self.assertEqual(session.version_fields()["input_modalities"], ["text", "image"])
+        self.assertEqual(self.session().turn_options(60)["input_modalities"], ["text"])
+        assets = RUNNER_PATH.parent
+        self.assertIn("inputModalities: process.env.ROLLER_DEEPSEEK_INPUT_MODALITIES.split(',')", (assets / "roller.patch.yml").read_text())
+        self.assertIn('os.environ["ROLLER_DEEPSEEK_INPUT_MODALITIES"]', (assets / "runner.py").read_text())
+        for value in ((), ("image",), ("text", "audio"), "text"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "modalities"):
+                DeepSeekConfig(input_modalities=value)
+
+    def test_delegation_tools_are_withheld_from_the_model(self):
+        source = (RUNNER_PATH.parent / "journal.mjs").read_text()
+        for name in ("subagent", "subagent_fork", "list_agents", "interrupt_agent", "send_message", "workflow", "ralph"):
+            self.assertIn(f"'{name}'", source)
+        self.assertIn("body.tools.filter(tool => !DELEGATION_TOOLS.has(tool.function?.name))", source)
+
     def test_invalid_profile_and_permission_mode(self):
         for settings in ({"profile": ""}, {"profile": "../sdk"}, {"profile": "sdk\n"}, {"profile": None}, {"permission_mode": "full"}):
             with self.subTest(settings=settings), self.assertRaises(ValueError):
                 DeepSeekConfig(**settings)
 
 
+IMAGE_URLS = ["data:image/png;base64,AA==", "data:image/png;base64,AQ=="]
+
+
+def image_events(count=1, sent=None):
+    """A read_image call whose result names ``count`` attachments."""
+    tool = {"type": "function", "function": {"name": "read_image", "parameters": {"type": "object"}}}
+    events = sample_events()
+    for row in events:
+        if row.get("type") == "request":
+            row["body"]["tools"].append(deepcopy(tool))
+    events[3]["payload"]["event"]["data"]["message"]["content"][1].update(name="read_image", arguments='{"file_path":"a.png"}')
+    events[4]["payload"]["event"]["data"]["message"]["content"][0]["content"] = [
+        {"type": "text", "text": "image/png image"},
+        *({"type": "image", "attachment": {"attachmentId": f"sha256:{n}", "mediaType": "image/png"}} for n in range(count)),
+    ]
+    urls = [IMAGE_URLS[n] for n in range(count)] if sent is None else sent
+    if urls:
+        events[5]["body"]["messages"] += [
+            {"role": "tool", "content": "image/png image"},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Attached image(s) from tool result:"},
+                *({"type": "image_url", "image_url": {"url": url}} for url in urls)]},
+        ]
+    return events
+
+
 class DeepSeekTraceTests(unittest.TestCase):
+    def test_tool_result_images_survive_actf_and_sft_in_order(self):
+        actf = deepseek_events_to_actf(image_events(2))
+        blocks = actf["steps"][0]["observation"][0]["content"]
+        self.assertEqual([block["type"] for block in blocks], ["text", "image", "image"])
+        sft = actf_to_sft(actf)
+        self.assertEqual(sft["messages"][3]["content"], "image/png image\n<image>\n<image>")
+        self.assertEqual(sft["images"], IMAGE_URLS)
+
+    def test_tool_images_must_match_what_the_model_received(self):
+        for sent in ([], IMAGE_URLS[:1], ["https://example.test/a.png", IMAGE_URLS[1]]):
+            with self.subTest(sent=sent), self.assertRaisesRegex(ValueError, "inline data"):
+                deepseek_events_to_actf(image_events(2, sent=sent))
+        with self.assertRaisesRegex(ValueError, "no tool result declares"):
+            deepseek_events_to_actf(image_events(1, sent=IMAGE_URLS))
+
     def test_native_tools_reasoning_and_usage(self):
         events = sample_events()
         actf = deepseek_events_to_actf(events)

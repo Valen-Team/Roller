@@ -42,6 +42,7 @@ class DeepSeekConfig:
     max_steps: int = 12
     context_length: int = 128000
     output_tokens: int = 8192
+    input_modalities: tuple[str, ...] = ("text",)
     capture_calls: bool = False
     capture_debug: str = "on-error"
     wire_trace_mode: str = "actf"
@@ -49,6 +50,19 @@ class DeepSeekConfig:
     keep_container_on_error: bool = False
     docker_binary: str = "docker"
     preflight_image_digest: str | None = None
+
+    @property
+    def native_permission_mode(self) -> str | None:
+        """Permission mode exported to the SDK.
+
+        Profiles other than ``sdk-minimal`` default to a file sandbox that has
+        no backend inside the task container, so every shell command would be
+        refused. The container is the sandbox; run them unconfined in it.
+        """
+
+        if self.permission_mode is not None or self.profile == "sdk-minimal":
+            return self.permission_mode
+        return "danger-full-access"
 
     @property
     def tools(self) -> list[str] | None:
@@ -61,6 +75,8 @@ class DeepSeekConfig:
         validate_bridge_config(self, "DeepSeek")
         if not isinstance(self.profile, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.profile):
             raise ValueError("DeepSeek profile must be a native profile name")
+        if self.input_modalities not in (("text",), ("text", "image")):
+            raise ValueError("DeepSeek input modalities must be text or text,image")
         if self.permission_mode is not None and self.permission_mode not in DEEPSEEK_PERMISSION_MODES:
             raise ValueError("DeepSeek permission mode must be read-only|workspace-write|danger-full-access")
         validate_step_limits(self, "DeepSeek")
@@ -88,7 +104,7 @@ class DeepSeekSession(BridgeSession):
         return dict(
             DEEPSEEK_BASE_URL=api_base, HOME=self.home, DSH_HOME=self.home,
             DSH_RUNTIME_MODE="exe", ROLLER_DEEPSEEK_JOURNAL=STATE + "/trace.jsonl",
-            **({"DSH_PERMISSION_MODE": config.permission_mode} if config.permission_mode else {}),
+            **({"DSH_PERMISSION_MODE": config.native_permission_mode} if config.native_permission_mode else {}),
         )
 
     def turn_options(self, timeout: float) -> dict[str, Any]:
@@ -98,6 +114,7 @@ class DeepSeekSession(BridgeSession):
         return {
             "turn": self.turns, "profile": config.profile, "max_steps": config.max_steps,
             "context_length": config.context_length, "output_tokens": config.output_tokens,
+            "input_modalities": list(config.input_modalities),
             "tool_env_names": sorted(set((*config.pass_env, *self.request.task.env_names))),
         }
 
@@ -111,7 +128,8 @@ class DeepSeekSession(BridgeSession):
         config = self.harness.config
         return {
             "deepseek_version": self.version, "profile": config.profile,
-            **({"permission_mode": config.permission_mode} if config.permission_mode else {}),
+            **({"permission_mode": config.native_permission_mode} if config.native_permission_mode else {}),
+            **({"input_modalities": list(config.input_modalities)} if config.input_modalities != ("text",) else {}),
         }
 
     def settings(self) -> dict[str, Any]:

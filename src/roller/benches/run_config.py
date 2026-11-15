@@ -218,6 +218,7 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "output_tokens": ("--deepseek-output-tokens", "value"),
         "profile": ("--deepseek-profile", "value"),
         "permission_mode": ("--deepseek-permission-mode", "value"),
+        "input_modalities": ("--deepseek-input-modalities", "value"),
     },
     "pi": {
         "max_steps": ("--pi-max-steps", "value"),

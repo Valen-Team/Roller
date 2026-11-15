@@ -2,6 +2,11 @@
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 
 export const name = 'roller-request-journal';
+// The sdk profile's delegation tools. Children would share this process and
+// its journal, which records one linear conversation, and the shipped agent
+// preset cannot be patched, so the tools are withheld from the model instead.
+const DELEGATION_TOOLS = new Set(['subagent', 'subagent_fork', 'list_agents', 'interrupt_agent',
+  'send_message', 'workflow', 'ralph']);
 export const inject = ['subprocess'];
 export function apply(ctx) {
   const original = globalThis.fetch;
@@ -38,6 +43,10 @@ export function apply(ctx) {
       }
       if (typeof init?.body !== 'string') throw new Error('DeepSeek request body is not serialized JSON');
       const body = JSON.parse(init.body);
+      if (Array.isArray(body.tools) && body.tools.some(tool => DELEGATION_TOOLS.has(tool.function?.name))) {
+        body.tools = body.tools.filter(tool => !DELEGATION_TOOLS.has(tool.function?.name));
+        init = {...init, body: JSON.stringify(body)};
+      }
       appendFileSync(journal, JSON.stringify({type: 'request', turn, body}) + '\n');
       if (config.capture_calls) {
         const headers = new Headers(init.headers ?? (typeof input === 'object' ? input.headers : undefined));

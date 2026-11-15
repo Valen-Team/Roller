@@ -544,6 +544,7 @@ def _build_parser() -> argparse.ArgumentParser:
     deepseek.add_argument("--deepseek-profile", default="sdk-minimal", metavar="NAME", help="native DeepSeek SDK profile (default: sdk-minimal; sdk selects the full native tool set)")
     deepseek.add_argument("--deepseek-permission-mode", choices=DEEPSEEK_PERMISSION_MODES, help="native DeepSeek permission mode inside the task container (default: the profile's own)")
     deepseek.add_argument("--deepseek-max-steps", type=int, default=12, help="maximum model steps per DeepSeek user turn (default: 12)")
+    deepseek.add_argument("--deepseek-input-modalities", choices=("text", "text,image"), default="text", help="DeepSeek model input capabilities (default: text; text,image lets read_image send images to the model)")
     deepseek.add_argument("--deepseek-context-length", type=int, default=128000, help="DeepSeek model context window (default: 128000 tokens)")
     deepseek.add_argument("--deepseek-output-tokens", type=int, default=8192, help="DeepSeek maximum output tokens (default: 8192)")
 
@@ -1235,6 +1236,7 @@ def _collect(args: argparse.Namespace) -> int:
             max_steps=args.deepseek_max_steps, context_length=args.deepseek_context_length,
             output_tokens=args.deepseek_output_tokens,
             profile=args.deepseek_profile, permission_mode=args.deepseek_permission_mode,
+            input_modalities=tuple(args.deepseek_input_modalities.split(",")),
         )
     if "pi" in selected_harnesses:
         pi_config = PiConfig(
@@ -1448,7 +1450,8 @@ def _collect(args: argparse.Namespace) -> int:
             "wire_trace": args.wire_trace,
             "keep_thinking": args.keep_thinking, "pass_env_names": list(deepseek_config.pass_env),
             "profile": deepseek_config.profile, "retry_count": 0,
-            **({"permission_mode": deepseek_config.permission_mode} if deepseek_config.permission_mode else {}),
+            **({"permission_mode": deepseek_config.native_permission_mode} if deepseek_config.native_permission_mode else {}),
+            **({"input_modalities": list(deepseek_config.input_modalities)} if deepseek_config.input_modalities != ("text",) else {}),
             **({"capture_calls": True, "capture_debug": args.capture_debug} if deepseek_config.capture_calls else {}),
         }
 
