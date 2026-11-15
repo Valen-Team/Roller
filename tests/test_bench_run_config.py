@@ -90,7 +90,12 @@ class BenchRunConfigTests(unittest.TestCase):
             ),
             "codex": (
                 {"config_set": ['model_verbosity="low"'], "image_detail": "high"},
-                ["--codex-config-set", 'model_verbosity="low"', "--codex-image-detail", "high"],
+                [
+                    "--codex-config-set",
+                    'model_verbosity="low"',
+                    "--codex-image-detail",
+                    "high",
+                ],
             ),
             "claude-code": (
                 {"capture_calls": True, "unique_tool_ids": True},
@@ -104,11 +109,19 @@ class BenchRunConfigTests(unittest.TestCase):
             ),
             "deepseek": (
                 {"profile": "sdk", "permission_mode": "workspace-write"},
-                ["--deepseek-profile", "sdk", "--deepseek-permission-mode", "workspace-write"],
+                [
+                    "--deepseek-profile",
+                    "sdk",
+                    "--deepseek-permission-mode",
+                    "workspace-write",
+                ],
             ),
         }
         for harness, (extra, expected) in cases.items():
-            with self.subTest(harness=harness), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(harness=harness),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 root = Path(temporary)
                 payload = self._base()
                 payload["benchmark"] = {"id": "pinchbench", "root": "/bench/pinch"}
@@ -182,9 +195,7 @@ class BenchRunConfigTests(unittest.TestCase):
         self.assertEqual(len(plan.provenance["sources"]), 2)
         effective = plan.provenance["effective"]
         self.assertEqual(effective["model"]["thinking"], "high")
-        self.assertEqual(
-            effective["model"]["base_url"], "https://model.example/v1"
-        )
+        self.assertEqual(effective["model"]["base_url"], "https://model.example/v1")
         self.assertEqual(effective["model"]["api_key_env"], "MODEL_API_KEY")
         self.assertEqual(effective["harness"]["id"], "codex")
         self.assertEqual(effective["execution"]["parallel"], 8)
@@ -244,7 +255,9 @@ class BenchRunConfigTests(unittest.TestCase):
             model_config = Path(argv[argv.index("--model-config") + 1])
             payload = json.loads(model_config.read_text(encoding="utf-8"))
 
-            self.assertEqual(argv[argv.index("--model") + 1], "roller/organization/model")
+            self.assertEqual(
+                argv[argv.index("--model") + 1], "roller/organization/model"
+            )
             self.assertEqual(
                 payload["providers"]["roller"]["models"][0]["id"],
                 "organization/model",
@@ -321,9 +334,7 @@ class BenchRunConfigTests(unittest.TestCase):
             )
 
         argv = list(plan.collect_argv)
-        self.assertEqual(
-            argv[argv.index("--bench-runs-per-task") + 1], "3"
-        )
+        self.assertEqual(argv[argv.index("--bench-runs-per-task") + 1], "3")
         self.assertEqual(
             plan.provenance["effective"]["benchmark"]["extra"],
             {"runs_per_task": 3},
@@ -490,9 +501,7 @@ class BenchRunConfigTests(unittest.TestCase):
 
         argv = list(plan.collect_argv)
         self.assertEqual(argv[argv.index("--thinking") + 1], "off")
-        self.assertEqual(
-            plan.provenance["effective"]["model"]["thinking"], "off"
-        )
+        self.assertEqual(plan.provenance["effective"]["model"]["thinking"], "off")
 
     def test_environment_references_are_strict(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -622,9 +631,7 @@ class BenchRunConfigTests(unittest.TestCase):
                 temporary_root=root,
             )
 
-        self.assertEqual(
-            plan.environment["PINCHBENCH_JUDGE_API_KEY"], "judge-secret"
-        )
+        self.assertEqual(plan.environment["PINCHBENCH_JUDGE_API_KEY"], "judge-secret")
         self.assertNotIn("judge-secret", json.dumps(plan.provenance))
         old = os.environ.get("PINCHBENCH_JUDGE_API_KEY")
         with temporary_environment(plan.environment):
@@ -735,14 +742,17 @@ def grade(transcript, workspace_path):
                 ["bench", "run", "--config", str(path), "--dry-run"]
             )
             output = io.StringIO()
-            with patch.dict(
-                os.environ,
-                {
-                    "MODEL_BASE_URL": "https://model.example/v1",
-                    "MODEL_API_KEY": "secret-value",
-                },
-                clear=False,
-            ), contextlib.redirect_stdout(output):
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "MODEL_BASE_URL": "https://model.example/v1",
+                        "MODEL_API_KEY": "secret-value",
+                    },
+                    clear=False,
+                ),
+                contextlib.redirect_stdout(output),
+            ):
                 result = _bench(args)
 
         payload = json.loads(output.getvalue())

@@ -35,10 +35,14 @@ def _request(root: Path, digest: str = "bundle-a") -> RunRequest:
 
 
 class RunLockTests(unittest.TestCase):
-    def test_disabled_retired_options_are_compared_without_rewriting_old_lock(self) -> None:
+    def test_disabled_retired_options_are_compared_without_rewriting_old_lock(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "lock.json"
-            expected = {"execution": {name: {"thinking": "high"} for name in HARNESS_NAMES}}
+            expected = {
+                "execution": {name: {"thinking": "high"} for name in HARNESS_NAMES}
+            }
             recorded = deepcopy(expected)
             for settings in recorded["execution"].values():
                 settings["external_thinking"] = "off"
@@ -58,21 +62,30 @@ class RunLockTests(unittest.TestCase):
             self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), before)
             self.assertEqual(expected, expected_before)
 
-    def test_retired_compatibility_does_not_hide_active_unknown_or_other_changes(self) -> None:
-        cases = [
-            ("codex", {"external_thinking": mode})
-            for mode in ("external", "external_always", "unknown", None, False)
-        ] + [
-            ("claude-code", {"signature_recovery": mode})
-            for mode in ("fill", "prefer", "unknown", None, False)
-        ] + [
-            ("claude-code", {"signature_recovery_attempts": 1}),
-            ("claude-code", {"signature_recovery_max_tokens": 8192}),
-            ("codex", {"external_thinking": "off", "thinking": "low"}),
-            ("unknown-harness", {"external_thinking": "off"}),
-        ]
+    def test_retired_compatibility_does_not_hide_active_unknown_or_other_changes(
+        self,
+    ) -> None:
+        cases = (
+            [
+                ("codex", {"external_thinking": mode})
+                for mode in ("external", "external_always", "unknown", None, False)
+            ]
+            + [
+                ("claude-code", {"signature_recovery": mode})
+                for mode in ("fill", "prefer", "unknown", None, False)
+            ]
+            + [
+                ("claude-code", {"signature_recovery_attempts": 1}),
+                ("claude-code", {"signature_recovery_max_tokens": 8192}),
+                ("codex", {"external_thinking": "off", "thinking": "low"}),
+                ("unknown-harness", {"external_thinking": "off"}),
+            ]
+        )
         for name, changes in cases:
-            with self.subTest(name=name, changes=changes), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(name=name, changes=changes),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 path = Path(temporary) / "lock.json"
                 expected = {"execution": {name: {"thinking": "high"}}}
                 recorded = deepcopy(expected)
@@ -102,7 +115,9 @@ class RunLockTests(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(lock["requests"][0]["task_bundle"]["manifest_digest"], "bundle-a")
+        self.assertEqual(
+            lock["requests"][0]["task_bundle"]["manifest_digest"], "bundle-a"
+        )
         self.assertEqual(lock["requests"][0]["model_label"], "proxy/model")
         provider = lock["model_config"]["providers"]["proxy"]
         self.assertEqual(
@@ -142,9 +157,7 @@ class RunLockTests(unittest.TestCase):
                 execution={"thinking": "high"},
                 model_config=None,
             )
-            created = ensure_run_lock(
-                path, lock, resume=False, existing_run=False
-            )
+            created = ensure_run_lock(path, lock, resume=False, existing_run=False)
             reused = ensure_run_lock(path, lock, resume=True, existing_run=True)
 
             self.assertTrue(created.created)
@@ -161,15 +174,11 @@ class RunLockTests(unittest.TestCase):
             path = Path(temporary) / "lock.json"
             expected = {
                 "schema_version": "roller.run-lock/v1",
-                "execution": {
-                    "claude-code": {"config_sha256": "new-sha256"}
-                },
+                "execution": {"claude-code": {"config_sha256": "new-sha256"}},
             }
             historical = {
                 "schema_version": "roller.run-lock/v1",
-                "execution": {
-                    "claude-code": {"settings_fingerprint": "old-blake2b"}
-                },
+                "execution": {"claude-code": {"settings_fingerprint": "old-blake2b"}},
             }
             path.write_text(json.dumps(historical), encoding="utf-8")
             before = path.read_bytes(), path.stat().st_mtime_ns

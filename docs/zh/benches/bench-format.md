@@ -93,9 +93,9 @@ Bench 层复用以下三个接口：
 grader 的调用约定：
 
 ```python
-def grade(transcript, workspace_path):   # transcript 仅在 needs_transcript 时传入
+def grade(transcript, workspace_path):  # transcript 仅在 needs_transcript 时传入
     ...
-    return {"overall_score": 0.75, "detail": {...}}   # 必须返回 dict
+    return {"overall_score": 0.75, "detail": {...}}  # 必须返回 dict
 ```
 
 返回值不是 dict 时将报错。Roller 通过自带的 runner 调用该函数，用 `docker cp` 将
@@ -151,6 +151,7 @@ runner 复制到容器内执行，并以 `__ROLLER_SCORE__` 前缀标记 stdout 
 # src/roller/benches/mybench.py
 from roller.benches.base import BenchAdapter, BenchBinding, GradeSpec
 
+
 class MyBenchAdapter(BenchAdapter):
     name = "mybench"
     description = "MyBench — 一句话说明"
@@ -163,14 +164,16 @@ class MyBenchAdapter(BenchAdapter):
                 category=spec.category,
                 grade=GradeSpec(code=spec.grader_source, env_names=("JUDGE_MODEL",)),
             )
-            rows.append({
-                "schema_version": "roller.task/v1",
-                "id": spec.id,
-                "harness": "openclaw",
-                "prompt": spec.prompt,
-                "timeout_seconds": spec.timeout,
-                "bench": binding.as_dict(),
-            })
+            rows.append(
+                {
+                    "schema_version": "roller.task/v1",
+                    "id": spec.id,
+                    "harness": "openclaw",
+                    "prompt": spec.prompt,
+                    "timeout_seconds": spec.timeout,
+                    "bench": binding.as_dict(),
+                }
+            )
         return rows
 ```
 

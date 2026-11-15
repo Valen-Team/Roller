@@ -32,7 +32,11 @@ class AttachImagesTaskTests(unittest.TestCase):
         self.tasks = self.root / "tasks.json"
 
     def load(self, files: dict, **row):
-        self.tasks.write_text(json.dumps([{"id": "inspect", "prompt": "Describe it", "files": files, **row}]))
+        self.tasks.write_text(
+            json.dumps(
+                [{"id": "inspect", "prompt": "Describe it", "files": files, **row}]
+            )
+        )
         return load_tasks(self.tasks)[0]
 
     def files(self, **extra) -> dict:
@@ -43,7 +47,9 @@ class AttachImagesTaskTests(unittest.TestCase):
 
     def test_selected_inputs_keep_their_order_and_default_to_none(self) -> None:
         self.assertEqual(self.load(self.files()).attach_images, ())
-        task = self.load(self.files(attach_images=["photos/cat.JPG", "inputs/chart.png"]))
+        task = self.load(
+            self.files(attach_images=["photos/cat.JPG", "inputs/chart.png"])
+        )
         self.assertEqual(task.attach_images, ("photos/cat.JPG", "inputs/chart.png"))
 
     def test_rejects_paths_that_are_not_declared_input_images(self) -> None:
@@ -56,31 +62,46 @@ class AttachImagesTaskTests(unittest.TestCase):
             (["inputs/chart.png.txt"], "supports"),
             (["photos"], "supports"),
         ):
-            with self.subTest(value=value), self.assertRaisesRegex(TaskFormatError, message):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(TaskFormatError, message),
+            ):
                 self.load(self.files(attach_images=value))
 
     def test_selection_changes_the_bundle_identity_only_when_used(self) -> None:
         store = TaskBundleStore(self.root / "bundles")
         plain = self.load(self.files())
         selected = self.load(self.files(attach_images=["inputs/chart.png"]))
-        reordered = self.load(self.files(attach_images=["photos/cat.JPG", "inputs/chart.png"]))
-        digests = [store.prepare(task).manifest_digest for task in (plain, selected, reordered)]
+        reordered = self.load(
+            self.files(attach_images=["photos/cat.JPG", "inputs/chart.png"])
+        )
+        digests = [
+            store.prepare(task).manifest_digest for task in (plain, selected, reordered)
+        ]
         self.assertEqual(len(set(digests)), 3)
         # A task that attaches nothing keeps the digest it had before the field existed.
-        self.assertEqual(store.prepare(replace(plain, attach_images=())).manifest_digest, digests[0])
+        self.assertEqual(
+            store.prepare(replace(plain, attach_images=())).manifest_digest, digests[0]
+        )
 
         missing = self.load(self.files(attach_images=["photos/dog.png"]))
         for materialize in (True, False):
             checker = TaskBundleStore(self.root / "checked", materialize=materialize)
             with self.subTest(materialize=materialize):
-                with self.assertRaisesRegex(BundleError, "not an input file: photos/dog.png"):
+                with self.assertRaisesRegex(
+                    BundleError, "not an input file: photos/dog.png"
+                ):
                     checker.prepare(missing)
                 self.assertEqual(checker.prepare(selected).manifest_digest, digests[1])
 
     def test_messages_carry_images_on_the_first_message_only(self) -> None:
-        task = self.load(self.files(attach_images=["inputs/chart.png", "photos/cat.JPG"]))
+        task = self.load(
+            self.files(attach_images=["inputs/chart.png", "photos/cat.JPG"])
+        )
         request = RunRequest(0, task, "model", 30)
-        self.assertEqual(attached_images(request, "/workspace/", first_message=False), [])
+        self.assertEqual(
+            attached_images(request, "/workspace/", first_message=False), []
+        )
         self.assertEqual(
             attached_images(request, "/workspace/", first_message=True),
             [
@@ -99,21 +120,44 @@ class AttachImagesTaskTests(unittest.TestCase):
         )
 
     def test_claude_message_reads_the_snapshot_or_the_declared_source(self) -> None:
-        task = self.load(self.files(attach_images=["inputs/chart.png", "photos/cat.JPG"]))
+        task = self.load(
+            self.files(attach_images=["inputs/chart.png", "photos/cat.JPG"])
+        )
         request = RunRequest(0, task, "model", 30)
-        self.assertEqual(image_source(request, "photos/cat.JPG").read_bytes(), b"jpg-bytes")
-        self.assertEqual(image_source(request, "inputs/chart.png").read_bytes(), b"png-bytes")
-        bundled = replace(request, bundle=TaskBundleStore(self.root / "bundles").prepare(task))
+        self.assertEqual(
+            image_source(request, "photos/cat.JPG").read_bytes(), b"jpg-bytes"
+        )
+        self.assertEqual(
+            image_source(request, "inputs/chart.png").read_bytes(), b"png-bytes"
+        )
+        bundled = replace(
+            request, bundle=TaskBundleStore(self.root / "bundles").prepare(task)
+        )
         (self.root / "chart.png").write_bytes(b"changed after the snapshot")
         message = claude_user_message(bundled, "Describe it")
         self.assertEqual(message["type"], "user")
-        self.assertEqual(message["message"]["content"], [
-            {"type": "text", "text": "Describe it"},
-            {"type": "image", "source": {"type": "base64", "media_type": "image/png",
-                                         "data": base64.b64encode(b"png-bytes").decode()}},
-            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
-                                         "data": base64.b64encode(b"jpg-bytes").decode()}},
-        ])
+        self.assertEqual(
+            message["message"]["content"],
+            [
+                {"type": "text", "text": "Describe it"},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": base64.b64encode(b"png-bytes").decode(),
+                    },
+                },
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": base64.b64encode(b"jpg-bytes").decode(),
+                    },
+                },
+            ],
+        )
 
     def test_cli_rejects_harnesses_that_cannot_attach_images(self) -> None:
         self.load(self.files(attach_images=["inputs/chart.png"]))
@@ -121,10 +165,19 @@ class AttachImagesTaskTests(unittest.TestCase):
         def dry_run(*extra: str) -> dict:
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                _collect(_build_parser().parse_args([
-                    "collect", "--tasks", str(self.tasks), "--model", "provider/model",
-                    "--dry-run", *extra,
-                ]))
+                _collect(
+                    _build_parser().parse_args(
+                        [
+                            "collect",
+                            "--tasks",
+                            str(self.tasks),
+                            "--model",
+                            "provider/model",
+                            "--dry-run",
+                            *extra,
+                        ]
+                    )
+                )
             return json.loads(output.getvalue())
 
         for harness in ("openclaw", "codex", "claude-code", "opencode", "pi"):
@@ -135,7 +188,10 @@ class AttachImagesTaskTests(unittest.TestCase):
             (("--harness", "hermes"), "not supported by the Hermes Harness"),
             (("--harness", "deepseek"), "not supported by the DeepSeek Harness"),
             (("--harness", "opencode", "--no-opencode-vision"), "--opencode-vision"),
-            (("--harness", "pi", "--pi-input-modalities", "text"), "--pi-input-modalities text,image"),
+            (
+                ("--harness", "pi", "--pi-input-modalities", "text"),
+                "--pi-input-modalities text,image",
+            ),
         ):
             with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, message):
                 dry_run(*extra)

@@ -57,7 +57,9 @@ def _free_port_block(slots: int, step: int) -> int:
     """A start port whose block is currently unbound, well above the default range."""
     for start in range(TEST_GATEWAY_PORT, 60000, slots * step):
         try:
-            sockets = [_listen(port) for port in range(start, start + slots * step, step)]
+            sockets = [
+                _listen(port) for port in range(start, start + slots * step, step)
+            ]
         except OSError:
             continue
         for listener in sockets:
@@ -84,14 +86,18 @@ class GatewayPortReservationTests(unittest.TestCase):
     def test_explicit_range_held_by_another_run_is_an_error(self) -> None:
         start = _free_port_block(3, 10)
         self.reserve(start)
-        with self.assertRaisesRegex(GatewayPortsUnavailable, "reserved by another Roller run"):
+        with self.assertRaisesRegex(
+            GatewayPortsUnavailable, "reserved by another Roller run"
+        ):
             self.reserve(start + 10)
 
     def test_explicit_range_with_a_listener_is_an_error(self) -> None:
         start = _free_port_block(3, 10)
         listener = _listen(start + 20)
         self.addCleanup(listener.close)
-        with self.assertRaisesRegex(GatewayPortsUnavailable, f"{start + 20} is already in use"):
+        with self.assertRaisesRegex(
+            GatewayPortsUnavailable, f"{start + 20} is already in use"
+        ):
             self.reserve(start)
 
     def test_automatic_range_skips_ports_in_use(self) -> None:
@@ -124,14 +130,17 @@ class GatewayPortReservationTests(unittest.TestCase):
         port = probe.ports.start
         (self.locks / f"{port}.lock").chmod(0)  # e.g. left by another user's umask
         self.assertNotIn(port, self.reserve(None, slots=1).ports)
-        with self.assertRaisesRegex(GatewayPortsUnavailable, "lock file this user cannot open"):
+        with self.assertRaisesRegex(
+            GatewayPortsUnavailable, "lock file this user cannot open"
+        ):
             self.reserve(port, slots=1)
 
     def test_reservation_ends_with_the_process_that_held_it(self) -> None:
         start = _free_port_block(2, 10)
         holder = subprocess.Popen(
             [
-                sys.executable, "-c",
+                sys.executable,
+                "-c",
                 "import sys, time; from pathlib import Path; "
                 "from roller.harnesses import gateway_ports; "
                 "gateway_ports.LOCK_DIRECTORY = Path(sys.argv[1]); "
@@ -177,7 +186,9 @@ class CliGatewayPortTests(unittest.TestCase):
         self.configs = []
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
-        patches.enter_context(patch("roller.cli._docker_preflight", return_value="image-id"))
+        patches.enter_context(
+            patch("roller.cli._docker_preflight", return_value="image-id")
+        )
         patches.enter_context(
             patch("roller.cli.OpenClawHarness", side_effect=self._harness)
         )
@@ -188,8 +199,16 @@ class CliGatewayPortTests(unittest.TestCase):
 
     def invoke(self, *extra: str, run_name: str = "run") -> int:
         args = [
-            "collect", "--tasks", str(self.tasks), "--model", "provider/model",
-            "--output", str(self.root / "runs"), "--run-name", run_name, *extra,
+            "collect",
+            "--tasks",
+            str(self.tasks),
+            "--model",
+            "provider/model",
+            "--output",
+            str(self.root / "runs"),
+            "--run-name",
+            run_name,
+            *extra,
         ]
         with contextlib.redirect_stdout(io.StringIO()):
             return _collect(_build_parser().parse_args(args))
@@ -205,7 +224,9 @@ class CliGatewayPortTests(unittest.TestCase):
 
         start = self.configs[0].gateway_port_start
         self.assertFalse({start, start + 10} & set(other.ports))
-        self.assertEqual(self.info()["configuration"]["openclaw"]["gateway_port_start"], start)
+        self.assertEqual(
+            self.info()["configuration"]["openclaw"]["gateway_port_start"], start
+        )
         # The range is released once collection ends.
         reserve_gateway_ports(start, 10, 2).release()
 
@@ -213,16 +234,30 @@ class CliGatewayPortTests(unittest.TestCase):
         start = _free_port_block(1, 10)
         other = reserve_gateway_ports(start, 10, 1)
         self.addCleanup(other.release)
-        with self.assertRaisesRegex(GatewayPortsUnavailable, "choose another --gateway-port"):
+        with self.assertRaisesRegex(
+            GatewayPortsUnavailable, "choose another --gateway-port"
+        ):
             self.invoke("--gateway-port", str(start))
         self.assertFalse((self.root / "runs" / "run").exists())
 
     def test_simulator_slots_are_reserved_too(self) -> None:
-        self.tasks.write_text(json.dumps({
-            "id": "task", "harness": "openclaw",
-            "user_simulator": {"harness": "openclaw", "instruction": "ask", "max_turns": 1},
-        }) + "\n")
-        with patch("roller.cli.reserve_gateway_ports", wraps=reserve_gateway_ports) as reserve:
+        self.tasks.write_text(
+            json.dumps(
+                {
+                    "id": "task",
+                    "harness": "openclaw",
+                    "user_simulator": {
+                        "harness": "openclaw",
+                        "instruction": "ask",
+                        "max_turns": 1,
+                    },
+                }
+            )
+            + "\n"
+        )
+        with patch(
+            "roller.cli.reserve_gateway_ports", wraps=reserve_gateway_ports
+        ) as reserve:
             self.invoke("--parallel", "2")
         # Slots 0-1 for the agents, 2-3 for their OpenClaw simulators.
         reserve.assert_called_once_with(None, 10, 4)
@@ -253,23 +288,33 @@ class LockComparisonTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "lock.json"
             ensure_run_lock(
-                path, lock(gateway_port_start=18789, gateway_port_step=10),
-                resume=False, existing_run=False,
+                path,
+                lock(gateway_port_start=18789, gateway_port_step=10),
+                resume=False,
+                existing_run=False,
             )
             decision = ensure_run_lock(
-                path, lock(gateway_port_start=18829, gateway_port_step=20),
-                resume=True, existing_run=True,
+                path,
+                lock(gateway_port_start=18829, gateway_port_step=20),
+                resume=True,
+                existing_run=True,
             )
             self.assertTrue(decision.reuse_existing_samples)
             # The saved lock is never rewritten.
             self.assertEqual(
-                json.loads(path.read_text())["execution"]["openclaw"]["gateway_port_start"],
+                json.loads(path.read_text())["execution"]["openclaw"][
+                    "gateway_port_start"
+                ],
                 18789,
             )
             with self.assertRaises(FileExistsError):
                 ensure_run_lock(
-                    path, lock(gateway_port_start=18789, gateway_port_step=10, network="bridge"),
-                    resume=True, existing_run=True,
+                    path,
+                    lock(
+                        gateway_port_start=18789, gateway_port_step=10, network="bridge"
+                    ),
+                    resume=True,
+                    existing_run=True,
                 )
 
 

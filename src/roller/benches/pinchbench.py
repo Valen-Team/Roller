@@ -45,7 +45,7 @@ JUDGE_OPTIONAL_ENV = (
     "no_proxy",
 )
 
-_PINCH_FWS_SETUP = r'''set -euo pipefail
+_PINCH_FWS_SETUP = r"""set -euo pipefail
 tools=/tmp/roller-pinch-tools
 mkdir -p "$tools/bin" "$HOME/.config/gws/cache"
 
@@ -139,7 +139,7 @@ for attempt in $(seq 1 20); do
   fi
   sleep 0.5
 done
-$fws_ready || { echo 'FWS mock service failed its readiness probe' >&2; exit 1; }'''
+$fws_ready || { echo 'FWS mock service failed its readiness probe' >&2; exit 1; }"""
 
 
 def _pinch_runtime_setup(task: dict[str, Any]) -> list[str]:
@@ -249,9 +249,7 @@ def parse_task_markdown(text: str, label: str) -> dict[str, Any]:
             for line in sections.get("Grading Criteria", "").splitlines()
             if (match := re.match(r"^-\s+\[[ x]\]\s+(.+)$", line.strip()))
         ],
-        "automated_checks": _strip_python_fence(
-            sections.get("Automated Checks", "")
-        ),
+        "automated_checks": _strip_python_fence(sections.get("Automated Checks", "")),
         "llm_judge_rubric": sections.get("LLM Judge Rubric", "").strip(),
         "grading_weights": metadata.get("grading_weights") or {},
         "prerequisites": [item.strip() for item in prerequisites],
@@ -801,9 +799,9 @@ def _grader_source(task: dict[str, Any]) -> str:
         )
     source = (auto.rstrip() + "\n\n") if auto else ""
     replacements = {
-        "__TASK_PROMPT__": repr(task["prompt"] or "\n\n".join(
-            item["content"] for item in task["sessions"]
-        )),
+        "__TASK_PROMPT__": repr(
+            task["prompt"] or "\n\n".join(item["content"] for item in task["sessions"])
+        ),
         "__EXPECTED__": repr(task["expected_behavior"]),
         "__CRITERIA__": repr(task["grading_criteria"]),
         "__RUBRIC__": repr(task["llm_judge_rubric"]),
@@ -818,7 +816,9 @@ def _grader_source(task: dict[str, Any]) -> str:
 
 class PinchBenchAdapter(BenchAdapter):
     name = "pinchbench"
-    description = "PinchBench — real-world OpenClaw tasks with automated and LLM grading"
+    description = (
+        "PinchBench — real-world OpenClaw tasks with automated and LLM grading"
+    )
     variants = ("all", "automated-only", "core")
     default_variant = "all"
 
@@ -847,7 +847,9 @@ class PinchBenchAdapter(BenchAdapter):
                 f"{self.name}: variant must be one of {', '.join(self.variants)}"
             )
         manifest = yaml.safe_load((tasks_root / "manifest.yaml").read_text()) or {}
-        if not isinstance(manifest, dict) or not isinstance(manifest.get("categories"), dict):
+        if not isinstance(manifest, dict) or not isinstance(
+            manifest.get("categories"), dict
+        ):
             raise BenchFormatError("pinchbench manifest: categories must be an object")
         ordered: list[tuple[str, str]] = []
         category_by_id: dict[str, str] = {}
@@ -858,13 +860,19 @@ class PinchBenchAdapter(BenchAdapter):
                 )
             for task_id in identifiers:
                 if not isinstance(task_id, str):
-                    raise BenchFormatError("pinchbench manifest: task ids must be strings")
+                    raise BenchFormatError(
+                        "pinchbench manifest: task ids must be strings"
+                    )
                 category_by_id[task_id] = str(category)
                 ordered.append((task_id, str(category)))
         first = manifest.get("run_first", [])
         if isinstance(first, list):
             first_ids = [item for item in first if isinstance(item, str)]
-            ordered.sort(key=lambda item: first_ids.index(item[0]) if item[0] in first_ids else len(first_ids))
+            ordered.sort(
+                key=lambda item: (
+                    first_ids.index(item[0]) if item[0] in first_ids else len(first_ids)
+                )
+            )
         requested = set(task_ids or ())
         missing = requested - set(category_by_id)
         if missing:
@@ -881,8 +889,12 @@ class PinchBenchAdapter(BenchAdapter):
                 continue
             task_path = tasks_root / f"{task_id}.md"
             if not task_path.is_file():
-                raise BenchFormatError(f"pinchbench manifest references missing {task_path}")
-            task = parse_task_markdown(task_path.read_text(encoding="utf-8"), task_path.name)
+                raise BenchFormatError(
+                    f"pinchbench manifest references missing {task_path}"
+                )
+            task = parse_task_markdown(
+                task_path.read_text(encoding="utf-8"), task_path.name
+            )
             # The manifest is upstream's declared source of truth. A few task
             # frontmatters lag category moves, so use the manifest rather than
             # making an otherwise runnable checkout fail export.
@@ -934,7 +946,10 @@ class PinchBenchAdapter(BenchAdapter):
         private_key = root / "assets" / "image_classification_answer_key.json"
         if task["id"] == "task_image_identification" and private_key.is_file():
             stage.append(
-                (str(private_key.resolve()), ".roller-private/image_classification_answer_key.json")
+                (
+                    str(private_key.resolve()),
+                    ".roller-private/image_classification_answer_key.json",
+                )
             )
         judge_required = task["grading_type"] in {"llm_judge", "hybrid"}
         grade = GradeSpec(

@@ -1,4 +1,5 @@
 """Bounded, read-only JSON/SSE metadata observation; never stores response text."""
+
 from __future__ import annotations
 
 import json
@@ -10,7 +11,9 @@ class ResponseMetadata:
 
     def __init__(self, content_type: str, content_encoding: str = "") -> None:
         self.sse = "text/event-stream" in content_type
-        self.enabled = content_encoding in ("", "identity") and (self.sse or "json" in content_type)
+        self.enabled = content_encoding in ("", "identity") and (
+            self.sse or "json" in content_type
+        )
         self.buffer = b""
         self.dropping = False
         self.partial = False
@@ -37,7 +40,11 @@ class ResponseMetadata:
             return
         # Chat Completions; Responses events; Anthropic message_start/delta.
         candidates = [body]
-        candidates.extend(body[k] for k in ("response", "message", "delta") if isinstance(body.get(k), dict))
+        candidates.extend(
+            body[k]
+            for k in ("response", "message", "delta")
+            if isinstance(body.get(k), dict)
+        )
         for item in candidates:
             self._add(self.models, item.get("model"))
             self._add(self.reasons, item.get("stop_reason"))
@@ -84,6 +91,16 @@ class ResponseMetadata:
             elif self.buffer.startswith(b"data:"):
                 self._parse(self.buffer[5:].strip())
         self.buffer = b""
-        status = "partial" if self.partial else "observed" if self.models or self.reasons or self.statuses else "not_observable"
-        return {"response_models": self.models, "finish_reasons": self.reasons,
-                "response_statuses": self.statuses, "capture_status": status}
+        status = (
+            "partial"
+            if self.partial
+            else "observed"
+            if self.models or self.reasons or self.statuses
+            else "not_observable"
+        )
+        return {
+            "response_models": self.models,
+            "finish_reasons": self.reasons,
+            "response_statuses": self.statuses,
+            "capture_status": status,
+        }

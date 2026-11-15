@@ -37,7 +37,8 @@ class RecordingSession(InteractiveSession):
         if self.request.task.id.endswith("__user_simulator"):
             reply = (
                 '{"action":"message","content":"say done"}'
-                if not self.messages else '{"action":"finish"}'
+                if not self.messages
+                else '{"action":"finish"}'
             )
         else:
             reply = "done"
@@ -48,10 +49,18 @@ class RecordingSession(InteractiveSession):
     def finish(self, status: str, error: str | None = None) -> HarnessResult:
         events = []
         for message, reply in zip(self.messages, self.replies):
-            events.extend([
-                {"type": "message", "message": {"role": "user", "content": message}},
-                {"type": "message", "message": {"role": "assistant", "content": reply}},
-            ])
+            events.extend(
+                [
+                    {
+                        "type": "message",
+                        "message": {"role": "user", "content": message},
+                    },
+                    {
+                        "type": "message",
+                        "message": {"role": "assistant", "content": reply},
+                    },
+                ]
+            )
         raw = self.output_dir / "trace.jsonl"
         raw.write_text("\n".join(json.dumps(row) for row in events) + "\n")
         actf = self.output_dir / "trace_ACTF.json"
@@ -61,8 +70,11 @@ class RecordingSession(InteractiveSession):
         if self.harness.name == "openclaw" and self.harness.capture_cache:
             (self.output_dir / "cache_trace.jsonl").write_text("{}\n")
         return HarnessResult(
-            status=status, error=error, elapsed_seconds=0.01,
-            trace_path=str(raw), trajectory_path=str(actf),
+            status=status,
+            error=error,
+            elapsed_seconds=0.01,
+            trace_path=str(raw),
+            trajectory_path=str(actf),
         )
 
 
@@ -94,33 +106,58 @@ class CliResumeCompatibilityTests(unittest.TestCase):
         self.calls = []
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
-        patches.enter_context(patch("roller.cli._docker_preflight", return_value="test-image-id"))
+        patches.enter_context(
+            patch("roller.cli._docker_preflight", return_value="test-image-id")
+        )
         constructors = {
-            "openclaw": "OpenClawHarness", "codex": "CodexHarness",
-            "claude-code": "ClaudeCodeHarness", "hermes": "HermesHarness",
-            "opencode": "OpenCodeHarness", "deepseek": "DeepSeekHarness", "pi": "PiHarness",
+            "openclaw": "OpenClawHarness",
+            "codex": "CodexHarness",
+            "claude-code": "ClaudeCodeHarness",
+            "hermes": "HermesHarness",
+            "opencode": "OpenCodeHarness",
+            "deepseek": "DeepSeekHarness",
+            "pi": "PiHarness",
         }
         for name, constructor in constructors.items():
-            patches.enter_context(patch(
-                f"roller.cli.{constructor}",
-                side_effect=lambda config, slot, name=name: RecordingHarness(name, self.calls),
-            ))
+            patches.enter_context(
+                patch(
+                    f"roller.cli.{constructor}",
+                    side_effect=lambda config, slot, name=name: RecordingHarness(
+                        name, self.calls
+                    ),
+                )
+            )
 
     def invoke(self, args, *, resume=False):
         with contextlib.redirect_stdout(io.StringIO()):
-            return _collect(_build_parser().parse_args(args + (["--resume"] if resume else [])))
+            return _collect(
+                _build_parser().parse_args(args + (["--resume"] if resume else []))
+            )
 
     def seed(self, name, harness, simulator=None):
         tasks = self.root / f"{name}.jsonl"
         row = {"id": "task", "harness": harness, "model": "provider/model"}
         if simulator:
-            row["user_simulator"] = {"harness": simulator, "instruction": "ask once", "max_turns": 1}
+            row["user_simulator"] = {
+                "harness": simulator,
+                "instruction": "ask once",
+                "max_turns": 1,
+            }
         else:
             row["prompt"] = "say done"
         tasks.write_text(json.dumps(row) + "\n")
         args = [
-            "collect", "--tasks", str(tasks), "--api-base", "http://example.test/v1",
-            "--api-key-env", "TEST_KEY", "--output", str(self.root / "runs"), "--run-name", name,
+            "collect",
+            "--tasks",
+            str(tasks),
+            "--api-base",
+            "http://example.test/v1",
+            "--api-key-env",
+            "TEST_KEY",
+            "--output",
+            str(self.root / "runs"),
+            "--run-name",
+            name,
         ]
         self.assertEqual(self.invoke(args), 0)
         return args, self.root / "runs" / name
@@ -129,7 +166,8 @@ class CliResumeCompatibilityTests(unittest.TestCase):
     def snapshot(root):
         return {
             str(path.relative_to(root)): (path.read_bytes(), path.stat().st_mtime_ns)
-            for path in root.rglob("*") if path.is_file()
+            for path in root.rglob("*")
+            if path.is_file()
         }
 
     def assert_disabled_legacy_run_resumes(self, args, run):
@@ -141,8 +179,11 @@ class CliResumeCompatibilityTests(unittest.TestCase):
                 continue
             settings["external_thinking"] = "off"
             if name == "claude-code":
-                settings.update(signature_recovery="off", signature_recovery_attempts=1,
-                                signature_recovery_max_tokens=8192)
+                settings.update(
+                    signature_recovery="off",
+                    signature_recovery_attempts=1,
+                    signature_recovery_max_tokens=8192,
+                )
         path.write_text(json.dumps(recorded))
         for info_path in (run / "samples").rglob("info.json"):
             info = json.loads(info_path.read_text())
@@ -156,7 +197,9 @@ class CliResumeCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(self.invoke(args, resume=True), 0)
 
-        self.assertEqual(json.loads((run / "info.json").read_text())["summary"]["skipped"], 1)
+        self.assertEqual(
+            json.loads((run / "info.json").read_text())["summary"]["skipped"], 1
+        )
         self.assertEqual(self.calls, before_calls)
         self.assertEqual(self.snapshot(run / "samples"), before_samples)
         self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), before_lock)
@@ -194,12 +237,16 @@ class CliResumeCompatibilityTests(unittest.TestCase):
 
         self.assertEqual(self.invoke(args, resume=True), 0)
         self.assertEqual(self.calls, before_calls)
-        self.assertEqual(json.loads((run / "info.json").read_text())["summary"]["skipped"], 1)
+        self.assertEqual(
+            json.loads((run / "info.json").read_text())["summary"]["skipped"], 1
+        )
 
     def test_cli_resumes_disabled_legacy_lock_for_mixed_agent_and_simulator(self):
         for agent, simulator in (("codex", "claude-code"), ("claude-code", "codex")):
             with self.subTest(agent=agent, simulator=simulator):
-                self.assert_disabled_legacy_run_resumes(*self.seed(agent, agent, simulator))
+                self.assert_disabled_legacy_run_resumes(
+                    *self.seed(agent, agent, simulator)
+                )
 
     def test_cli_resumes_legacy_claude_settings_fingerprint_lock(self):
         settings = self.root / "settings.json"
@@ -242,9 +289,7 @@ class CliResumeCompatibilityTests(unittest.TestCase):
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
         claude = lock["execution"]["claude-code"]
         content = settings.read_bytes()
-        self.assertEqual(
-            claude["config_sha256"], hashlib.sha256(content).hexdigest()
-        )
+        self.assertEqual(claude["config_sha256"], hashlib.sha256(content).hexdigest())
         self.assertNotIn("settings_fingerprint", claude)
 
         claude["settings_fingerprint"] = hashlib.blake2b(
@@ -368,7 +413,8 @@ class CliResumeCompatibilityTests(unittest.TestCase):
                     name = f"{mode}-{participant}-{locked}"
                     with self.subTest(case=name):
                         args, run = self.seed(
-                            name, harness if participant == "agent" else "openclaw",
+                            name,
+                            harness if participant == "agent" else "openclaw",
                             harness if participant == "simulator" else None,
                         )
                         sample = next(run.glob("samples/*/*"))
@@ -383,7 +429,9 @@ class CliResumeCompatibilityTests(unittest.TestCase):
                         before = self.snapshot(run)
                         before_calls = list(self.calls)
 
-                        with self.assertRaisesRegex(ValueError, "is retired; use a new run directory"):
+                        with self.assertRaisesRegex(
+                            ValueError, "is retired; use a new run directory"
+                        ):
                             self.invoke(args, resume=True)
 
                         self.assertEqual(self.snapshot(run), before)
@@ -406,10 +454,12 @@ class MixedResumeTests(unittest.TestCase):
                 task = Task(
                     id=f"{agent}--{simulator or 'predefined'}",
                     prompts=() if simulator else ("say done",),
-                    source_index=index, harness=agent,
+                    source_index=index,
+                    harness=agent,
                     user_simulator=(
                         UserSimulatorSpec("ask once", harness=simulator, max_turns=1)
-                        if simulator else None
+                        if simulator
+                        else None
                     ),
                 )
                 self.requests.append(RunRequest(index, task, "provider/model", 30))
@@ -425,10 +475,15 @@ class MixedResumeTests(unittest.TestCase):
         return ConversationManager(agent, simulator, keep_aux_traces=self.keep_aux)
 
     def collector(self, resume=False):
-        return Collector(CollectionConfig(
-            run_dir=self.root, resume=resume, keep_aux_traces=self.keep_aux,
-            capture_cache_trace=self.capture_cache,
-        ), self.factory)
+        return Collector(
+            CollectionConfig(
+                run_dir=self.root,
+                resume=resume,
+                keep_aux_traces=self.keep_aux,
+                capture_cache_trace=self.capture_cache,
+            ),
+            self.factory,
+        )
 
     def collect(self, resume=False):
         return self.collector(resume).collect(self.requests)
@@ -438,7 +493,11 @@ class MixedResumeTests(unittest.TestCase):
             sample = self.collector()._sample_dir(request)
             yield request, sample, self.override or request.task.harness
             if request.task.user_simulator:
-                yield request, sample / "user_simulator", request.task.user_simulator.harness
+                yield (
+                    request,
+                    sample / "user_simulator",
+                    request.task.user_simulator.harness,
+                )
 
     def assert_reused(self):
         before = list(self.calls)
@@ -446,7 +505,9 @@ class MixedResumeTests(unittest.TestCase):
             str(path): (path.read_bytes(), path.stat().st_mtime_ns)
             for path in self.root.glob("samples/*/*/**/trace.jsonl")
         }
-        self.assertEqual([r["status"] for r in self.collect(True)], ["skipped"] * len(self.requests))
+        self.assertEqual(
+            [r["status"] for r in self.collect(True)], ["skipped"] * len(self.requests)
+        )
         self.assertEqual(self.calls, before)
         for name, snapshot in raw_before.items():
             path = Path(name)
@@ -462,10 +523,14 @@ class MixedResumeTests(unittest.TestCase):
         self.assertEqual(len(self.calls) - before, expected_calls)
 
     def test_full_mode_reuses_all_agents_and_simulator_pairs(self):
-        self.assertEqual([r["status"] for r in self.collect()], ["ok"] * len(self.requests))
+        self.assertEqual(
+            [r["status"] for r in self.collect()], ["ok"] * len(self.requests)
+        )
         for _, path, harness in self.participants():
             self.assertTrue((path / "wire_trace.jsonl").is_file())
-            self.assertEqual((path / "cache_trace.jsonl").is_file(), harness == "openclaw")
+            self.assertEqual(
+                (path / "cache_trace.jsonl").is_file(), harness == "openclaw"
+            )
         self.assert_reused()
 
     def test_missing_openclaw_cache_reruns_only_its_sample(self):
@@ -509,8 +574,12 @@ class MixedResumeTests(unittest.TestCase):
                 self.collect()
                 self.assert_reused()
                 if self.override == "openclaw":
-                    request = next(r for r in self.requests if r.task.harness == "codex")
-                    (self.collector()._sample_dir(request) / "cache_trace.jsonl").unlink()
+                    request = next(
+                        r for r in self.requests if r.task.harness == "codex"
+                    )
+                    (
+                        self.collector()._sample_dir(request) / "cache_trace.jsonl"
+                    ).unlink()
                     self.assert_only_rerun(request)
 
     def test_missing_or_unknown_harness_metadata_keeps_strict_cache_check(self):

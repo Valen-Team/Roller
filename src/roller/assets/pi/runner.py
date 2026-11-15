@@ -3,6 +3,7 @@
 A private Unix socket keeps one native AgentSession process alive
 across Roller turns. The host owns the hard deadline and container cleanup.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -19,10 +20,16 @@ SOCKET = str(STATE / "runner.sock")
 
 
 def check():
-    result = subprocess.run(["node", "/roller/pi_sdk.mjs", "--check"],
-                            capture_output=True, text=True, timeout=30)
+    result = subprocess.run(
+        ["node", "/roller/pi_sdk.mjs", "--check"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     if result.returncode:
-        raise RuntimeError("Pi SDK check failed: " + (result.stderr or result.stdout).strip()[-2000:])
+        raise RuntimeError(
+            "Pi SDK check failed: " + (result.stderr or result.stdout).strip()[-2000:]
+        )
     return result.stdout.strip()
 
 
@@ -47,14 +54,20 @@ def send(config):
     process = None
     if not Path(SOCKET).exists():
         with (STATE / "runtime.log").open("a") as log:
-            process = subprocess.Popen(["node", "/roller/pi_sdk.mjs", "--serve", str(STATE / "turn.json")],
-                                       stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-                                       start_new_session=True)
+            process = subprocess.Popen(
+                ["node", "/roller/pi_sdk.mjs", "--serve", str(STATE / "turn.json")],
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
     deadline = time.monotonic() + config["timeout_seconds"]
     with socket.socket(socket.AF_UNIX) as client:
         while True:
             if process is not None and process.poll() is not None:
-                raise RuntimeError("Pi runtime startup failed; see the native journal and rollout log")
+                raise RuntimeError(
+                    "Pi runtime startup failed; see the native journal and rollout log"
+                )
             try:
                 client.connect(SOCKET)
                 break
@@ -84,7 +97,13 @@ def main():
     except Exception as exc:
         if not args.check:
             journal({"type": "runner_error", "error": str(exc)})
-            write_result({"ok": False, "error": str(exc), "timeout": isinstance(exc, TimeoutError)})
+            write_result(
+                {
+                    "ok": False,
+                    "error": str(exc),
+                    "timeout": isinstance(exc, TimeoutError),
+                }
+            )
         print(redact({"error": str(exc)}), file=sys.stderr)
         return 1
 

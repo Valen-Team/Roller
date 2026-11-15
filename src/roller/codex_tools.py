@@ -16,20 +16,32 @@ def tool_snapshot(body: Mapping[str, Any]) -> dict[str, Any]:
         if key in body
     }
     items = body.get("input")
-    snapshot["additional_tools"] = [
-        deepcopy(item) for item in items
-        if isinstance(item, dict) and item.get("type") == "additional_tools"
-    ] if isinstance(items, list) else []
-    snapshot["tool_search_outputs"] = [
-        deepcopy(item) for item in items
-        if isinstance(item, dict) and item.get("type") == "tool_search_output"
-    ] if isinstance(items, list) else []
+    snapshot["additional_tools"] = (
+        [
+            deepcopy(item)
+            for item in items
+            if isinstance(item, dict) and item.get("type") == "additional_tools"
+        ]
+        if isinstance(items, list)
+        else []
+    )
+    snapshot["tool_search_outputs"] = (
+        [
+            deepcopy(item)
+            for item in items
+            if isinstance(item, dict) and item.get("type") == "tool_search_output"
+        ]
+        if isinstance(items, list)
+        else []
+    )
     return snapshot
 
 
 def read_tool_capture(path: Path | None) -> dict[str, Any]:
     capture: dict[str, Any] = {
-        "source": "responses_request", "status": "missing", "requests": [],
+        "source": "responses_request",
+        "status": "missing",
+        "requests": [],
     }
     if path is None or not path.is_file():
         capture["error"] = (
@@ -45,7 +57,9 @@ def read_tool_capture(path: Path | None) -> dict[str, Any]:
                     continue
                 entry = json.loads(line)
                 if request_count is not None:
-                    raise ValueError("Records found after Codex tool capture completion")
+                    raise ValueError(
+                        "Records found after Codex tool capture completion"
+                    )
                 if entry.get("kind") == "codex_tools_error":
                     raise ValueError(entry.get("error", "Request recording failed"))
                 if entry.get("kind") == "codex_tools_complete":
@@ -58,16 +72,23 @@ def read_tool_capture(path: Path | None) -> dict[str, Any]:
                 elif (
                     isinstance(entry.get("body"), dict)
                     and entry.get("method", "POST") == "POST"
-                    and str(entry.get("path", "")).split("?")[0].rstrip("/").endswith("/responses")
+                    and str(entry.get("path", ""))
+                    .split("?")[0]
+                    .rstrip("/")
+                    .endswith("/responses")
                 ):
                     snapshot = tool_snapshot(entry["body"])
                 else:
                     continue
                 if not isinstance(snapshot, dict):
                     raise ValueError("tool snapshot must be an object")
-                capture["requests"].append({"seq": entry.get("seq"), "snapshot": snapshot})
+                capture["requests"].append(
+                    {"seq": entry.get("seq"), "snapshot": snapshot}
+                )
         if request_count is None:
-            raise ValueError("Codex tool capture is incomplete: missing completion record")
+            raise ValueError(
+                "Codex tool capture is incomplete: missing completion record"
+            )
         if request_count != len(capture["requests"]):
             raise ValueError(
                 f"Codex tool capture request count mismatch: expected {request_count}, "
@@ -97,7 +118,9 @@ def read_tool_capture(path: Path | None) -> dict[str, Any]:
             "a static SFT tools list cannot preserve loading order. Exact "
             "definitions are retained in tools_capture.requests and call contexts",
         )
-    elif any(s.get("tools", []) != snapshots[0].get("tools", []) for s in snapshots[1:]):
+    elif any(
+        s.get("tools", []) != snapshots[0].get("tools", []) for s in snapshots[1:]
+    ):
         capture.update(
             status="changed",
             error="Codex tools changed across requests; a single SFT tools list "
@@ -122,7 +145,12 @@ def tool_index(tools: Any) -> dict[tuple[str, str], str]:
             if kind == "namespace":
                 name = tool.get("name")
                 children = tool.get("tools")
-                if namespace or not isinstance(name, str) or not name or not isinstance(children, list):
+                if (
+                    namespace
+                    or not isinstance(name, str)
+                    or not name
+                    or not isinstance(children, list)
+                ):
                     raise ValueError("Invalid Responses tool namespace")
                 visit(children, name)
                 continue
@@ -133,5 +161,6 @@ def tool_index(tools: Any) -> dict[tuple[str, str], str]:
             if key in names:
                 raise ValueError(f"Duplicate Responses tool: {key}")
             names[key] = kind
+
     visit(tools)
     return names

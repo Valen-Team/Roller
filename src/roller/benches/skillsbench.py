@@ -27,8 +27,12 @@ WORKDIR_RE = re.compile(r"^\s*WORKDIR\s+(.+?)\s*$", re.MULTILINE | re.IGNORECASE
 ENV_RE = re.compile(r"^\s*ENV\s+([A-Za-z_][A-Za-z0-9_]*)=(\S+)\s*$", re.MULTILINE)
 SKILL_COPY_RE = re.compile(r"^\s*COPY\s+(?:_deps/)?skills(?:/)?\s+.*$", re.MULTILINE)
 HEREDOC_RE = re.compile(r"<<-?['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?\s*$")
-PYTHON_STDIN_RE = re.compile(r"\b(python3?\s+-)\s+<<-?['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?\s*$")
-CAT_REDIRECT_RE = re.compile(r"\bcat\s+>\s+([^\s]+)\s+<<-?['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?\s*$")
+PYTHON_STDIN_RE = re.compile(
+    r"\b(python3?\s+-)\s+<<-?['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?\s*$"
+)
+CAT_REDIRECT_RE = re.compile(
+    r"\bcat\s+>\s+([^\s]+)\s+<<-?['\"]?[A-Za-z_][A-Za-z0-9_]*['\"]?\s*$"
+)
 FROM_RE = re.compile(r"^(\s*FROM\s+(?:--platform=\S+\s+)?)(\S+)(.*)$", re.IGNORECASE)
 VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 RESOURCE_KEYS = {
@@ -41,7 +45,7 @@ RESOURCE_KEYS = {
     "gpus",
 }
 
-_VERIFIER_RUNNER = r'''
+_VERIFIER_RUNNER = r"""
 import os
 from pathlib import Path
 import subprocess
@@ -152,7 +156,7 @@ def roller_grade(workspace_path, task_workspace, verifier_env):
         payload["score_eligible"] = False
         payload["error"] = infrastructure_error
     return payload
-'''
+"""
 
 
 _INFRASTRUCTURE_OUTPUT_MARKERS = (
@@ -180,23 +184,24 @@ def _score_error(row: dict[str, Any], scores: dict[str, Any] | None) -> str | No
     output = scores.get("verifier_output")
     if isinstance(output, str):
         lowered = output.lower()
-        tests_completed = (
-            "short test summary info" in lowered
-            or (
-                "test session starts" in lowered
-                and any(
-                    marker in lowered
-                    for marker in (" passed in ", " failed in ", " error in ")
-                )
+        tests_completed = "short test summary info" in lowered or (
+            "test session starts" in lowered
+            and any(
+                marker in lowered
+                for marker in (" passed in ", " failed in ", " error in ")
             )
         )
         for marker in _INFRASTRUCTURE_OUTPUT_MARKERS:
             if marker in lowered:
-                if marker in {
-                    "failed to download",
-                    "temporary failure in name resolution",
-                    "could not resolve host",
-                } and tests_completed:
+                if (
+                    marker
+                    in {
+                        "failed to download",
+                        "temporary failure in name resolution",
+                        "could not resolve host",
+                    }
+                    and tests_completed
+                ):
                     continue
                 return f"verifier infrastructure failure: {marker}"
     return None
@@ -250,7 +255,7 @@ def _portable_heredocs(value: str) -> str:
                 if "seisbench.models" in body
                 else ""
             )
-            body = f'''import base64
+            body = f"""import base64
 import time
 
 source = base64.b64decode({original!r}).decode("utf-8")
@@ -267,7 +272,7 @@ for attempt in range(6):
         time.sleep(20 * (attempt + 1))
 else:
     raise RuntimeError("SkillsBench preload failed") from last_error
-'''
+"""
         encoded = base64.b64encode(body.encode("utf-8")).decode("ascii")
         # SeisBench 0.10 imports pkg_resources, which was removed from recent
         # setuptools releases selected by an otherwise-unpinned upstream pip
@@ -364,7 +369,9 @@ def _sanitized_dockerfile(path: Path) -> str:
     # reliable behind evaluation-cluster proxies; the pinned launcher already
     # present in the image can install the requested Scala binaries directly.
     if "coursier/releases/download/" in value:
-        value = value.replace("curl -fL ", "curl -fL --retry 5 --retry-all-errors --retry-delay 5 ")
+        value = value.replace(
+            "curl -fL ", "curl -fL --retry 5 --retry-all-errors --retry-delay 5 "
+        )
         value = value.replace("./cs setup --yes && ./cs install ", "./cs install ")
     # A no-skill run must not inherit task skills accidentally. Runtime staging
     # injects them only for the with-skill condition.
@@ -373,10 +380,12 @@ def _sanitized_dockerfile(path: Path) -> str:
 
 
 def _workspace_from_dockerfile(source: str) -> str:
-    environment = {name: value.strip('"\'') for name, value in ENV_RE.findall(source)}
+    environment = {name: value.strip("\"'") for name, value in ENV_RE.findall(source)}
     matches = WORKDIR_RE.findall(source)
-    value = matches[-1].strip().strip('"\'') if matches else "/root"
-    value = VAR_RE.sub(lambda match: environment.get(match.group(1), match.group(0)), value)
+    value = matches[-1].strip().strip("\"'") if matches else "/root"
+    value = VAR_RE.sub(
+        lambda match: environment.get(match.group(1), match.group(0)), value
+    )
     return value if value.startswith("/") else "/root"
 
 
@@ -407,16 +416,24 @@ def _task_set(root: Path) -> list[dict[str, Any]]:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise BenchFormatError(f"invalid SkillsBench task set {path}: {exc}") from exc
+            raise BenchFormatError(
+                f"invalid SkillsBench task set {path}: {exc}"
+            ) from exc
         tasks = payload.get("tasks") if isinstance(payload, dict) else None
         if isinstance(tasks, list) and all(isinstance(item, dict) for item in tasks):
             return tasks
-    return [{"task_id": path.name} for path in sorted((root / "tasks").iterdir()) if path.is_dir()]
+    return [
+        {"task_id": path.name}
+        for path in sorted((root / "tasks").iterdir())
+        if path.is_dir()
+    ]
 
 
 class SkillsBenchAdapter(BenchAdapter):
     name = "skillsbench"
-    description = "SkillsBench — task-specific environments, with-skill/no-skill ablation"
+    description = (
+        "SkillsBench — task-specific environments, with-skill/no-skill ablation"
+    )
     variants = ("with-skill", "no-skill")
     default_variant = "with-skill"
 
@@ -449,7 +466,9 @@ class SkillsBenchAdapter(BenchAdapter):
             )
         entries = _task_set(root)
         known = {
-            item.get("task_id") for item in entries if isinstance(item.get("task_id"), str)
+            item.get("task_id")
+            for item in entries
+            if isinstance(item.get("task_id"), str)
         }
         requested = set(task_ids or ())
         missing = requested - known
@@ -469,7 +488,9 @@ class SkillsBenchAdapter(BenchAdapter):
             metadata, prompt = _task_metadata(task_dir / "task.md")
             taxonomy = metadata.get("metadata") or {}
             if not isinstance(taxonomy, dict):
-                raise BenchFormatError(f"{task_id}: metadata.metadata must be an object")
+                raise BenchFormatError(
+                    f"{task_id}: metadata.metadata must be an object"
+                )
             category = str(entry.get("category") or taxonomy.get("category") or "")
             if category_filter and category not in category_filter:
                 continue
@@ -500,7 +521,9 @@ class SkillsBenchAdapter(BenchAdapter):
         dockerfile_path = environment_dir / "Dockerfile"
         verifier_dir = task_dir / "verifier"
         if not dockerfile_path.is_file() or not (verifier_dir / "test.sh").is_file():
-            raise BenchFormatError(f"{task_id}: environment Dockerfile or verifier/test.sh missing")
+            raise BenchFormatError(
+                f"{task_id}: environment Dockerfile or verifier/test.sh missing"
+            )
         dockerfile = _sanitized_dockerfile(dockerfile_path)
         digest = _environment_digest(environment_dir, dockerfile)
         component = _image_component(task_id)[:80]
@@ -525,12 +548,16 @@ class SkillsBenchAdapter(BenchAdapter):
                 1, math.ceil(float(verifier_timeout_value) * timeout_multiplier)
             )
         except (TypeError, ValueError) as exc:
-            raise BenchFormatError(f"{task_id}: invalid agent/verifier timeout") from exc
+            raise BenchFormatError(
+                f"{task_id}: invalid agent/verifier timeout"
+            ) from exc
         build_timeout_value = sandbox.get("build_timeout_sec", 3600)
         try:
             build_timeout = max(1, math.ceil(float(build_timeout_value)))
         except (TypeError, ValueError) as exc:
-            raise BenchFormatError(f"{task_id}: invalid sandbox.build_timeout_sec") from exc
+            raise BenchFormatError(
+                f"{task_id}: invalid sandbox.build_timeout_sec"
+            ) from exc
         build_args = {
             str(key): value
             for key, value in sandbox.items()
@@ -573,7 +600,9 @@ class SkillsBenchAdapter(BenchAdapter):
         if not isinstance(verifier_env, dict):
             raise BenchFormatError(f"{task_id}: verifier.env must be an object")
         grade = GradeSpec(
-            code=_VERIFIER_RUNNER.replace("__VERIFIER_TIMEOUT__", str(verifier_timeout)),
+            code=_VERIFIER_RUNNER.replace(
+                "__VERIFIER_TIMEOUT__", str(verifier_timeout)
+            ),
             entrypoint="roller_grade",
             kwargs={"task_workspace": workdir, "verifier_env": verifier_env},
             timeout_seconds=verifier_timeout + 30,
@@ -630,7 +659,9 @@ class SkillsBenchAdapter(BenchAdapter):
         for row in rows:
             scores = row.get("bench_scores")
             score_key = row.get("bench_score_key") or "overall_score"
-            value = sample_score(scores, score_key) if isinstance(scores, dict) else None
+            value = (
+                sample_score(scores, score_key) if isinstance(scores, dict) else None
+            )
             error = _score_error(row, scores if isinstance(scores, dict) else None)
             declared_eligible = (
                 scores.get("score_eligible", True)
@@ -648,7 +679,8 @@ class SkillsBenchAdapter(BenchAdapter):
                 eligible
                 and (
                     scores.get("passed")
-                    if isinstance(scores, dict) and isinstance(scores.get("passed"), bool)
+                    if isinstance(scores, dict)
+                    and isinstance(scores.get("passed"), bool)
                     else value > 0
                 )
             )
@@ -688,16 +720,16 @@ class SkillsBenchAdapter(BenchAdapter):
             "pass_rate": round(pass_rate, 6) if pass_rate is not None else None,
             "mean_reward": round(mean_reward, 6) if mean_reward is not None else None,
             "average": round(mean_reward, 6) if mean_reward is not None else None,
-            "scored_average": round(mean_reward, 6) if mean_reward is not None else None,
+            "scored_average": round(mean_reward, 6)
+            if mean_reward is not None
+            else None,
             "categories": {
                 name: {
                     "task_count": len(values),
                     "pass_rate": round(
                         sum(int(item[1]) for item in values) / len(values), 6
                     ),
-                    "average": round(
-                        sum(item[0] for item in values) / len(values), 6
-                    ),
+                    "average": round(sum(item[0] for item in values) / len(values), 6),
                 }
                 for name, values in sorted(category_values.items())
             },

@@ -52,7 +52,9 @@ def _normalize_tools(value: Any) -> list[dict[str, Any]]:
             # The Responses API flattens function fields onto each tool item;
             # Chat Completions nests them below ``function``. This legacy path
             # uses the nested representation; captured Codex tools bypass it.
-            function = {key: deepcopy(item) for key, item in tool.items() if key != "type"}
+            function = {
+                key: deepcopy(item) for key, item in tool.items() if key != "type"
+            }
         elif not isinstance(function, dict):
             raise SFTConversionError(f"tools[{index}].function must be an object")
         name = function.get("name")
@@ -112,13 +114,13 @@ def _responses_tool_call(call: Any, field: str) -> dict[str, Any]:
         call_id = call.get("id")
         name = call.get("name")
         value = call.get("input")
-        if (
-            not all(isinstance(x, str) and x for x in (call_id, name))
-            or not isinstance(value, str)
+        if not all(isinstance(x, str) and x for x in (call_id, name)) or not isinstance(
+            value, str
         ):
             raise SFTConversionError(f"{field} has invalid custom tool input")
         result = {
-            "id": call_id, "type": "custom",
+            "id": call_id,
+            "type": "custom",
             "custom": {"name": name, "input": value},
         }
     else:
@@ -137,9 +139,7 @@ def _image_media_type(value: Any, field: str) -> str:
     media_type = value.strip().lower()
     if media_type not in _IMAGE_MEDIA_TYPES:
         supported = ", ".join(sorted(_IMAGE_MEDIA_TYPES))
-        raise SFTConversionError(
-            f"{field} must be one of {supported}; got {value!r}"
-        )
+        raise SFTConversionError(f"{field} must be one of {supported}; got {value!r}")
     return media_type
 
 
@@ -166,9 +166,7 @@ def _image_data_uri(block: Any, field: str) -> str:
         if payload.startswith("data:"):
             header, separator, encoded = payload.partition(",")
             if not separator or not header.endswith(";base64"):
-                raise SFTConversionError(
-                    f"{field}.data must be a base64 data URI"
-                )
+                raise SFTConversionError(f"{field}.data must be a base64 data URI")
             media_type = _image_media_type(header[5:-7], f"{field}.data media type")
             payload = encoded
         else:
@@ -246,10 +244,16 @@ def validate_sft_record(record: Any) -> None:
     keys = set(record)
     target_start = record.get("target_start_index")
     if "target_start_index" in keys:
-        if (not isinstance(target_start, int) or isinstance(target_start, bool)
-                or target_start < 1 or not isinstance(record.get("messages"), list)
-                or target_start >= len(record["messages"])):
-            raise ValueError("target_start_index must identify a target after the prompt")
+        if (
+            not isinstance(target_start, int)
+            or isinstance(target_start, bool)
+            or target_start < 1
+            or not isinstance(record.get("messages"), list)
+            or target_start >= len(record["messages"])
+        ):
+            raise ValueError(
+                "target_start_index must identify a target after the prompt"
+            )
         target = record["messages"][target_start]
         if not isinstance(target, Mapping) or target.get("role") != "assistant":
             raise ValueError("target_start_index must point to an assistant target")
@@ -275,7 +279,9 @@ def validate_sft_record(record: Any) -> None:
     if not isinstance(messages, list):
         raise ValueError("SFT messages must be a list")
     placeholders = sum(
-        _placeholder_count(message) for message in messages if isinstance(message, Mapping)
+        _placeholder_count(message)
+        for message in messages
+        if isinstance(message, Mapping)
     )
     if placeholders != len(images):
         raise ValueError(
@@ -292,7 +298,9 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
     for step in raw_steps if isinstance(raw_steps, list) else []:
         extra = step.get("extra") if isinstance(step, Mapping) else None
         if isinstance(extra, Mapping) and extra.get("is_sidechain"):
-            raise SFTConversionError("mixed subagent steps cannot be exported as one assistant")
+            raise SFTConversionError(
+                "mixed subagent steps cannot be exported as one assistant"
+            )
         if isinstance(extra, Mapping) and extra.get("model") == "<synthetic>":
             raise SFTConversionError("synthetic assistant is not a model output")
 
@@ -307,8 +315,8 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
             raise SFTConversionError("Codex tools_capture must be an object")
         if capture.get("status") != "captured":
             raise SFTConversionError(
-                capture.get("error") or
-                "Codex tools were not captured; schema inference is disabled"
+                capture.get("error")
+                or "Codex tools were not captured; schema inference is disabled"
             )
         tools = deepcopy(trajectory.get("tools"))
         try:
@@ -357,7 +365,9 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
             raise SFTConversionError(
                 f"{prefix}.assistant_content.tool_calls must be a list"
             )
-        normalize_call = _responses_tool_call if responses_tools else _normalize_tool_call
+        normalize_call = (
+            _responses_tool_call if responses_tools else _normalize_tool_call
+        )
         calls = [
             normalize_call(call, f"{prefix}.assistant_content.tool_calls[{index}]")
             for index, call in enumerate(raw_calls)
@@ -379,10 +389,14 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
                     namespace, leaf = name.rsplit(".", 1)
                     key = (namespace, leaf)
                 if key not in native_names:
-                    raise SFTConversionError(f"tool call references missing captured schema: {name}")
+                    raise SFTConversionError(
+                        f"tool call references missing captured schema: {name}"
+                    )
                 kind = native_names[key]
                 if (kind == "custom") != (call["type"] == "custom"):
-                    raise SFTConversionError(f"tool call type differs from captured schema: {name}")
+                    raise SFTConversionError(
+                        f"tool call type differs from captured schema: {name}"
+                    )
             elif name not in tool_names:
                 raise SFTConversionError(f"tool call references missing schema: {name}")
             seen_call_ids.add(call_id)
@@ -402,7 +416,9 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
             if not isinstance(call_id, str) or not call_id:
                 raise SFTConversionError(f"{field}.toolCallId must be non-empty")
             if call_id in observed_ids:
-                raise SFTConversionError(f"duplicate tool result for call id: {call_id}")
+                raise SFTConversionError(
+                    f"duplicate tool result for call id: {call_id}"
+                )
             if call_id not in expected_ids:
                 raise SFTConversionError(f"tool result has no matching call: {call_id}")
             observed_name = observation.get("toolName")
@@ -418,7 +434,9 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
             results_by_id[call_id] = (observation, field)
         if observed_ids != expected_ids:
             missing = sorted(expected_ids - observed_ids)
-            raise SFTConversionError(f"tool calls missing results: {', '.join(missing)}")
+            raise SFTConversionError(
+                f"tool calls missing results: {', '.join(missing)}"
+            )
 
         # Parallel tools can finish in any order. Canonicalize only the SFT
         # output, matching by ID rather than completion order or tool name.
@@ -427,13 +445,15 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
         tool_messages: list[dict[str, Any]] = []
         for call in calls:
             observation, field = results_by_id[call["id"]]
-            tool_messages.append({
-                "role": "tool",
-                "tool_call_id": call["id"],
-                "content": _message_content(
-                    observation.get("content", []), f"{field}.content", images
-                ),
-            })
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": _message_content(
+                        observation.get("content", []), f"{field}.content", images
+                    ),
+                }
+            )
 
         messages.append(
             {

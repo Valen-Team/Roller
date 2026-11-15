@@ -5,6 +5,7 @@ model provider, ...). A pass-through setting may add to that configuration but
 never overlap it: a parent path would replace Roller's values and a child path
 would edit them, both behind the matching Roller flag's back.
 """
+
 from __future__ import annotations
 
 import re

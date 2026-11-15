@@ -1,4 +1,5 @@
 """Container-side bridge for the pinned OpenCode CLI; standard library only."""
+
 from __future__ import annotations
 
 import argparse
@@ -17,24 +18,45 @@ def tool_permissions(config):
     """Root permission rules; OpenCode applies the last matching rule."""
     capture = bool(config.get("capture_calls"))
     if not config.get("native_tools"):
-        return {"*": "deny", **{name: "allow" for name in TOOLS}, "external_directory": "allow",
-                **({"task": "allow"} if capture else {})}
+        return {
+            "*": "deny",
+            **{name: "allow" for name in TOOLS},
+            "external_directory": "allow",
+            **({"task": "allow"} if capture else {}),
+        }
     # Batch execution cannot answer approval prompts, so the native registry is
     # allowed as a whole. Sub-agents still run only when their calls are captured.
-    return {"*": "allow", **({} if capture else {"task": "deny"}),
-            **{name: "deny" for name in config["deny_tools"]}}
+    return {
+        "*": "allow",
+        **({} if capture else {"task": "deny"}),
+        **{name: "deny" for name in config["deny_tools"]},
+    }
 
 
 def agent_profiles(config):
-    agents = {"build": {"steps": config["max_steps"]}, "title": {"disable": True}, "summary": {"disable": True}}
+    agents = {
+        "build": {"steps": config["max_steps"]},
+        "title": {"disable": True},
+        "summary": {"disable": True},
+    }
     if config.get("capture_calls"):
         # Global task permissions otherwise override Explore's native tool
         # restrictions. Retain a distinct child tool profile when delegating.
         if config.get("native_tools"):
-            explore = {"*": "deny", **{name: "allow" for name in EXPLORE_TOOLS}, "external_directory": "allow",
-                       **{name: "deny" for name in config["deny_tools"]}}
+            explore = {
+                "*": "deny",
+                **{name: "allow" for name in EXPLORE_TOOLS},
+                "external_directory": "allow",
+                **{name: "deny" for name in config["deny_tools"]},
+            }
         else:
-            explore = {"write": "deny", "edit": "deny", "apply_patch": "deny", "task": "deny", "skill": "deny"}
+            explore = {
+                "write": "deny",
+                "edit": "deny",
+                "apply_patch": "deny",
+                "task": "deny",
+                "skill": "deny",
+            }
         agents["general"] = {"steps": config["max_steps"]}
         agents["explore"] = {"steps": config["max_steps"], "permission": explore}
     return agents
@@ -52,16 +74,30 @@ def native_reply(export):
     if not users:
         raise ValueError("OpenCode export has no user message")
     user_id = users[-1]["info"]["id"]
-    assistants = [m for m in messages if m.get("info", {}).get("role") == "assistant" and m["info"].get("parentID") == user_id]
+    assistants = [
+        m
+        for m in messages
+        if m.get("info", {}).get("role") == "assistant"
+        and m["info"].get("parentID") == user_id
+    ]
     if not assistants:
         raise ValueError("OpenCode turn has no assistant reply")
     last = assistants[-1]
     info = last["info"]
     if info.get("error") or not info.get("time", {}).get("completed"):
-        raise ValueError("OpenCode turn did not complete: " + json.dumps(info.get("error"), ensure_ascii=False))
+        raise ValueError(
+            "OpenCode turn did not complete: "
+            + json.dumps(info.get("error"), ensure_ascii=False)
+        )
     if info.get("finish") not in {"stop", "end-turn"}:
-        raise ValueError("OpenCode turn ended without a final response: " + str(info.get("finish")))
-    content = "\n".join(p["text"] for p in last.get("parts", []) if p.get("type") == "text" and not p.get("synthetic"))
+        raise ValueError(
+            "OpenCode turn ended without a final response: " + str(info.get("finish"))
+        )
+    content = "\n".join(
+        p["text"]
+        for p in last.get("parts", [])
+        if p.get("type") == "text" and not p.get("synthetic")
+    )
     if not content.strip():
         raise ValueError("OpenCode turn returned an empty reply")
     return content
@@ -79,7 +115,9 @@ def export_session(state, session_id, timeout):
             timeout=timeout,
         )
     if completed.returncode:
-        raise RuntimeError("OpenCode session export failed: " + completed.stderr[-1000:])
+        raise RuntimeError(
+            "OpenCode session export failed: " + completed.stderr[-1000:]
+        )
     return json.loads(export_path.read_text(encoding="utf-8"))
 
 
@@ -93,44 +131,82 @@ def run_turn(config, state):
         return value
 
     effort = config.get("thinking")
-    options = {} if effort is None else {"reasoningEffort": "none" if effort == "off" else effort}
+    options = (
+        {}
+        if effort is None
+        else {"reasoningEffort": "none" if effort == "off" else effort}
+    )
     model = config["model"]
     native_config = {
         "$schema": "https://opencode.ai/config.json",
         "model": "roller/" + model,
         "enabled_providers": ["roller"],
-        "provider": {"roller": {
-            "npm": "@ai-sdk/openai-compatible", "name": "Roller API",
-            "options": {"baseURL": os.environ["OPENAI_BASE_URL"], "apiKey": "{env:OPENAI_API_KEY}", "timeout": max(1, int(remaining() * 1000))},
-            "models": {model: {
-                "id": model, "name": model, "tool_call": True, "reasoning": True,
-                "interleaved": {"field": "reasoning_content"},
-                "limit": {"context": config["context_length"], "output": config["output_tokens"]},
-                "modalities": {
-                    "input": ["text", "image"] if config.get("vision", True) else ["text"],
-                    "output": ["text"],
+        "provider": {
+            "roller": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "Roller API",
+                "options": {
+                    "baseURL": os.environ["OPENAI_BASE_URL"],
+                    "apiKey": "{env:OPENAI_API_KEY}",
+                    "timeout": max(1, int(remaining() * 1000)),
                 },
-                "options": options,
-            }},
-        }},
+                "models": {
+                    model: {
+                        "id": model,
+                        "name": model,
+                        "tool_call": True,
+                        "reasoning": True,
+                        "interleaved": {"field": "reasoning_content"},
+                        "limit": {
+                            "context": config["context_length"],
+                            "output": config["output_tokens"],
+                        },
+                        "modalities": {
+                            "input": ["text", "image"]
+                            if config.get("vision", True)
+                            else ["text"],
+                            "output": ["text"],
+                        },
+                        "options": options,
+                    }
+                },
+            }
+        },
         "plugin": ["file:///roller/opencode_journal.mjs"],
-        "share": "disabled", "autoupdate": False, "snapshot": False,
+        "share": "disabled",
+        "autoupdate": False,
+        "snapshot": False,
         "compaction": {"auto": False, "prune": False},
-        "lsp": False, "formatter": False,
+        "lsp": False,
+        "formatter": False,
         "permission": tool_permissions(config),
         "agent": agent_profiles(config),
     }
     atomic_json(state / "opencode.json", native_config)
     session_file = state / "session.json"
     session = json.loads(session_file.read_text()) if session_file.exists() else {}
-    args = ["opencode", "run", "--format", "json", "--thinking", "--agent", "build", "--model", "roller/" + model, "--title", "Roller task"]
+    args = [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--thinking",
+        "--agent",
+        "build",
+        "--model",
+        "roller/" + model,
+        "--title",
+        "Roller task",
+    ]
     if session.get("id"):
         args += ["--session", session["id"]]
     for path in config.get("files", []):
         args += ["--file", path]
     stream_path = state / "cli.jsonl"
     with stream_path.open("w", encoding="utf-8") as output:
-        process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=output, stderr=None, text=True)
+        process = subprocess.Popen(
+            args, stdin=subprocess.PIPE, stdout=output, stderr=None, text=True
+        )
         try:
             process.communicate(config["message"], timeout=remaining())
         except subprocess.TimeoutExpired:
@@ -161,7 +237,10 @@ def run_turn(config, state):
     if export.get("info", {}).get("id") != session_id:
         raise ValueError("OpenCode exported a different session")
     with (state / "trace.jsonl").open("a", encoding="utf-8") as journal:
-        journal.write(json.dumps({"type": "session_export", "data": export}, ensure_ascii=False) + "\n")
+        journal.write(
+            json.dumps({"type": "session_export", "data": export}, ensure_ascii=False)
+            + "\n"
+        )
     if config.get("capture_calls"):
         # Preserve child sessions too. Read exact native IDs from task metadata
         # and session events; never infer ownership from CLI output ordering.
@@ -176,7 +255,13 @@ def run_turn(config, state):
                 if info.get("id"):
                     ids.add(info["id"])
             if event.get("type") == "message.part.updated":
-                child = event.get("properties", {}).get("part", {}).get("state", {}).get("metadata", {}).get("sessionId")
+                child = (
+                    event.get("properties", {})
+                    .get("part", {})
+                    .get("state", {})
+                    .get("metadata", {})
+                    .get("sessionId")
+                )
                 if child:
                     ids.add(child)
         for child_id in sorted(ids - {session_id}):
@@ -185,13 +270,18 @@ def run_turn(config, state):
                 record = {"type": "session_export", "data": child_export}
             except Exception as exc:
                 # Evidence failures do not change the completed root turn.
-                record = {"type": "capture_error", "session_id": child_id,
-                          "error": "child session export failed: " + type(exc).__name__}
+                record = {
+                    "type": "capture_error",
+                    "session_id": child_id,
+                    "error": "child session export failed: " + type(exc).__name__,
+                }
             with (state / "trace.jsonl").open("a", encoding="utf-8") as journal:
                 journal.write(json.dumps(record, ensure_ascii=False) + "\n")
     errors = [e.get("error") for e in events if e.get("type") == "error"]
     if process.returncode or errors:
-        raise RuntimeError("OpenCode CLI failed: " + json.dumps(errors, ensure_ascii=False)[:2000])
+        raise RuntimeError(
+            "OpenCode CLI failed: " + json.dumps(errors, ensure_ascii=False)[:2000]
+        )
     return {"ok": True, "content": native_reply(export), "session_id": session_id}
 
 
@@ -202,9 +292,13 @@ def main():
     parser.add_argument("--state-dir", default="/roller/opencode-state")
     args = parser.parse_args()
     if args.check:
-        version = subprocess.check_output(["opencode", "--version"], text=True, timeout=30).strip()
+        version = subprocess.check_output(
+            ["opencode", "--version"], text=True, timeout=30
+        ).strip()
         if version != VERSION:
-            raise ValueError(f"OpenCode version mismatch: expected {VERSION}, got {version}")
+            raise ValueError(
+                f"OpenCode version mismatch: expected {VERSION}, got {version}"
+            )
         print(version)
         return
     state = Path(args.state_dir)

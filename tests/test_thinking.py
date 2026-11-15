@@ -30,7 +30,9 @@ class ThinkingTests(unittest.TestCase):
             "off",
         )
 
-    def test_task_override_is_validated_and_does_not_use_truthiness_fallback(self) -> None:
+    def test_task_override_is_validated_and_does_not_use_truthiness_fallback(
+        self,
+    ) -> None:
         self.assertEqual(resolve_thinking("max", "low"), "max")
         with self.assertRaisesRegex(ValueError, "task thinking must be one of"):
             Task("task", (), 0, thinking="turbo")

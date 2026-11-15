@@ -115,41 +115,80 @@ class ConversationManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             raw = root / "trace.jsonl"
-            raw.write_text("\n".join(json.dumps(row) for row in (
-                {"type": "message", "timestamp": 1,
-                 "message": {"role": "user", "content": "prompt"}},
-                {"type": "message", "timestamp": 2,
-                 "message": {"role": "assistant", "content": [
-                     {"type": "thinking", "thinking": "visible reasoning"},
-                     {"type": "text", "text": "answer"}], "stopReason": "stop"}},
-            )) + "\n")
+            raw.write_text(
+                "\n".join(
+                    json.dumps(row)
+                    for row in (
+                        {
+                            "type": "message",
+                            "timestamp": 1,
+                            "message": {"role": "user", "content": "prompt"},
+                        },
+                        {
+                            "type": "message",
+                            "timestamp": 2,
+                            "message": {
+                                "role": "assistant",
+                                "content": [
+                                    {
+                                        "type": "thinking",
+                                        "thinking": "visible reasoning",
+                                    },
+                                    {"type": "text", "text": "answer"},
+                                ],
+                                "stopReason": "stop",
+                            },
+                        },
+                    )
+                )
+                + "\n"
+            )
             actf = root / "source_ACTF.json"
-            convert_openclaw_trace(raw, actf, user_messages=["prompt"], keep_thinking=True)
-            result = HarnessResult(status="ok", elapsed_seconds=0.01,
-                                   trace_path="trace.jsonl", trajectory_path="source_ACTF.json",
-                                   metadata={"reasoning_effort": "off", "keep_thinking": True})
-            info = ConversationManager._archive_simulator(root, result, "model", "openclaw",
-                                                           keep_aux_traces=False)
+            convert_openclaw_trace(
+                raw, actf, user_messages=["prompt"], keep_thinking=True
+            )
+            result = HarnessResult(
+                status="ok",
+                elapsed_seconds=0.01,
+                trace_path="trace.jsonl",
+                trajectory_path="source_ACTF.json",
+                metadata={"reasoning_effort": "off", "keep_thinking": True},
+            )
+            info = ConversationManager._archive_simulator(
+                root, result, "model", "openclaw", keep_aux_traces=False
+            )
             self.assertEqual(info["runtime"]["thinking_audit"]["status"], "mismatch")
-            self.assertEqual(info["runtime"]["sft_eligibility"]["reason"],
-                             "thinking_effort_mismatch")
+            self.assertEqual(
+                info["runtime"]["sft_eligibility"]["reason"], "thinking_effort_mismatch"
+            )
 
     def test_simulator_archive_exception_removes_partial_sft(self) -> None:
         agent = FakeInteractiveHarness(["answer"], [])
-        simulator = FakeInteractiveHarness([
-            '{"action":"message","content":"Say hello"}',
-            '{"action":"finish","reason":"done"}',
-        ], [])
-        task = Task(id="archive_error", prompts=(), source_index=0,
-                    user_simulator=UserSimulatorSpec(instruction="test", max_turns=1))
+        simulator = FakeInteractiveHarness(
+            [
+                '{"action":"message","content":"Say hello"}',
+                '{"action":"finish","reason":"done"}',
+            ],
+            [],
+        )
+        task = Task(
+            id="archive_error",
+            prompts=(),
+            source_index=0,
+            user_simulator=UserSimulatorSpec(instruction="test", max_turns=1),
+        )
+
         def fail_write(path, trajectory):
             path.write_text('{"partial":true}')
             raise OSError("simulated write failure")
+
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             with patch("roller.conversation.write_sft", side_effect=fail_write):
                 result = ConversationManager(agent, simulator).run(
-                    RunRequest(0, task, "model", 30), base, 1,
+                    RunRequest(0, task, "model", 30),
+                    base,
+                    1,
                 )
             self.assertEqual(result.status, "error")
             info = json.loads((base / "user_simulator/info.json").read_text())
@@ -159,17 +198,29 @@ class ConversationManagerTests(unittest.TestCase):
 
     def test_failed_simulator_retains_evidence_without_sft(self) -> None:
         for status in ("error", "timeout"):
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(status=status),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 base = Path(temporary)
                 raw = base / "native.jsonl"
                 actf = base / "native.json"
                 raw.write_text('{"type":"partial"}\n')
                 actf.write_text('{"schema_version":"ACTF_v1.0","steps":[]}')
                 (base / "trace_SFT.json").write_text('{"stale":true}')
-                result = HarnessResult(status=status, elapsed_seconds=0, trace_path=str(raw), trajectory_path=str(actf))
-                info = ConversationManager._archive_simulator(base, result, "model", "pi", keep_aux_traces=False)
+                result = HarnessResult(
+                    status=status,
+                    elapsed_seconds=0,
+                    trace_path=str(raw),
+                    trajectory_path=str(actf),
+                )
+                info = ConversationManager._archive_simulator(
+                    base, result, "model", "pi", keep_aux_traces=False
+                )
                 self.assertEqual((base / "trace.jsonl").read_bytes(), raw.read_bytes())
-                self.assertEqual((base / "trace_ACTF.json").read_bytes(), actf.read_bytes())
+                self.assertEqual(
+                    (base / "trace_ACTF.json").read_bytes(), actf.read_bytes()
+                )
                 self.assertIsNone(info["trajectory"]["sft"])
                 self.assertFalse((base / "trace_SFT.json").exists())
 
@@ -222,17 +273,14 @@ class ConversationManagerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (simulator_dir / "cache_trace.jsonl").write_text(
-                json.dumps({"stage": "stream:context", "system": "sim system"})
-                + "\n",
+                json.dumps({"stage": "stream:context", "system": "sim system"}) + "\n",
                 encoding="utf-8",
             )
             (simulator_dir / "wire_trace.jsonl").write_text(
                 json.dumps(
                     {
                         "kind": "tools",
-                        "tools": [
-                            {"type": "function", "function": {"name": "read"}}
-                        ],
+                        "tools": [{"type": "function", "function": {"name": "read"}}],
                     }
                 )
                 + "\n",
@@ -339,10 +387,13 @@ class ConversationManagerTests(unittest.TestCase):
             info = json.loads((sample / "info.json").read_text())
 
             self.assertEqual(result["status"], "ok")
-            self.assertEqual(agent_sent, [
-                "Draft a backend engineer ad.",
-                "Add salary and remote-work details.",
-            ])
+            self.assertEqual(
+                agent_sent,
+                [
+                    "Draft a backend engineer ad.",
+                    "Add salary and remote-work details.",
+                ],
+            )
             self.assertEqual(len(simulator_sent), 3)
             self.assertEqual(len(conversation["rounds"]), 2)
             self.assertEqual(
@@ -354,12 +405,8 @@ class ConversationManagerTests(unittest.TestCase):
             self.assertTrue((sample / "trace_ACTF.json").is_file())
             self.assertTrue((sample / "trace_SFT.json").is_file())
             self.assertTrue((sample / "user_simulator" / "trace.jsonl").is_file())
-            self.assertTrue(
-                (sample / "user_simulator" / "trace_ACTF.json").is_file()
-            )
-            self.assertTrue(
-                (sample / "user_simulator" / "trace_SFT.json").is_file()
-            )
+            self.assertTrue((sample / "user_simulator" / "trace_ACTF.json").is_file())
+            self.assertTrue((sample / "user_simulator" / "trace_SFT.json").is_file())
             self.assertTrue((sample / "user_simulator" / "info.json").is_file())
 
     def test_max_turns_records_instruction_that_was_not_delivered(self) -> None:
@@ -386,9 +433,7 @@ class ConversationManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output_dir = Path(temporary)
             result = manager.run(request, output_dir, attempt=1)
-            conversation = json.loads(
-                (output_dir / "conversation.json").read_text()
-            )
+            conversation = json.loads((output_dir / "conversation.json").read_text())
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(agent_sent, ["write a draft"])
@@ -409,22 +454,33 @@ class ConversationManagerTests(unittest.TestCase):
                 return super().finish(status, error)
 
         class Harness(FakeInteractiveHarness):
-            def create_session(self, request, output_dir, attempt, *, collect_outputs=True):
+            def create_session(
+                self, request, output_dir, attempt, *, collect_outputs=True
+            ):
                 return Session(request, output_dir, self.responses, self.sent)
 
         manager = ConversationManager(
             Harness(["draft"], []),
-            Harness(['{"action":"message","content":"write"}',
-                     '{"action":"finish","reason":"done"}'], []),
+            Harness(
+                [
+                    '{"action":"message","content":"write"}',
+                    '{"action":"finish","reason":"done"}',
+                ],
+                [],
+            ),
         )
         task = Task(
-            id="cleanup", prompts=(), source_index=0,
+            id="cleanup",
+            prompts=(),
+            source_index=0,
             user_simulator=UserSimulatorSpec("Review the draft"),
         )
 
         with tempfile.TemporaryDirectory() as temporary:
             with self.assertRaisesRegex(RuntimeError, "agent cleanup failed"):
-                manager.run(RunRequest(0, task, "provider/model", 30), Path(temporary), 1)
+                manager.run(
+                    RunRequest(0, task, "provider/model", 30), Path(temporary), 1
+                )
 
         self.assertEqual(finished, ["cleanup", "cleanup__user_simulator"])
 

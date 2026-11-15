@@ -167,8 +167,12 @@ class SFTConversionTests(unittest.TestCase):
                 step["assistant_content"]["reasoning_content"],
             )
         self.assertEqual(record["messages"][0]["content"], trajectory["system_prompt"])
-        self.assertIn("deep_think", [tool["function"]["name"] for tool in record["tools"]])
-        self.assertEqual(assistants[0]["tool_calls"][0]["function"]["name"], "deep_think")
+        self.assertIn(
+            "deep_think", [tool["function"]["name"] for tool in record["tools"]]
+        )
+        self.assertEqual(
+            assistants[0]["tool_calls"][0]["function"]["name"], "deep_think"
+        )
         self.assertEqual(
             json.loads(assistants[0]["tool_calls"][0]["function"]["arguments"]),
             {"thoughts": "First inspect."},
@@ -191,7 +195,9 @@ class SFTConversionTests(unittest.TestCase):
         self.assertEqual(first_assistant["reasoning_content"], "I need the file.")
         call = first_assistant["tool_calls"][0]
         self.assertEqual(call["type"], "function")
-        self.assertEqual(json.loads(call["function"]["arguments"]), {"path": "input.txt"})
+        self.assertEqual(
+            json.loads(call["function"]["arguments"]), {"path": "input.txt"}
+        )
         self.assertEqual(
             record["messages"][3],
             {
@@ -213,7 +219,6 @@ class SFTConversionTests(unittest.TestCase):
             path = Path(temporary) / "trace_SFT.json"
             expected = write_sft(path, _trajectory())
             self.assertEqual(json.loads(path.read_text()), expected)
-
 
     def test_allows_empty_tools_only_without_calls(self) -> None:
         trajectory = _trajectory()
@@ -271,6 +276,7 @@ class SFTConversionTests(unittest.TestCase):
 class ParallelResultOrderTests(unittest.TestCase):
     def test_all_completion_orders_preserve_ids_content_and_images(self):
         from itertools import permutations
+
         trajectory = _trajectory()
         step = trajectory["steps"][0]
         calls = []
@@ -278,13 +284,19 @@ class ParallelResultOrderTests(unittest.TestCase):
         expected_images = []
         # Intentionally non-lexical IDs and the same tool for every call.
         for index, call_id in enumerate(("call-z", "call-a", "call-m")):
-            calls.append({"id": call_id, "name": "read", "arguments": {"path": str(index)}})
+            calls.append(
+                {"id": call_id, "name": "read", "arguments": {"path": str(index)}}
+            )
             blocks = [{"type": "text", "text": str(index)}]
             for frame in range(index):
                 payload = base64.b64encode(f"image-{index}-{frame}".encode()).decode()
-                blocks.append({"type": "image", "mimeType": "image/png", "data": payload})
+                blocks.append(
+                    {"type": "image", "mimeType": "image/png", "data": payload}
+                )
                 expected_images.append("data:image/png;base64," + payload)
-            results.append({"tool_call_id": call_id, "toolName": "read", "content": blocks})
+            results.append(
+                {"tool_call_id": call_id, "toolName": "read", "content": blocks}
+            )
         step["assistant_content"]["tool_calls"] = calls
         expected = None
         for order in permutations(results):
@@ -293,8 +305,13 @@ class ParallelResultOrderTests(unittest.TestCase):
                 original = deepcopy(trajectory)
                 record = actf_to_sft(trajectory)
                 emitted = [m for m in record["messages"] if m["role"] == "tool"]
-                self.assertEqual([m["tool_call_id"] for m in emitted], [c["id"] for c in calls])
-                self.assertEqual([m["content"] for m in emitted], ["0", "1\n<image>", "2\n<image>\n<image>"])
+                self.assertEqual(
+                    [m["tool_call_id"] for m in emitted], [c["id"] for c in calls]
+                )
+                self.assertEqual(
+                    [m["content"] for m in emitted],
+                    ["0", "1\n<image>", "2\n<image>\n<image>"],
+                )
                 self.assertEqual(record["images"], expected_images)
                 validate_sft_record(record)
                 self.assertEqual(trajectory, original)
@@ -307,10 +324,14 @@ class ParallelResultOrderTests(unittest.TestCase):
             with self.subTest(case=case):
                 trajectory = _trajectory()
                 observations = trajectory["steps"][0]["observation"]
-                if case == "duplicate": observations.append(deepcopy(observations[0]))
-                elif case == "unknown": observations[0]["toolCallId"] = "unknown"
-                elif case == "missing": observations.clear()
-                else: observations[0]["toolName"] = "other"
+                if case == "duplicate":
+                    observations.append(deepcopy(observations[0]))
+                elif case == "unknown":
+                    observations[0]["toolCallId"] = "unknown"
+                elif case == "missing":
+                    observations.clear()
+                else:
+                    observations[0]["toolName"] = "other"
                 with self.assertRaises(SFTConversionError):
                     actf_to_sft(trajectory)
 
@@ -360,12 +381,8 @@ class MultimodalSFTTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(
-            flat["images"], [f"data:image/png;base64,{self.png}"]
-        )
-        self.assertEqual(
-            inline["images"], [f"data:image/jpeg;base64,{self.jpeg}"]
-        )
+        self.assertEqual(flat["images"], [f"data:image/png;base64,{self.png}"])
+        self.assertEqual(inline["images"], [f"data:image/jpeg;base64,{self.jpeg}"])
         self.assertEqual(flat["messages"][3]["content"], "<image>")
         self.assertEqual(inline["messages"][3]["content"], "<image>")
 
@@ -395,7 +412,9 @@ class MultimodalSFTTests(unittest.TestCase):
 
         record = actf_to_sft(trajectory)
 
-        self.assertEqual(record["messages"][1]["content"], "Describe this input\n<image>")
+        self.assertEqual(
+            record["messages"][1]["content"], "Describe this input\n<image>"
+        )
         self.assertEqual(record["messages"][3]["content"], "<image>")
         self.assertEqual(
             record["images"],
@@ -418,7 +437,9 @@ class MultimodalSFTTests(unittest.TestCase):
                         {"type": "image", "mimeType": media_type, "data": payload}
                     )
                 )
-                self.assertEqual(record["images"], [f"data:{media_type};base64,{payload}"])
+                self.assertEqual(
+                    record["images"], [f"data:{media_type};base64,{payload}"]
+                )
 
     def test_orders_images_across_steps_and_within_one_result(self) -> None:
         trajectory = self._trajectory(
@@ -481,7 +502,9 @@ class MultimodalSFTTests(unittest.TestCase):
 
     def test_normalizes_base64_before_export_and_validation(self) -> None:
         for payload, canonical in (
-            ("AAAA====", "AAAA"), ("YWJj===", "YWJj"), ("AB==", "AA=="),
+            ("AAAA====", "AAAA"),
+            ("YWJj===", "YWJj"),
+            ("AB==", "AA=="),
         ):
             # Strict decoders differ across Python releases on excess padding.
             # Decide the expected outcome independently of Roller's converter.
@@ -496,7 +519,11 @@ class MultimodalSFTTests(unittest.TestCase):
                 {"type": "image", "data": f"data:image/png;base64,{payload}"},
                 {
                     "type": "image",
-                    "source": {"type": "base64", "media_type": "image/png", "data": payload},
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": payload,
+                    },
                 },
             ):
                 with self.subTest(payload=payload, block=block):
@@ -538,9 +565,7 @@ class MultimodalSFTTests(unittest.TestCase):
 
     def test_rejects_image_block_without_embedded_bytes(self) -> None:
         with self.assertRaisesRegex(SFTConversionError, "base64 image bytes"):
-            actf_to_sft(
-                self._trajectory({"type": "image", "path": "/tmp/frame.png"})
-            )
+            actf_to_sft(self._trajectory({"type": "image", "path": "/tmp/frame.png"}))
 
         with self.assertRaisesRegex(SFTConversionError, "source.type"):
             actf_to_sft(
@@ -652,9 +677,13 @@ class ValidateSFTRecordTests(unittest.TestCase):
 
     def test_rejects_malformed_image_entries(self) -> None:
         for uri in (
-            "AA==", "data:image/bmp;base64,AA==", "data:image/png;base64,A*",
-            "data:image/png;base64,A", "data:image/png;base64,AA=",
-            "data:image/png;base64,AAAA====", "data:image/png;base64,AB==",
+            "AA==",
+            "data:image/bmp;base64,AA==",
+            "data:image/png;base64,A*",
+            "data:image/png;base64,A",
+            "data:image/png;base64,AA=",
+            "data:image/png;base64,AAAA====",
+            "data:image/png;base64,AB==",
         ):
             record = self._record()
             record["images"] = [uri]
@@ -663,10 +692,13 @@ class ValidateSFTRecordTests(unittest.TestCase):
 
     def test_rejects_placeholder_in_saved_tool_arguments(self) -> None:
         record = self._record()
-        record["messages"][2]["tool_calls"] = [{
-            "id": "call-1", "type": "function",
-            "function": {"name": "read", "arguments": '{"path":"<image>.png"}'},
-        }]
+        record["messages"][2]["tool_calls"] = [
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "read", "arguments": '{"path":"<image>.png"}'},
+            }
+        ]
         with self.assertRaisesRegex(ValueError, "placeholder count"):
             validate_sft_record(record)
 

@@ -40,9 +40,7 @@ def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             for row in rows:
-                stream.write(
-                    json.dumps(row, ensure_ascii=False, separators=(",", ":"))
-                )
+                stream.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
                 stream.write("\n")
         os.replace(temporary_name, path)
     except BaseException:

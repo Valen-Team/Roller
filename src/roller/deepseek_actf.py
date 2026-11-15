@@ -1,4 +1,5 @@
 """Convert pinned DeepSeek SDK events with captured native request schemas."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -15,7 +16,11 @@ from roller.usage import ZERO_USAGE
 def read_deepseek_events(path: Path) -> list[dict[str, Any]]:
     # JSONL uses LF as its record separator.  ``splitlines`` would also split
     # legal U+2028/U+2029 characters embedded in JSON strings.
-    events = [json.loads(line) for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
+    events = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").split("\n")
+        if line.strip()
+    ]
     if not all(isinstance(event, dict) for event in events):
         raise ValueError("DeepSeek journal must contain JSON objects")
     return events
@@ -23,7 +28,10 @@ def read_deepseek_events(path: Path) -> list[dict[str, Any]]:
 
 def native_events(events):
     for event in events:
-        if event.get("type") == "notification" and event.get("method") == "session.event":
+        if (
+            event.get("type") == "notification"
+            and event.get("method") == "session.event"
+        ):
             yield event["payload"]["event"]
 
 
@@ -41,7 +49,8 @@ def _request_images(events) -> list[str]:
         sent = [
             block["image_url"]["url"]
             for message in event["body"].get("messages", [])
-            if message.get("role") == "user" and isinstance(message.get("content"), list)
+            if message.get("role") == "user"
+            and isinstance(message.get("content"), list)
             and message["content"][:1] == [TOOL_IMAGES_HEADER]
             for block in message["content"][1:]
             if block.get("type") == "image_url"
@@ -63,7 +72,9 @@ def _tool_result_content(blocks, images):
         elif block.get("type") == "image" and isinstance(block.get("attachment"), dict):
             url = next(images, None)
             if url is None or not url.startswith("data:") or ";base64," not in url:
-                raise ValueError("DeepSeek tool image was not sent to the model as inline data")
+                raise ValueError(
+                    "DeepSeek tool image was not sent to the model as inline data"
+                )
             media_type, data = url[5:].split(";base64,", 1)
             content.append({"type": "image", "data": data, "mimeType": media_type})
         else:
@@ -73,7 +84,9 @@ def _tool_result_content(blocks, images):
     return content
 
 
-def deepseek_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: bool = True) -> dict[str, Any]:
+def deepseek_events_to_actf(
+    events: Iterable[dict[str, Any]], *, keep_thinking: bool = True
+) -> dict[str, Any]:
     events = list(events)
     schemas, systems = {}, []
     for event in events:
@@ -113,53 +126,126 @@ def deepseek_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: 
             continue
         if kind not in {"user/message", "assistant/message", "tool/result"}:
             continue
-        timestamp = datetime.fromtimestamp(event["time"] / 1000, timezone.utc).isoformat()
+        timestamp = datetime.fromtimestamp(
+            event["time"] / 1000, timezone.utc
+        ).isoformat()
         if event.get("surfaceOp") != "append":
-            raise ValueError("DeepSeek surface replacement is unsupported by this profile")
+            raise ValueError(
+                "DeepSeek surface replacement is unsupported by this profile"
+            )
         message = data if kind == "user/message" else data["message"]
         if kind == "tool/result":
             for block in message["content"]:
                 call_id = block.get("toolCallId")
-                if block.get("type") != "tool-result" or call_id not in calls or call_id in results:
+                if (
+                    block.get("type") != "tool-result"
+                    or call_id not in calls
+                    or call_id in results
+                ):
                     raise ValueError("DeepSeek tool result has no unique matching call")
                 results.add(call_id)
-                rows.append({"type": "message", "timestamp": timestamp, "message": {
-                    "role": "toolResult", "toolCallId": call_id, "toolName": calls[call_id],
-                    "content": _tool_result_content(block["content"], images),
-                    "isError": block.get("isError", False)}})
+                rows.append(
+                    {
+                        "type": "message",
+                        "timestamp": timestamp,
+                        "message": {
+                            "role": "toolResult",
+                            "toolCallId": call_id,
+                            "toolName": calls[call_id],
+                            "content": _tool_result_content(block["content"], images),
+                            "isError": block.get("isError", False),
+                        },
+                    }
+                )
             continue
         content = []
         for block in message["content"]:
             block_type = block["type"]
             if block_type == "text" and isinstance(block.get("text"), str):
                 content.append(deepcopy(block))
-            elif block_type == "reasoning" and kind == "assistant/message" and isinstance(block.get("text"), str):
+            elif (
+                block_type == "reasoning"
+                and kind == "assistant/message"
+                and isinstance(block.get("text"), str)
+            ):
                 content.append({"type": "thinking", "thinking": block["text"]})
             elif block_type == "tool-call" and kind == "assistant/message":
                 call_id, name = block["id"], block["name"]
                 arguments = json.loads(block["arguments"])
-                if not isinstance(arguments, dict) or not call_id or call_id in calls or name not in schemas:
-                    raise ValueError("DeepSeek tool call is invalid or has no captured schema")
+                if (
+                    not isinstance(arguments, dict)
+                    or not call_id
+                    or call_id in calls
+                    or name not in schemas
+                ):
+                    raise ValueError(
+                        "DeepSeek tool call is invalid or has no captured schema"
+                    )
                 calls[call_id] = name
-                content.append({"type": "toolCall", "id": call_id, "name": name, "arguments": arguments})
+                content.append(
+                    {
+                        "type": "toolCall",
+                        "id": call_id,
+                        "name": name,
+                        "arguments": arguments,
+                    }
+                )
             else:
-                raise ValueError(f"DeepSeek content would lose data in text-only SFT: {block_type}")
+                raise ValueError(
+                    f"DeepSeek content would lose data in text-only SFT: {block_type}"
+                )
         if data.get("interrupted"):
             raise ValueError("DeepSeek assistant stream was interrupted")
         tokens = data.get("usage") or {}
-        rows.append({"type": "message", "timestamp": timestamp, "message": {
-            "role": "user" if kind == "user/message" else "assistant", "content": content,
-            "usage": {"input": sum(tokens.get(k, 0) for k in ("inputTokens", "cacheReadTokens", "cacheWriteTokens")), "output": tokens.get("outputTokens", 0)},
-            "stopReason": "tool_calls" if any(b["type"] == "toolCall" for b in content) else "stop"}})
-    if active_turn is not None or not turns or any(reason != "completed" for reason in turns) or set(calls) != results:
+        rows.append(
+            {
+                "type": "message",
+                "timestamp": timestamp,
+                "message": {
+                    "role": "user" if kind == "user/message" else "assistant",
+                    "content": content,
+                    "usage": {
+                        "input": sum(
+                            tokens.get(k, 0)
+                            for k in (
+                                "inputTokens",
+                                "cacheReadTokens",
+                                "cacheWriteTokens",
+                            )
+                        ),
+                        "output": tokens.get("outputTokens", 0),
+                    },
+                    "stopReason": "tool_calls"
+                    if any(b["type"] == "toolCall" for b in content)
+                    else "stop",
+                },
+            }
+        )
+    if (
+        active_turn is not None
+        or not turns
+        or any(reason != "completed" for reason in turns)
+        or set(calls) != results
+    ):
         raise ValueError("DeepSeek journal contains incomplete turns or tool calls")
     if next(images, None) is not None:
-        raise ValueError("DeepSeek request carries tool images that no tool result declares")
-    return openclaw_events_to_actf(rows, system_prompts=["\n\n".join(systems)], tools=list(schemas.values()), keep_thinking=keep_thinking)
+        raise ValueError(
+            "DeepSeek request carries tool images that no tool result declares"
+        )
+    return openclaw_events_to_actf(
+        rows,
+        system_prompts=["\n\n".join(systems)],
+        tools=list(schemas.values()),
+        keep_thinking=keep_thinking,
+    )
 
 
-def convert_deepseek_trace(source: Path, destination: Path, *, keep_thinking: bool = True) -> dict[str, Any]:
-    trajectory = deepseek_events_to_actf(read_deepseek_events(source), keep_thinking=keep_thinking)
+def convert_deepseek_trace(
+    source: Path, destination: Path, *, keep_thinking: bool = True
+) -> dict[str, Any]:
+    trajectory = deepseek_events_to_actf(
+        read_deepseek_events(source), keep_thinking=keep_thinking
+    )
     atomic_write_json(destination, trajectory)
     return trajectory
 
@@ -172,8 +258,23 @@ def extract_deepseek_usage(source: Path) -> dict[str, int | float]:
         if event["type"] != "assistant/message":
             continue
         tokens = event["data"].get("usage") or {}
-        for output, native in (("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"),
-                               ("cache_read_tokens", "cacheReadTokens"), ("cache_write_tokens", "cacheWriteTokens")):
+        for output, native in (
+            ("input_tokens", "inputTokens"),
+            ("output_tokens", "outputTokens"),
+            ("cache_read_tokens", "cacheReadTokens"),
+            ("cache_write_tokens", "cacheWriteTokens"),
+        ):
             totals[output] += tokens.get(native, 0)
-        totals["total_tokens"] += tokens.get("totalTokens", sum(tokens.get(k, 0) for k in ("inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens")))
+        totals["total_tokens"] += tokens.get(
+            "totalTokens",
+            sum(
+                tokens.get(k, 0)
+                for k in (
+                    "inputTokens",
+                    "outputTokens",
+                    "cacheReadTokens",
+                    "cacheWriteTokens",
+                )
+            ),
+        )
     return totals

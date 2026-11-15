@@ -8,8 +8,16 @@ from typing import Any, Mapping
 
 from roller.models import RunRequest
 from roller.capture import validate_capture
-from roller.compaction_sft import SFT_SEGMENTS_DIR, build_compaction_segments, has_main_compaction
-from roller.harness_registry import allows_raw_only_actf, compaction_mode, requires_cache_trace
+from roller.compaction_sft import (
+    SFT_SEGMENTS_DIR,
+    build_compaction_segments,
+    has_main_compaction,
+)
+from roller.harness_registry import (
+    allows_raw_only_actf,
+    compaction_mode,
+    requires_cache_trace,
+)
 from roller.sft import actf_to_sft, validate_sft_record
 
 
@@ -133,7 +141,9 @@ def _validate_output_files(sample_dir: Path, info: Mapping[str, Any]) -> None:
                     f"recorded output file cannot be inspected: results/{relative}"
                 ) from exc
             if actual_size != expected_size:
-                raise ValueError(f"recorded output file size changed: results/{relative}")
+                raise ValueError(
+                    f"recorded output file size changed: results/{relative}"
+                )
 
 
 def _validate_trajectory_files(
@@ -148,7 +158,9 @@ def _validate_trajectory_files(
     sft_path = base / "trace_SFT.json"
     segment_dir = base / SFT_SEGMENTS_DIR
     trajectory = info.get("trajectory")
-    segments = trajectory.get("sft_segments") if isinstance(trajectory, Mapping) else None
+    segments = (
+        trajectory.get("sft_segments") if isinstance(trajectory, Mapping) else None
+    )
     if segments is not None and (not isinstance(segments, list) or not segments):
         raise ValueError("SFT segment metadata must be a non-empty list")
     if not segments and segment_dir.exists():
@@ -161,10 +173,7 @@ def _validate_trajectory_files(
     conversion_target = trajectory_conversion_unavailable(
         runtime if isinstance(runtime, Mapping) else None
     )
-    raw_only = (
-        allows_raw_only_actf(info.get("harness"))
-        and conversion_target == "actf"
-    )
+    raw_only = allows_raw_only_actf(info.get("harness")) and conversion_target == "actf"
     sft_unavailable = conversion_target == "sft"
     if segments and sft_unavailable:
         raise ValueError("SFT-unavailable sample cannot reference SFT segments")
@@ -186,9 +195,13 @@ def _validate_trajectory_files(
         if sft_unavailable:
             trajectory = info.get("trajectory")
             if not isinstance(trajectory, Mapping) or trajectory.get("sft") is not None:
-                raise ValueError("SFT-unavailable trajectory metadata must have null SFT")
+                raise ValueError(
+                    "SFT-unavailable trajectory metadata must have null SFT"
+                )
             if sft_path.exists():
-                raise ValueError("SFT-unavailable sample contains an unexpected SFT artifact")
+                raise ValueError(
+                    "SFT-unavailable sample contains an unexpected SFT artifact"
+                )
         elif not segments and not sft_path.is_file():
             raise ValueError(f"required trajectory file is missing: {sft_path.name}")
         elif segments and sft_path.exists():
@@ -198,7 +211,9 @@ def _validate_trajectory_files(
     # Only OpenClaw emits cache traces. Finalized metadata records the actual
     # harness, including CLI overrides, for each participant independently.
     # Keep the strict check for legacy or unrecognized harness metadata.
-    cache_trace_required = require_cache_trace and requires_cache_trace(info.get("harness"))
+    cache_trace_required = require_cache_trace and requires_cache_trace(
+        info.get("harness")
+    )
     if cache_trace_required and not (base / "cache_trace.jsonl").is_file():
         raise ValueError("required full-mode cache_trace.jsonl is missing")
     if not _has_json_event(raw_path):
@@ -211,19 +226,36 @@ def _validate_trajectory_files(
     manifest = capture.get("manifest") if isinstance(capture, Mapping) else None
     try:
         # Captured Calls can reveal a rewrite that the native trace did not log.
-        expected = (build_compaction_segments(base, info.get("harness"), manifest,
-                                              keep_thinking=keeps_thinking(runtime))
-                    if not sft_unavailable and isinstance(manifest, str) else [])
+        expected = (
+            build_compaction_segments(
+                base,
+                info.get("harness"),
+                manifest,
+                keep_thinking=keeps_thinking(runtime),
+            )
+            if not sft_unavailable and isinstance(manifest, str)
+            else []
+        )
         # Like the collector: without Calls, any native reset rules out linear SFT.
-        uncaptured_reset = (not isinstance(manifest, str)
-                            and has_main_compaction(raw_path, info.get("harness")))
+        uncaptured_reset = not isinstance(manifest, str) and has_main_compaction(
+            raw_path, info.get("harness")
+        )
         if not sft_unavailable and not segments and (expected or uncaptured_reset):
             raise ValueError("context reset requires per-call export, not linear SFT")
-    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        AttributeError,
+    ) as exc:
         raise ValueError(f"compaction evidence cannot be validated: {exc}") from exc
 
     actf = _json_object(actf_path)
-    if compaction_mode(info.get("harness")) == "claude" and has_legacy_claude_sidechain(actf):
+    if compaction_mode(info.get("harness")) == "claude" and has_legacy_claude_sidechain(
+        actf
+    ):
         raise ValueError(
             "legacy Claude Code sidechain steps are mixed into root ACTF/SFT; "
             "the sample cannot be safely reused or silently rerun"
@@ -235,15 +267,15 @@ def _validate_trajectory_files(
         raise ValueError("trace_ACTF.json steps must be a non-empty list")
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, Mapping) or step.get("step_id") != index:
-            raise ValueError(
-                "trace_ACTF.json step_id values must be sequential from 1"
-            )
+            raise ValueError("trace_ACTF.json step_id values must be sequential from 1")
 
     if segments and not sft_unavailable:
         if not isinstance(manifest, str):
             raise ValueError("SFT segments lack their captured Calls")
         if segments != [metadata for metadata, _ in expected]:
-            raise ValueError("SFT segment metadata does not match captured boundaries and Calls")
+            raise ValueError(
+                "SFT segment metadata does not match captured boundaries and Calls"
+            )
         expected_paths = {item["path"] for item in segments}
         if not segment_dir.is_dir() or segment_dir.is_symlink():
             raise ValueError("SFT segment directory is missing or invalid")
@@ -263,10 +295,14 @@ def _validate_trajectory_files(
         try:
             validate_sft_record(actual_sft)
         except ValueError as exc:
-            raise ValueError(f"trace_SFT.json is not a valid SFT record: {exc}") from exc
+            raise ValueError(
+                f"trace_SFT.json is not a valid SFT record: {exc}"
+            ) from exc
         expected_sft = actf_to_sft(actf)
         if actual_sft != expected_sft:
-            raise ValueError("trace_SFT.json does not match the canonical ACTF projection")
+            raise ValueError(
+                "trace_SFT.json does not match the canonical ACTF projection"
+            )
 
 
 def validate_resumable_sample(

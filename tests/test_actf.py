@@ -68,15 +68,22 @@ class ActfConversionTests(unittest.TestCase):
             root = Path(tmp)
             rows = [
                 {"type": "message", "message": {"role": "user", "content": "task"}},
-                {"type": "message", "message": {"role": "assistant", "content": "done"}},
+                {
+                    "type": "message",
+                    "message": {"role": "assistant", "content": "done"},
+                },
                 {"type": "custom", "message": None},
                 {"type": "custom", "message": "unexpected"},
             ]
             source = root / "trace.jsonl"
             source.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
-            trajectory = convert_openclaw_trace(source, root / "out.json", user_messages=["task"])
+            trajectory = convert_openclaw_trace(
+                source, root / "out.json", user_messages=["task"]
+            )
             self.assertEqual(len(trajectory["steps"]), 1)
-            self.assertEqual(trajectory["steps"][0]["assistant_content"]["content"], "done")
+            self.assertEqual(
+                trajectory["steps"][0]["assistant_content"]["content"], "done"
+            )
 
     def test_null_announcement_session_key_does_not_break_conversion(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -84,33 +91,67 @@ class ActfConversionTests(unittest.TestCase):
             source = root / "trace.jsonl"
             source.write_text("\n".join(json.dumps(row) for row in _events()) + "\n")
             cache = root / "cache.jsonl"
-            cache.write_text(json.dumps({"runId": "announce:v1:child:run", "sessionKey": None,
-                                         "stage": "stream:context", "messages": []}) + "\n")
-            trajectory = convert_openclaw_trace(source, root / "out.json", cache_trace=cache)
+            cache.write_text(
+                json.dumps(
+                    {
+                        "runId": "announce:v1:child:run",
+                        "sessionKey": None,
+                        "stage": "stream:context",
+                        "messages": [],
+                    }
+                )
+                + "\n"
+            )
+            trajectory = convert_openclaw_trace(
+                source, root / "out.json", cache_trace=cache
+            )
             self.assertEqual(len(trajectory["steps"]), 2)
             self.assertIn("sft_unavailable_reason", trajectory)
 
     def test_announcement_input_uses_native_provider_response_binding(self):
         notice = "A background task completed.\nsource: subagent\nCHILD_DONE"
         signature = json.dumps({"id": "provider-final"})
-        assistant = {"role": "assistant", "content": [{"type": "text", "text": "Done", "textSignature": signature}], "stopReason": "stop"}
-        events = [{"type": "message", "message": {"role": "user", "content": "task"}}, {"type": "message", "message": assistant}]
+        assistant = {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Done", "textSignature": signature}],
+            "stopReason": "stop",
+        }
+        events = [
+            {"type": "message", "message": {"role": "user", "content": "task"}},
+            {"type": "message", "message": assistant},
+        ]
         base = {"runId": "announce:v1:child:run", "sessionKey": "agent:main:root"}
         for complete in (True, False):
             with self.subTest(complete=complete), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                cache_rows = [{**base, "stage": "stream:context", "messages": [{"role": "user", "content": notice}]}]
+                cache_rows = [
+                    {
+                        **base,
+                        "stage": "stream:context",
+                        "messages": [{"role": "user", "content": notice}],
+                    }
+                ]
                 if complete:
-                    cache_rows.append({**base, "stage": "session:after", "messages": [assistant]})
-                (root / "trace.jsonl").write_text("\n".join(json.dumps(e) for e in events))
-                (root / "cache.jsonl").write_text("\n".join(json.dumps(e) for e in cache_rows))
-                trajectory = convert_openclaw_trace(root / "trace.jsonl", root / "out.json", user_messages=["task"], cache_trace=root / "cache.jsonl")
+                    cache_rows.append(
+                        {**base, "stage": "session:after", "messages": [assistant]}
+                    )
+                (root / "trace.jsonl").write_text(
+                    "\n".join(json.dumps(e) for e in events)
+                )
+                (root / "cache.jsonl").write_text(
+                    "\n".join(json.dumps(e) for e in cache_rows)
+                )
+                trajectory = convert_openclaw_trace(
+                    root / "trace.jsonl",
+                    root / "out.json",
+                    user_messages=["task"],
+                    cache_trace=root / "cache.jsonl",
+                )
                 if complete:
                     self.assertEqual(trajectory["steps"][0]["user_content"], notice)
                     self.assertNotIn("sft_unavailable_reason", trajectory)
                 else:
                     self.assertIn("sft_unavailable_reason", trajectory)
-
 
     def test_groups_assistant_tool_results_and_multiple_user_turns(self) -> None:
         trajectory = openclaw_events_to_actf(
@@ -175,7 +216,9 @@ class ActfConversionTests(unittest.TestCase):
             self.assertEqual(step["assistant_content"]["reasoning_content"], "")
 
         kept = openclaw_events_to_actf(_events(), keep_thinking=True)
-        self.assertEqual(kept["steps"][0]["assistant_content"]["reasoning_content"], "inspect")
+        self.assertEqual(
+            kept["steps"][0]["assistant_content"]["reasoning_content"], "inspect"
+        )
 
     def test_preserves_image_tool_result_and_exports_multimodal_sft(self) -> None:
         events = _events()
@@ -571,7 +614,9 @@ class ActfConversionTests(unittest.TestCase):
             trajectory["steps"][1]["finished_at"], "1970-01-01 00:00:02.100000"
         )
 
-    def test_empty_failed_attempt_and_automatic_retry_are_not_training_steps(self) -> None:
+    def test_empty_failed_attempt_and_automatic_retry_are_not_training_steps(
+        self,
+    ) -> None:
         events = [
             {"type": "session", "timestamp": "1970-01-01T00:00:00Z"},
             {
@@ -606,7 +651,9 @@ class ActfConversionTests(unittest.TestCase):
         trajectory = openclaw_events_to_actf(events, user_messages=("say ready",))
         self.assertEqual(len(trajectory["steps"]), 1)
         self.assertEqual(trajectory["steps"][0]["user_content"], "say ready")
-        self.assertEqual(trajectory["steps"][0]["assistant_content"]["content"], "ready")
+        self.assertEqual(
+            trajectory["steps"][0]["assistant_content"]["content"], "ready"
+        )
         self.assertEqual(
             [message["role"] for message in actf_to_sft(trajectory)["messages"]],
             ["system", "user", "assistant"],

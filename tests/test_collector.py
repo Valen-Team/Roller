@@ -27,7 +27,9 @@ class FakeHarness(Harness):
         with self.state["lock"]:
             self.state["calls"][key] = self.state["calls"].get(key, 0) + 1
             self.state["active"] += 1
-            self.state["max_active"] = max(self.state["max_active"], self.state["active"])
+            self.state["max_active"] = max(
+                self.state["max_active"], self.state["active"]
+            )
         try:
             time.sleep(self.state.get("delay", 0.01))
             if self.state.get("interrupt_task") == request.task.id:
@@ -189,17 +191,28 @@ class FakeHarness(Harness):
                     last["metric"]["stop_reason"] = self.state["stop_reason"]
                 trajectory.write_text(json.dumps(payload))
             if "wire_efforts" in self.state:
-                (output_dir / "wire_trace.jsonl").write_text("".join(
-                    json.dumps({"seq": i, "path": "/v1/chat/completions", "params": {"reasoning_effort": effort}}) + "\n"
-                    for i, effort in enumerate(self.state["wire_efforts"])
-                ))
+                (output_dir / "wire_trace.jsonl").write_text(
+                    "".join(
+                        json.dumps(
+                            {
+                                "seq": i,
+                                "path": "/v1/chat/completions",
+                                "params": {"reasoning_effort": effort},
+                            }
+                        )
+                        + "\n"
+                        for i, effort in enumerate(self.state["wire_efforts"])
+                    )
+                )
             if self.state.get("record_output"):
                 artifact = output_dir / "results" / "artifact.txt"
                 artifact.parent.mkdir(parents=True, exist_ok=True)
                 artifact.write_text("artifact", encoding="utf-8")
                 metadata["output_collection"] = {
                     "passed": True,
-                    "files": [{"path": "artifact.txt", "size": artifact.stat().st_size}],
+                    "files": [
+                        {"path": "artifact.txt", "size": artifact.stat().st_size}
+                    ],
                 }
             return HarnessResult(
                 status=self.state.get("final_status", "ok"),
@@ -223,7 +236,9 @@ class FailingHarnessWithLogs(Harness):
     def run(self, request: RunRequest, output_dir: Path, attempt: int) -> HarnessResult:
         rollout = output_dir / "rollout"
         rollout.mkdir(parents=True, exist_ok=True)
-        (rollout / f"gateway.attempt-{attempt}.log").write_text("gateway startup detail")
+        (rollout / f"gateway.attempt-{attempt}.log").write_text(
+            "gateway startup detail"
+        )
         (rollout / f"agent.attempt-{attempt}.log").write_text("agent startup detail")
         (rollout / "trace_ACTF.json").write_text("partial trajectory")
         if self.crash:
@@ -236,7 +251,9 @@ def make_requests() -> list[RunRequest]:
     for index in range(4):
         task = Task(id=f"task-{index}", prompts=("hello",), source_index=index)
         requests.append(
-            RunRequest(index=index, task=task, model="provider/model", timeout_seconds=30)
+            RunRequest(
+                index=index, task=task, model="provider/model", timeout_seconds=30
+            )
         )
     return requests
 
@@ -246,20 +263,32 @@ class CollectorTests(unittest.TestCase):
         for state_update, reason in (
             ({"final_content": ""}, "empty_final_answer"),
             ({"stop_reason": "length"}, "token_limit"),
-            ({"reasoning_effort": "low", "wire_efforts": ["low", "high"]}, "wire_effort_mismatch"),
+            (
+                {"reasoning_effort": "low", "wire_efforts": ["low", "high"]},
+                "wire_effort_mismatch",
+            ),
         ):
-            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(reason=reason),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 run_dir = Path(temporary)
                 state = self._state()
                 state.update(state_update)
-                collector = Collector(CollectionConfig(run_dir=run_dir), lambda slot: FakeHarness(state, slot))
+                collector = Collector(
+                    CollectionConfig(run_dir=run_dir),
+                    lambda slot: FakeHarness(state, slot),
+                )
                 result = collector.collect(make_requests()[:1])[0]
                 self.assertEqual(result["status"], "ok")
                 self.assertEqual(result["runtime"]["sft_eligibility"]["reason"], reason)
                 if reason != "empty_final_answer":
                     self.assertIsNotNone(result["trajectory"]["sft"])
                 self.assertEqual((run_dir / "sft.jsonl").read_text(), "")
-                resumed = Collector(CollectionConfig(run_dir=run_dir, resume=True), lambda slot: FakeHarness(state, slot)).collect(make_requests()[:1])[0]
+                resumed = Collector(
+                    CollectionConfig(run_dir=run_dir, resume=True),
+                    lambda slot: FakeHarness(state, slot),
+                ).collect(make_requests()[:1])[0]
                 self.assertEqual(resumed["status"], "skipped")
                 self.assertEqual((run_dir / "sft.jsonl").read_text(), "")
                 summary = json.loads((run_dir / "info.json").read_text())["summary"]
@@ -401,7 +430,9 @@ class CollectorTests(unittest.TestCase):
                         lambda slot: FakeHarness(state, slot),
                     )
                     if warned:
-                        with self.assertLogs("roller.trajectory_audit", level="WARNING"):
+                        with self.assertLogs(
+                            "roller.trajectory_audit", level="WARNING"
+                        ):
                             result = collector.collect(make_requests()[:1])[0]
                     else:
                         result = collector.collect(make_requests()[:1])[0]
@@ -413,8 +444,9 @@ class CollectorTests(unittest.TestCase):
                     warnings = result["runtime"].get("warnings", [])
                     self.assertEqual(bool(warnings), warned)
                     actf = json.loads(
-                        next((run_dir / "samples").glob("*/*/trace_ACTF.json"))
-                        .read_text()
+                        next(
+                            (run_dir / "samples").glob("*/*/trace_ACTF.json")
+                        ).read_text()
                     )
                     retained = actf["steps"][0]["assistant_content"][
                         "reasoning_content"
@@ -426,7 +458,9 @@ class CollectorTests(unittest.TestCase):
                     )
                     self.assertTrue(list(run_dir.glob("samples/*/*/trace_SFT.json")))
                     if warned:
-                        self.assertFalse(result["runtime"]["sft_eligibility"]["eligible"])
+                        self.assertFalse(
+                            result["runtime"]["sft_eligibility"]["eligible"]
+                        )
                         # Older samples carry only the audit, not eligibility.
                         info_path = next(run_dir.glob("samples/*/*/info.json"))
                         legacy = json.loads(info_path.read_text())
@@ -443,7 +477,10 @@ class CollectorTests(unittest.TestCase):
 
     def test_failed_partial_trace_has_no_training_export(self) -> None:
         for status in ("error", "timeout"):
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(status=status),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 run_dir = Path(temporary) / "run"
                 state = self._state()
                 state["final_status"] = status
@@ -522,7 +559,8 @@ class CollectorTests(unittest.TestCase):
             self.assertIn("AB==", (sample / "trace_ACTF.json").read_text())
             before = {
                 p.name: (p.read_bytes(), p.stat().st_mtime_ns)
-                for p in sample.iterdir() if p.is_file()
+                for p in sample.iterdir()
+                if p.is_file()
             }
             resumed = Collector(
                 CollectionConfig(run_dir=run_dir, resume=True),
@@ -532,7 +570,8 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(state["calls"][("task-0", "provider/model")], 1)
             after = {
                 p.name: (p.read_bytes(), p.stat().st_mtime_ns)
-                for p in sample.iterdir() if p.is_file()
+                for p in sample.iterdir()
+                if p.is_file()
             }
             self.assertEqual(before, after)
 
@@ -540,7 +579,10 @@ class CollectorTests(unittest.TestCase):
         # Include both version-dependent excess padding and an always-invalid
         # payload, so the rejection path runs even on permissive Python builds.
         for payload in ("AAAA====", "not*base64"):
-            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(payload=payload),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 try:
                     base64.b64decode(payload, validate=True)
                 except ValueError:
@@ -557,7 +599,8 @@ class CollectorTests(unittest.TestCase):
                 run_dir = Path(temporary) / "run"
                 requests = make_requests()[:2]
                 results = Collector(
-                    CollectionConfig(run_dir=run_dir), factory,
+                    CollectionConfig(run_dir=run_dir),
+                    factory,
                 ).collect(requests)
                 self.assertEqual(
                     [result["status"] for result in results],
@@ -572,7 +615,8 @@ class CollectorTests(unittest.TestCase):
                 else:
                     self.assertNotIn("trajectory_conversion", results[0]["runtime"])
                 self.assertEqual(
-                    json.loads((run_dir / "info.json").read_text())["state"], "finished",
+                    json.loads((run_dir / "info.json").read_text())["state"],
+                    "finished",
                 )
                 dataset = (run_dir / "sft.jsonl").read_bytes()
                 rows = [json.loads(line) for line in dataset.splitlines()]
@@ -587,19 +631,22 @@ class CollectorTests(unittest.TestCase):
                 self.assertIn(payload, (sample / "trace_ACTF.json").read_text())
 
                 resumed = Collector(
-                    CollectionConfig(run_dir=run_dir, resume=True), factory,
+                    CollectionConfig(run_dir=run_dir, resume=True),
+                    factory,
                 ).collect(requests)
                 self.assertEqual(
                     [result["status"] for result in resumed],
                     ["skipped", "skipped"],
                 )
                 self.assertEqual(
-                    states[0]["calls"][("task-0", "provider/model")], 1,
+                    states[0]["calls"][("task-0", "provider/model")],
+                    1,
                 )
                 self.assertEqual(states[1]["calls"][("task-1", "provider/model")], 1)
                 self.assertEqual((run_dir / "sft.jsonl").read_bytes(), dataset)
                 self.assertEqual(
-                    json.loads((run_dir / "info.json").read_text())["state"], "finished",
+                    json.loads((run_dir / "info.json").read_text())["state"],
+                    "finished",
                 )
 
     def test_repeated_samples_use_distinct_directories(self) -> None:
@@ -625,7 +672,9 @@ class CollectorTests(unittest.TestCase):
             collector.collect(requests)
             model_dir = next((run_dir / "samples").iterdir())
             sample_dirs = sorted(model_dir.iterdir())
-            infos = [json.loads((path / "info.json").read_text()) for path in sample_dirs]
+            infos = [
+                json.loads((path / "info.json").read_text()) for path in sample_dirs
+            ]
 
             self.assertEqual(
                 [path.name for path in sample_dirs],
@@ -787,7 +836,10 @@ class CollectorTests(unittest.TestCase):
         )
         for key, mode in modes:
             for participant in ("", "user_simulator"):
-                with self.subTest(key=key, mode=mode, participant=participant), tempfile.TemporaryDirectory() as temporary:
+                with (
+                    self.subTest(key=key, mode=mode, participant=participant),
+                    tempfile.TemporaryDirectory() as temporary,
+                ):
                     run_dir = Path(temporary) / "run"
                     state = self._state()
                     requests = make_requests()[:1]
@@ -799,23 +851,32 @@ class CollectorTests(unittest.TestCase):
                     base = collector._sample_dir(requests[0]) / participant
                     base.mkdir(exist_ok=True)
                     info_path = base / "info.json"
-                    info = json.loads(info_path.read_text()) if info_path.exists() else {}
+                    info = (
+                        json.loads(info_path.read_text()) if info_path.exists() else {}
+                    )
                     info.setdefault("runtime", {})[key] = {"mode": mode}
                     info_path.write_text(json.dumps(info))
                     before = {
                         p.relative_to(run_dir): p.read_bytes()
-                        for p in run_dir.rglob("*") if p.is_file()
+                        for p in run_dir.rglob("*")
+                        if p.is_file()
                     }
                     for resume in (False, True):
-                        with self.assertRaisesRegex(ValueError, "is retired; use a new run directory"):
+                        with self.assertRaisesRegex(
+                            ValueError, "is retired; use a new run directory"
+                        ):
                             Collector(
                                 CollectionConfig(run_dir=run_dir, resume=resume),
                                 lambda slot: self.fail("must not start a harness"),
                             ).collect(requests)
-                    self.assertEqual(before, {
-                        p.relative_to(run_dir): p.read_bytes()
-                        for p in run_dir.rglob("*") if p.is_file()
-                    })
+                    self.assertEqual(
+                        before,
+                        {
+                            p.relative_to(run_dir): p.read_bytes()
+                            for p in run_dir.rglob("*")
+                            if p.is_file()
+                        },
+                    )
 
     def test_resume_reruns_sample_when_a_recorded_output_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -865,7 +926,6 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(state["calls"][("task-0", "provider/model")], 2)
             self.assertTrue(wire_trace.is_file())
 
-
     def test_interruption_checkpoints_completed_samples_and_partial_sft(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run_dir = Path(temporary) / "run"
@@ -893,8 +953,12 @@ class CollectorTests(unittest.TestCase):
             state = self._state()
             state.update(interrupt_task="task-1", delay=0.3)
             requests = [
-                RunRequest(index, Task(id=f"task-{index}", prompts=("hello",), source_index=index),
-                           "provider/model", 30)
+                RunRequest(
+                    index,
+                    Task(id=f"task-{index}", prompts=("hello",), source_index=index),
+                    "provider/model",
+                    30,
+                )
                 for index in range(8)
             ]
             collector = Collector(
@@ -932,7 +996,9 @@ class CollectorTests(unittest.TestCase):
                     resume_safe=resume_safe,
                 )
 
-            first_request = RunRequest(0, task, "provider/model", 30, bundle("digest-a"))
+            first_request = RunRequest(
+                0, task, "provider/model", 30, bundle("digest-a")
+            )
             Collector(
                 CollectionConfig(run_dir=run_dir),
                 lambda slot: FakeHarness(state, slot),
@@ -943,7 +1009,9 @@ class CollectorTests(unittest.TestCase):
             ).collect([first_request])
             self.assertEqual(skipped[0]["status"], "skipped")
 
-            changed_request = RunRequest(0, task, "provider/model", 30, bundle("digest-b"))
+            changed_request = RunRequest(
+                0, task, "provider/model", 30, bundle("digest-b")
+            )
             changed = Collector(
                 CollectionConfig(run_dir=run_dir, resume=True),
                 lambda slot: FakeHarness(state, slot),
@@ -972,8 +1040,12 @@ class TimedHarness(FakeHarness):
 class LaunchIntervalTests(unittest.TestCase):
     def _state(self, **extra) -> dict:
         return {
-            "lock": threading.Lock(), "calls": {}, "active": 0, "max_active": 0,
-            "fail_first": False, **extra,
+            "lock": threading.Lock(),
+            "calls": {},
+            "active": 0,
+            "max_active": 0,
+            "fail_first": False,
+            **extra,
         }
 
     def _collect(self, run_dir: Path, state: dict, requests, **config) -> list[dict]:
@@ -987,15 +1059,20 @@ class LaunchIntervalTests(unittest.TestCase):
             state = self._state(delay=0.6)
             began = time.monotonic()
             results = self._collect(
-                Path(temporary) / "run", state, make_requests(),
-                parallel=4, launch_interval=0.15,
+                Path(temporary) / "run",
+                state,
+                make_requests(),
+                parallel=4,
+                launch_interval=0.15,
             )
 
         self.assertEqual([result["status"] for result in results], ["ok"] * 4)
         # The gate schedules launch k no earlier than k intervals after the
         # first. A worker that wakes late starts later, never earlier, so the
         # offsets hold on a loaded machine where the gaps between starts do not.
-        offsets = [start - began for start in sorted(start for start, _ in state["starts"])]
+        offsets = [
+            start - began for start in sorted(start for start, _ in state["starts"])
+        ]
         self.assertTrue(
             all(offset >= index * 0.15 - 0.02 for index, offset in enumerate(offsets)),
             offsets,
@@ -1015,8 +1092,11 @@ class LaunchIntervalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             state = self._state(fail_first=True)
             results = self._collect(
-                Path(temporary) / "run", state, make_requests()[:1],
-                retries=1, launch_interval=0.3,
+                Path(temporary) / "run",
+                state,
+                make_requests()[:1],
+                retries=1,
+                launch_interval=0.3,
             )
 
         self.assertEqual(results[0]["status"], "ok")
@@ -1031,7 +1111,11 @@ class LaunchIntervalTests(unittest.TestCase):
             self._collect(run_dir, state, make_requests(), parallel=4)
             started = time.monotonic()
             resumed = self._collect(
-                run_dir, state, make_requests(), parallel=4, resume=True,
+                run_dir,
+                state,
+                make_requests(),
+                parallel=4,
+                resume=True,
                 launch_interval=30,
             )
 
@@ -1045,7 +1129,11 @@ class LaunchIntervalTests(unittest.TestCase):
             started = time.monotonic()
             with self.assertRaises(KeyboardInterrupt):
                 self._collect(
-                    run_dir, state, make_requests(), parallel=4, launch_interval=30,
+                    run_dir,
+                    state,
+                    make_requests(),
+                    parallel=4,
+                    launch_interval=30,
                 )
             elapsed = time.monotonic() - started
 
@@ -1053,30 +1141,45 @@ class LaunchIntervalTests(unittest.TestCase):
             # and none left a sample directory behind.
             self.assertLess(elapsed, 10)
             self.assertEqual(list(state["calls"]), [("task-0", "provider/model")])
-            sample_dirs = sorted(path.name for path in (run_dir / "samples").glob("*/*"))
+            sample_dirs = sorted(
+                path.name for path in (run_dir / "samples").glob("*/*")
+            )
             self.assertEqual(sample_dirs, ["00000000_task-0"])
             info = json.loads((run_dir / "info.json").read_text())
             self.assertEqual(info["state"], "interrupted")
 
     def test_interrupt_between_attempts_keeps_the_last_failure(self) -> None:
         for interval in (0.0, 0.1):
-            with self.subTest(interval=interval), tempfile.TemporaryDirectory() as temporary:
+            with (
+                self.subTest(interval=interval),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
                 run_dir = Path(temporary) / "run"
                 # task-0 interrupts at 0.2 s while task-1 (launched by 0.1 s) is
                 # still in its failing first attempt; its retry must not start.
                 state = self._state(
-                    interrupt_task="task-0", delay=0.2, fail_first=True,
+                    interrupt_task="task-0",
+                    delay=0.2,
+                    fail_first=True,
                     extra_delay={"task-1": 0.3},
                 )
                 with self.assertLogs("roller.collector", "WARNING") as logs:
                     with self.assertRaises(KeyboardInterrupt):
                         self._collect(
-                            run_dir, state, make_requests()[:2], parallel=2, retries=2,
+                            run_dir,
+                            state,
+                            make_requests()[:2],
+                            parallel=2,
+                            retries=2,
                             launch_interval=interval,
                         )
 
                 self.assertEqual(state["calls"][("task-1", "provider/model")], 1)
-                info = json.loads(next(run_dir.glob("samples/*/00000001_task-1/info.json")).read_text())
+                info = json.loads(
+                    next(
+                        run_dir.glob("samples/*/00000001_task-1/info.json")
+                    ).read_text()
+                )
                 self.assertEqual([row["attempt"] for row in info["attempts"]], [1])
                 self.assertEqual(info["status"], "error")
                 output = "\n".join(logs.output)
@@ -1119,7 +1222,13 @@ class FailingHarness(TimedHarness):
 
 class RetryBackoffTests(unittest.TestCase):
     def _state(self, **extra) -> dict:
-        return {"lock": threading.Lock(), "calls": {}, "active": 0, "max_active": 0, **extra}
+        return {
+            "lock": threading.Lock(),
+            "calls": {},
+            "active": 0,
+            "max_active": 0,
+            **extra,
+        }
 
     def _collect(self, run_dir: Path, state: dict, requests, **config) -> list[dict]:
         return Collector(
@@ -1131,8 +1240,11 @@ class RetryBackoffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             state = self._state(failures=2)
             results = self._collect(
-                Path(temporary) / "run", state, make_requests()[:1],
-                retries=2, retry_backoff=0.15,
+                Path(temporary) / "run",
+                state,
+                make_requests()[:1],
+                retries=2,
+                retry_backoff=0.15,
             )
 
         self.assertEqual(results[0]["status"], "ok")
@@ -1147,7 +1259,9 @@ class RetryBackoffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             state = self._state(failures=2)
             started = time.monotonic()
-            self._collect(Path(temporary) / "run", state, make_requests()[:1], retries=2)
+            self._collect(
+                Path(temporary) / "run", state, make_requests()[:1], retries=2
+            )
 
         self.assertLess(time.monotonic() - started, 2)
 
@@ -1160,14 +1274,18 @@ class RetryBackoffTests(unittest.TestCase):
             started = time.monotonic()
             with self.assertRaises(KeyboardInterrupt):
                 Collector(
-                    CollectionConfig(run_dir=run_dir, parallel=2, retries=1, retry_backoff=30),
+                    CollectionConfig(
+                        run_dir=run_dir, parallel=2, retries=1, retry_backoff=30
+                    ),
                     lambda slot, request: (
                         TimedHarness if request.task.id == "task-0" else FailingHarness
                     )(state, slot),
                 ).collect(requests)
 
             self.assertLess(time.monotonic() - started, 10)
-            info = json.loads(next(run_dir.glob("samples/*/00000001_task-1/info.json")).read_text())
+            info = json.loads(
+                next(run_dir.glob("samples/*/00000001_task-1/info.json")).read_text()
+            )
             self.assertEqual([row["attempt"] for row in info["attempts"]], [1])
             self.assertEqual(info["status"], "error")
 

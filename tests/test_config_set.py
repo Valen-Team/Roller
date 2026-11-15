@@ -23,9 +23,7 @@ from test_gateway_ports import isolate_gateway_ports
 
 class ConfigAssignmentTests(unittest.TestCase):
     def test_parses_key_value_at_the_first_equals_sign(self) -> None:
-        self.assertEqual(
-            parse_config_assignment("a.b=x=y"), ("a.b", "x=y")
-        )
+        self.assertEqual(parse_config_assignment("a.b=x=y"), ("a.b", "x=y"))
         self.assertEqual(parse_config_assignment(" a.b =  "), ("a.b", "  "))
         for text in ("a.b", "=1", "-a=1", "a b=1", ".=1"):
             with self.subTest(text=text):
@@ -49,9 +47,16 @@ class ConfigAssignmentTests(unittest.TestCase):
 
     def test_rejects_paths_overlapping_managed_ones_in_either_direction(self) -> None:
         managed = {"gateway.auth.token": "managed"}
-        for key in ("gateway", "gateway.auth", "gateway.auth.token", "gateway.auth.token.x"):
+        for key in (
+            "gateway",
+            "gateway.auth",
+            "gateway.auth.token",
+            "gateway.auth.token.x",
+        ):
             with self.subTest(key=key):
-                with self.assertRaisesRegex(ValueError, "overlaps 'gateway.auth.token'"):
+                with self.assertRaisesRegex(
+                    ValueError, "overlaps 'gateway.auth.token'"
+                ):
                     validate_config_assignments(((key, "1"),), managed, flag="--x")
         allowed = validate_config_assignments(
             (("gateway.http.port", "1"), ("gateway.authx", "2")), managed, flag="--x"
@@ -67,7 +72,9 @@ class ConfigAssignmentTests(unittest.TestCase):
                     validate_config_assignments(
                         [(key, "1") for key in keys], {}, flag="--x"
                     )
-        allowed = validate_config_assignments((("a.b", "1"), ("a.c", "2")), {}, flag="--x")
+        allowed = validate_config_assignments(
+            (("a.b", "1"), ("a.c", "2")), {}, flag="--x"
+        )
         self.assertEqual(len(allowed), 2)
 
     def test_records_values_with_credential_leaves_redacted(self) -> None:
@@ -119,11 +126,23 @@ class CliConfigSetTests(unittest.TestCase):
         self.configs.append(config)
         return _StubHarness(config, slot)
 
-    def invoke(self, *extra: str, harness: str = "openclaw", resume: bool = False) -> int:
+    def invoke(
+        self, *extra: str, harness: str = "openclaw", resume: bool = False
+    ) -> int:
         args = [
-            "collect", "--tasks", str(self.tasks), "--harness", harness,
-            "--model", "provider/model", "--output", str(self.root / "runs"),
-            "--run-name", "run", *extra, *(["--resume"] if resume else []),
+            "collect",
+            "--tasks",
+            str(self.tasks),
+            "--harness",
+            harness,
+            "--model",
+            "provider/model",
+            "--output",
+            str(self.root / "runs"),
+            "--run-name",
+            "run",
+            *extra,
+            *(["--resume"] if resume else []),
         ]
         with contextlib.redirect_stdout(io.StringIO()):
             return _collect(_build_parser().parse_args(args))
@@ -134,10 +153,15 @@ class CliConfigSetTests(unittest.TestCase):
     def test_parser_collects_repeated_settings_and_rejects_malformed_ones(self) -> None:
         args = _build_parser().parse_args(
             [
-                "collect", "--tasks", "t.jsonl",
-                "--openclaw-config-set", "a.b=1",
-                "--openclaw-config-set", "c=x=y",
-                "--codex-config-set", "model_verbosity=\"low\"",
+                "collect",
+                "--tasks",
+                "t.jsonl",
+                "--openclaw-config-set",
+                "a.b=1",
+                "--openclaw-config-set",
+                "c=x=y",
+                "--codex-config-set",
+                'model_verbosity="low"',
             ]
         )
         self.assertEqual(args.openclaw_config_set, [("a.b", "1"), ("c", "x=y")])
@@ -149,8 +173,10 @@ class CliConfigSetTests(unittest.TestCase):
 
     def test_settings_reach_the_harness_and_are_locked_without_secrets(self) -> None:
         self.invoke(
-            "--openclaw-config-set", "diagnostics.stuckSessionAbortMs=2700000",
-            "--openclaw-config-set", "channels.discord.token=secret",
+            "--openclaw-config-set",
+            "diagnostics.stuckSessionAbortMs=2700000",
+            "--openclaw-config-set",
+            "channels.discord.token=secret",
         )
 
         self.assertEqual(
@@ -167,22 +193,29 @@ class CliConfigSetTests(unittest.TestCase):
         self.assertEqual(self.lock()["execution"]["openclaw"]["config_set"], recorded)
         info = json.loads((self.root / "runs" / "run" / "info.json").read_text())
         self.assertEqual(info["configuration"]["openclaw"]["config_set"], recorded)
-        self.assertNotIn("secret", (self.root / "runs" / "run" / "lock.json").read_text())
+        self.assertNotIn(
+            "secret", (self.root / "runs" / "run" / "lock.json").read_text()
+        )
 
     def test_unused_option_leaves_the_lock_unchanged_for_older_runs(self) -> None:
         self.invoke(harness="openclaw")
         self.assertNotIn("config_set", self.lock()["execution"]["openclaw"])
 
     def test_resume_requires_the_same_settings(self) -> None:
-        self.invoke("--codex-config-set", "model_verbosity=\"low\"", harness="codex")
+        self.invoke("--codex-config-set", 'model_verbosity="low"', harness="codex")
         self.assertEqual(
             self.lock()["execution"]["codex"]["config_set"],
             {"model_verbosity": '"low"'},
         )
-        self.invoke("--codex-config-set", "model_verbosity=\"low\"", harness="codex", resume=True)
+        self.invoke(
+            "--codex-config-set", 'model_verbosity="low"', harness="codex", resume=True
+        )
         with self.assertRaisesRegex(FileExistsError, "lock mismatch"):
             self.invoke(
-                "--codex-config-set", "model_verbosity=\"high\"", harness="codex", resume=True
+                "--codex-config-set",
+                'model_verbosity="high"',
+                harness="codex",
+                resume=True,
             )
 
     def test_codex_image_detail_is_locked_only_when_set(self) -> None:
@@ -192,19 +225,30 @@ class CliConfigSetTests(unittest.TestCase):
         self.invoke(harness="codex", resume=True)
         with self.assertRaisesRegex(FileExistsError, "lock mismatch"):
             self.invoke(
-                "--codex-image-detail", "high", "--api-base", "http://example.test/v1",
-                harness="codex", resume=True,
+                "--codex-image-detail",
+                "high",
+                "--api-base",
+                "http://example.test/v1",
+                harness="codex",
+                resume=True,
             )
 
     def test_codex_image_detail_reaches_the_harness_and_the_lock(self) -> None:
         self.invoke(
-            "--codex-image-detail", "high", "--api-base", "http://example.test/v1",
+            "--codex-image-detail",
+            "high",
+            "--api-base",
+            "http://example.test/v1",
             harness="codex",
         )
         self.assertEqual(self.configs[0].responses_image_detail, "high")
-        self.assertEqual(self.lock()["execution"]["codex"]["responses_image_detail"], "high")
+        self.assertEqual(
+            self.lock()["execution"]["codex"]["responses_image_detail"], "high"
+        )
         info = json.loads((self.root / "runs" / "run" / "info.json").read_text())
-        self.assertEqual(info["configuration"]["codex"]["responses_image_detail"], "high")
+        self.assertEqual(
+            info["configuration"]["codex"]["responses_image_detail"], "high"
+        )
 
     def test_claude_unique_tool_ids_is_locked_only_when_set(self) -> None:
         self.invoke(harness="claude-code")
@@ -213,13 +257,18 @@ class CliConfigSetTests(unittest.TestCase):
         self.invoke(harness="claude-code", resume=True)
         with self.assertRaisesRegex(FileExistsError, "lock mismatch"):
             self.invoke(
-                "--claude-unique-tool-ids", "--api-base", "http://example.test",
-                harness="claude-code", resume=True,
+                "--claude-unique-tool-ids",
+                "--api-base",
+                "http://example.test",
+                harness="claude-code",
+                resume=True,
             )
 
     def test_claude_unique_tool_ids_reaches_the_harness_and_the_lock(self) -> None:
         self.invoke(
-            "--claude-unique-tool-ids", "--api-base", "http://example.test",
+            "--claude-unique-tool-ids",
+            "--api-base",
+            "http://example.test",
             harness="claude-code",
         )
         self.assertTrue(self.configs[0].unique_tool_ids)

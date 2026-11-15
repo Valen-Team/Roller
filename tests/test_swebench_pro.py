@@ -185,7 +185,16 @@ class SWEBenchProAdapterTests(unittest.TestCase):
 
             with patch.dict(os.environ, {**options, **cache}):
                 with self.assertRaises(SystemExit) as exited:
-                    main(["bench", "export", "swebench-pro", str(root), "-o", str(output)])
+                    main(
+                        [
+                            "bench",
+                            "export",
+                            "swebench-pro",
+                            str(root),
+                            "-o",
+                            str(output),
+                        ]
+                    )
             self.assertEqual(exited.exception.code, 0)
             row = json.loads(output.read_text())
             binding = BenchBinding.from_dict(row["bench"])
@@ -196,7 +205,9 @@ class SWEBenchProAdapterTests(unittest.TestCase):
             self.assertEqual(
                 binding.metadata["evaluation_protocol"]["exclude_agent_tests"], True
             )
-            self.assertEqual(binding.metadata["go_proxy"], options["SWEBENCH_PRO_GO_PROXY"])
+            self.assertEqual(
+                binding.metadata["go_proxy"], options["SWEBENCH_PRO_GO_PROXY"]
+            )
             self.assertTrue(binding.grade.kwargs["exclude_agent_tests"])
             self.assertTrue(binding.grade.kwargs["prepare_go_dependencies"])
             self.assertEqual(
@@ -223,7 +234,8 @@ class SWEBenchProAdapterTests(unittest.TestCase):
                 os.environ, {**cache, "SWEBENCH_PRO_EXCLUDE_AGENT_TESTS": "maybe"}
             ):
                 with self.assertRaisesRegex(
-                    BenchFormatError, "SWEBENCH_PRO_EXCLUDE_AGENT_TESTS must be a boolean"
+                    BenchFormatError,
+                    "SWEBENCH_PRO_EXCLUDE_AGENT_TESTS must be a boolean",
                 ):
                     get_bench("swebench-pro").load(root)
 
@@ -416,7 +428,11 @@ class SWEBenchProImageTests(unittest.TestCase):
     def test_mismatched_or_unknown_architecture_fails_before_building(self) -> None:
         for architectures, harness_name, message in (
             ({"harness": "arm64"}, "hermes", "is amd64 but hermes image .* is arm64"),
-            ({"harness": "s390x", "source": "s390x"}, "openclaw", "supports amd64, arm64"),
+            (
+                {"harness": "s390x", "source": "s390x"},
+                "openclaw",
+                "supports amd64, arm64",
+            ),
         ):
             with self.subTest(harness=harness_name):
                 suffix = uuid.uuid4().hex
@@ -543,7 +559,10 @@ class SWEBenchProGraderTests(unittest.TestCase):
 
     def test_grading_failures_preserve_agent_artifacts_and_cleanup(self) -> None:
         for failure_stage in ("precheck", "extraction", "startup", "unexpected"):
-            with self.subTest(stage=failure_stage), tempfile.TemporaryDirectory() as tmp:
+            with (
+                self.subTest(stage=failure_stage),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
                 output_dir = Path(tmp)
                 runtime = Mock()
                 runtime.run.return_value = subprocess.CompletedProcess([], 0, "", "")
@@ -583,6 +602,7 @@ class SWEBenchProGraderTests(unittest.TestCase):
                     elif failure_stage == "extraction":
                         extract.side_effect = failure
                     elif failure_stage == "startup":
+
                         def run(args, timeout=None):
                             del timeout
                             if args[0] == "run":
@@ -748,7 +768,10 @@ class SWEBenchProGraderTests(unittest.TestCase):
         runtime = Runtime()
         binding = BenchBinding(
             name="swebench-pro",
-            metadata={"source_image": "registry.example/source:test", "base_commit": "a" * 40},
+            metadata={
+                "source_image": "registry.example/source:test",
+                "base_commit": "a" * 40,
+            },
             grade=GradeSpec(code="def roller_grade(workspace_path): return {}"),
         )
         harness = SWEBenchProGradedHarness(
@@ -790,7 +813,10 @@ class SWEBenchProGraderTests(unittest.TestCase):
 
         binding = BenchBinding(
             name="swebench-pro",
-            metadata={"source_image": "registry.example/source:test", "base_commit": "a" * 40},
+            metadata={
+                "source_image": "registry.example/source:test",
+                "base_commit": "a" * 40,
+            },
             grade=GradeSpec(code="def roller_grade(workspace_path): return {}"),
         )
         harness = SWEBenchProGradedHarness(
@@ -827,9 +853,7 @@ class SWEBenchProGraderTests(unittest.TestCase):
             (True, False, 0.0),
             (True, True, 1.0),
         ]:
-            with self.subTest(
-                exclude_tests=exclude_tests, with_fixtures=with_fixtures
-            ):
+            with self.subTest(exclude_tests=exclude_tests, with_fixtures=with_fixtures):
                 with tempfile.TemporaryDirectory() as temporary:
                     workspace = Path(temporary)
                     self._git(workspace, "init", "-q")
@@ -838,9 +862,7 @@ class SWEBenchProGraderTests(unittest.TestCase):
                     (workspace / "app.go").write_text("BASE\n")
                     self._git(workspace, "add", ".")
                     self._git(workspace, "commit", "-qm", "baseline")
-                    self._git(
-                        workspace, "update-ref", "refs/roller/baseline", "HEAD"
-                    )
+                    self._git(workspace, "update-ref", "refs/roller/baseline", "HEAD")
                     with (workspace / ".git/info/exclude").open("a") as handle:
                         handle.write(".roller-grade/\n.roller_outputs/\n")
                     (workspace / "hidden_test.go").write_text("OFFICIAL\n")
@@ -888,12 +910,8 @@ class SWEBenchProGraderTests(unittest.TestCase):
                         ),
                     )
                     self.assertEqual(result["overall_score"], expected)
-                    original = (
-                        workspace / ".roller_outputs/model.patch"
-                    ).read_text()
-                    graded = (
-                        workspace / ".roller_outputs/graded.patch"
-                    ).read_text()
+                    original = (workspace / ".roller_outputs/model.patch").read_text()
+                    graded = (workspace / ".roller_outputs/graded.patch").read_text()
                     self.assertIn("MODEL_FIXED", graded)
                     self.assertIn("self_test.go", original)
                     self.assertIn("tests/helper.js", original)
@@ -941,9 +959,7 @@ class SWEBenchProGraderTests(unittest.TestCase):
             fake_go.chmod(0o755)
             namespace = {}
             exec(_GRADER_SOURCE, namespace)  # noqa: S102
-            with patch.dict(
-                os.environ, {"PATH": f"{tool_dir}:{os.environ['PATH']}"}
-            ):
+            with patch.dict(os.environ, {"PATH": f"{tool_dir}:{os.environ['PATH']}"}):
                 result = namespace["roller_grade"](
                     str(workspace),
                     ["required"],
@@ -958,7 +974,9 @@ class SWEBenchProGraderTests(unittest.TestCase):
             self.assertGreater(result["dependency_preparation"]["patch_bytes"], 0)
             self.assertIn(
                 "missing go.sum entry",
-                (workspace / ".roller_outputs/before-dependency-stdout.log").read_text(),
+                (
+                    workspace / ".roller_outputs/before-dependency-stdout.log"
+                ).read_text(),
             )
 
 

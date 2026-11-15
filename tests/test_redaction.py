@@ -16,14 +16,22 @@ class RedactFileLiteralsTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.path = self.root / "trace.jsonl"
 
-    def test_secrets_are_replaced_across_chunk_boundaries_without_reading_the_file_whole(self) -> None:
+    def test_secrets_are_replaced_across_chunk_boundaries_without_reading_the_file_whole(
+        self,
+    ) -> None:
         raw = "prefix\r\nsk-secret-value\nmiddle sk-secret tail sk-secret-value" * 3
         for size in (1, 2, 3, 7, 8, 64, 4096):
             with self.subTest(chunk_size=size):
                 self.path.write_bytes(raw.encode())
-                with patch.object(Path, "read_text", side_effect=AssertionError("whole file read")):
-                    redact_file_literals(self.path, ["sk-secret-value", "sk-secret"], chunk_size=size)
-                expected = raw.replace("sk-secret-value", "[REDACTED]").replace("sk-secret", "[REDACTED]")
+                with patch.object(
+                    Path, "read_text", side_effect=AssertionError("whole file read")
+                ):
+                    redact_file_literals(
+                        self.path, ["sk-secret-value", "sk-secret"], chunk_size=size
+                    )
+                expected = raw.replace("sk-secret-value", "[REDACTED]").replace(
+                    "sk-secret", "[REDACTED]"
+                )
                 self.assertEqual(self.path.read_bytes().decode(), expected)
         self.assertEqual([entry.name for entry in self.root.iterdir()], ["trace.jsonl"])
 
@@ -43,7 +51,9 @@ class RedactFileLiteralsTests(unittest.TestCase):
         before = os.stat(self.path)
         redact_file_literals(self.path, ["", ""])
         after = os.stat(self.path)
-        self.assertEqual((before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns))
+        self.assertEqual(
+            (before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns)
+        )
 
     def test_undecodable_file_stays_intact_unless_errors_are_replaced(self) -> None:
         raw = b"key=secret \xff tail"

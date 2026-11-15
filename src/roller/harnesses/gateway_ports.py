@@ -11,6 +11,7 @@ when the process exits, however it exits. A port is also skipped when
 something already listens on it, which covers older Roller runs and other
 servers that take no lock.
 """
+
 from __future__ import annotations
 
 import errno
@@ -44,7 +45,9 @@ class GatewayPortReservation:
         self._locks = []
 
 
-def reserve_gateway_ports(start: int | None, step: int, slots: int) -> GatewayPortReservation:
+def reserve_gateway_ports(
+    start: int | None, step: int, slots: int
+) -> GatewayPortReservation:
     """Reserve ``slots`` gateway ports ``step`` apart.
 
     ``start=None`` picks the first free range from :data:`DEFAULT_GATEWAY_PORT`

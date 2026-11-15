@@ -30,10 +30,15 @@ class OpenClawUsageTests(unittest.TestCase):
     def test_total_fallback_includes_cache_and_keeps_explicit_zero(self) -> None:
         for total, expected in ((None, 16), (0, 0), (20, 20)):
             with self.subTest(total=total):
-                usage = OpenClawUsage.parse({
-                    "input": 10, "output": 2, "cacheRead": 3,
-                    "cacheWrite": 1, "totalTokens": total,
-                })
+                usage = OpenClawUsage.parse(
+                    {
+                        "input": 10,
+                        "output": 2,
+                        "cacheRead": 3,
+                        "cacheWrite": 1,
+                        "totalTokens": total,
+                    }
+                )
                 self.assertEqual(usage.counts, (10, 2, 3, 1, expected))
                 self.assertTrue(usage.matchable)
         self.assertEqual(OpenClawUsage.parse({"input": 10}).counts[-1], 10)
@@ -42,9 +47,13 @@ class OpenClawUsageTests(unittest.TestCase):
         for invalid in (True, -1, "10", float("nan"), float("inf")):
             for field in ("input", "totalTokens"):
                 with self.subTest(invalid=invalid, field=field):
-                    usage = OpenClawUsage.parse({
-                        field: invalid, "output": 2, "cost": {"total": invalid},
-                    })
+                    usage = OpenClawUsage.parse(
+                        {
+                            field: invalid,
+                            "output": 2,
+                            "cost": {"total": invalid},
+                        }
+                    )
                     self.assertEqual(usage.counts, (0, 2, 0, 0, 2))
                     self.assertEqual(usage.cost_usd, 0.0)
                     self.assertFalse(usage.matchable)

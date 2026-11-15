@@ -43,19 +43,34 @@ from roller.harnesses.config_overrides import (
 )
 from roller.harnesses.container import PROXY_ENV_NAMES
 from roller.harnesses.deepseek import (
-    DEFAULT_DEEPSEEK_IMAGE, DEEPSEEK_PERMISSION_MODES, DEEPSEEK_VERSION,
-    DeepSeekConfig, DeepSeekHarness, deepseek_effort,
+    DEFAULT_DEEPSEEK_IMAGE,
+    DEEPSEEK_PERMISSION_MODES,
+    DEEPSEEK_VERSION,
+    DeepSeekConfig,
+    DeepSeekHarness,
+    deepseek_effort,
 )
 from roller.harnesses.pi import (
-    DEFAULT_PI_IMAGE, PI_VERSION, PI_TOOLS,
-    PiConfig, PiHarness, pi_effort,
+    DEFAULT_PI_IMAGE,
+    PI_VERSION,
+    PI_TOOLS,
+    PiConfig,
+    PiHarness,
+    pi_effort,
 )
 from roller.harnesses.opencode import (
-    DEFAULT_OPENCODE_IMAGE, OPENCODE_VERSION,
-    OpenCodeConfig, OpenCodeHarness, opencode_effort,
+    DEFAULT_OPENCODE_IMAGE,
+    OPENCODE_VERSION,
+    OpenCodeConfig,
+    OpenCodeHarness,
+    opencode_effort,
 )
 from roller.harnesses.hermes import (
-    DEFAULT_HERMES_IMAGE, HERMES_REVISION, HermesConfig, HermesHarness, hermes_effort,
+    DEFAULT_HERMES_IMAGE,
+    HERMES_REVISION,
+    HermesConfig,
+    HermesHarness,
+    hermes_effort,
 )
 from roller.harnesses.codex import (
     DEFAULT_CODEX_IMAGE,
@@ -117,12 +132,23 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"Roller {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    init = subparsers.add_parser("init", help="write the example tasks and configuration templates")
-    init.add_argument("directory", nargs="?", default=".", help="target directory (default: current directory)")
+    init = subparsers.add_parser(
+        "init", help="write the example tasks and configuration templates"
+    )
+    init.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="target directory (default: current directory)",
+    )
 
     view = subparsers.add_parser("view", help="browse a Roller run in a local web UI")
-    view.add_argument("run_dir", help="Roller run directory containing info.json/samples")
-    view.add_argument("--host", default="127.0.0.1", help="listen host (default: loopback)")
+    view.add_argument(
+        "run_dir", help="Roller run directory containing info.json/samples"
+    )
+    view.add_argument(
+        "--host", default="127.0.0.1", help="listen host (default: loopback)"
+    )
     view.add_argument(
         "--port",
         type=int,
@@ -161,9 +187,13 @@ def _build_parser() -> argparse.ArgumentParser:
     bench_export = bench_sub.add_parser(
         "export", help="convert a checked-out bench into a Roller task list"
     )
-    bench_export.add_argument("name", help="bench adapter name (see 'roller bench list')")
+    bench_export.add_argument(
+        "name", help="bench adapter name (see 'roller bench list')"
+    )
     bench_export.add_argument("root", help="path to the checked-out benchmark")
-    bench_export.add_argument("--output", "-o", required=True, help="task JSONL to write")
+    bench_export.add_argument(
+        "--output", "-o", required=True, help="task JSONL to write"
+    )
     bench_export.add_argument(
         "--category",
         action="append",
@@ -262,8 +292,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     collect.add_argument("--prompt-key", default="prompt")
     collect.add_argument("--id-key", default="id")
-    collect.add_argument("--workspace", help="default host workspace copied into each container")
-    collect.add_argument("--timeout", type=int, default=600, help="per-trajectory timeout in seconds")
+    collect.add_argument(
+        "--workspace", help="default host workspace copied into each container"
+    )
+    collect.add_argument(
+        "--timeout", type=int, default=600, help="per-trajectory timeout in seconds"
+    )
     collect.add_argument("--parallel", type=int, default=1)
     collect.add_argument(
         "--launch-interval",
@@ -300,12 +334,22 @@ def _build_parser() -> argparse.ArgumentParser:
             "further retry (default: 0, retry immediately)"
         ),
     )
-    collect.add_argument("--start-index", type=int, default=0, help="first normalized task index")
+    collect.add_argument(
+        "--start-index", type=int, default=0, help="first normalized task index"
+    )
     collect.add_argument("--limit", type=int, help="maximum number of tasks")
-    collect.add_argument("--output", default="runs", help="root directory for collections")
-    collect.add_argument("--run-name", help="run directory name; defaults to a UTC timestamp")
-    collect.add_argument("--resume", action="store_true", help="skip completed task/model pairs")
-    collect.add_argument("--dry-run", action="store_true", help="validate and print the execution plan")
+    collect.add_argument(
+        "--output", default="runs", help="root directory for collections"
+    )
+    collect.add_argument(
+        "--run-name", help="run directory name; defaults to a UTC timestamp"
+    )
+    collect.add_argument(
+        "--resume", action="store_true", help="skip completed task/model pairs"
+    )
+    collect.add_argument(
+        "--dry-run", action="store_true", help="validate and print the execution plan"
+    )
     collect.add_argument(
         "--max-input-file-bytes",
         type=int,
@@ -340,13 +384,28 @@ def _build_parser() -> argparse.ArgumentParser:
             "environment variable or Roller's pinned Harness image"
         ),
     )
-    runtime.add_argument("--openclaw-image", help="OpenClaw image override (for mixed Harness runs)")
-    runtime.add_argument("--codex-image", help="Codex image override (for mixed Harness runs)")
-    runtime.add_argument("--hermes-image", help="Hermes image override (for mixed Harness runs)")
-    runtime.add_argument("--opencode-image", help="OpenCode image override (for mixed Harness runs)")
-    runtime.add_argument("--deepseek-image", help="DeepSeek image override (for mixed Harness runs)")
-    runtime.add_argument("--pi-image", help="Pi image override (for mixed Harness runs)")
-    runtime.add_argument("--claude-code-image", help="Claude Code image override (for mixed Harness runs)")
+    runtime.add_argument(
+        "--openclaw-image", help="OpenClaw image override (for mixed Harness runs)"
+    )
+    runtime.add_argument(
+        "--codex-image", help="Codex image override (for mixed Harness runs)"
+    )
+    runtime.add_argument(
+        "--hermes-image", help="Hermes image override (for mixed Harness runs)"
+    )
+    runtime.add_argument(
+        "--opencode-image", help="OpenCode image override (for mixed Harness runs)"
+    )
+    runtime.add_argument(
+        "--deepseek-image", help="DeepSeek image override (for mixed Harness runs)"
+    )
+    runtime.add_argument(
+        "--pi-image", help="Pi image override (for mixed Harness runs)"
+    )
+    runtime.add_argument(
+        "--claude-code-image",
+        help="Claude Code image override (for mixed Harness runs)",
+    )
     runtime.add_argument(
         "--container-user",
         default="0",
@@ -359,10 +418,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="rebuild task-specific benchmark images even when their tags exist locally",
     )
     runtime.add_argument("--network", default="host")
-    runtime.add_argument("--capture-debug", choices=["off", "on-error", "full"], default="on-error",
-        help="retain call capture debug evidence: on-error (default), off, or full")
-    runtime.add_argument("--capture-calls", action="store_true",
-        help="save full model calls and native subagent relations for all harness participants")
+    runtime.add_argument(
+        "--capture-debug",
+        choices=["off", "on-error", "full"],
+        default="on-error",
+        help="retain call capture debug evidence: on-error (default), off, or full",
+    )
+    runtime.add_argument(
+        "--capture-calls",
+        action="store_true",
+        help="save full model calls and native subagent relations for all harness participants",
+    )
     runtime.add_argument(
         "--thinking",
         type=normalize_thinking,
@@ -412,7 +478,9 @@ def _build_parser() -> argparse.ArgumentParser:
     runtime.add_argument("--keep-container-on-error", action="store_true")
 
     openclaw = collect.add_argument_group("OpenClaw")
-    openclaw.add_argument("--model-config", help="OpenClaw models JSON; supports ${ENV_NAME}")
+    openclaw.add_argument(
+        "--model-config", help="OpenClaw models JSON; supports ${ENV_NAME}"
+    )
     openclaw.add_argument(
         "--gateway-port",
         type=int,
@@ -480,16 +548,34 @@ def _build_parser() -> argparse.ArgumentParser:
             "full /v1/messages endpoint for Claude Code; defaults to the Harness env"
         ),
     )
-    api.add_argument("--hermes-api-base", help="Hermes-only OpenAI-compatible Chat Completions API base")
-    api.add_argument("--hermes-api-key-env", help="Hermes-only API key environment variable")
-    api.add_argument("--opencode-api-base", help="OpenCode-only Chat Completions API base")
-    api.add_argument("--deepseek-api-base", help="DeepSeek-only Chat Completions API base")
+    api.add_argument(
+        "--hermes-api-base",
+        help="Hermes-only OpenAI-compatible Chat Completions API base",
+    )
+    api.add_argument(
+        "--hermes-api-key-env", help="Hermes-only API key environment variable"
+    )
+    api.add_argument(
+        "--opencode-api-base", help="OpenCode-only Chat Completions API base"
+    )
+    api.add_argument(
+        "--deepseek-api-base", help="DeepSeek-only Chat Completions API base"
+    )
     api.add_argument("--pi-api-base", help="Pi-only Chat Completions API base")
-    api.add_argument("--opencode-api-key-env", help="OpenCode-only API key environment variable")
-    api.add_argument("--deepseek-api-key-env", help="DeepSeek-only API key environment variable")
+    api.add_argument(
+        "--opencode-api-key-env", help="OpenCode-only API key environment variable"
+    )
+    api.add_argument(
+        "--deepseek-api-key-env", help="DeepSeek-only API key environment variable"
+    )
     api.add_argument("--pi-api-key-env", help="Pi-only API key environment variable")
-    api.add_argument("--codex-api-base", help="Codex-only API base override (for mixed Harness runs)")
-    api.add_argument("--claude-api-base", help="Claude Code-only API base override (for mixed Harness runs)")
+    api.add_argument(
+        "--codex-api-base", help="Codex-only API base override (for mixed Harness runs)"
+    )
+    api.add_argument(
+        "--claude-api-base",
+        help="Claude Code-only API base override (for mixed Harness runs)",
+    )
     api.add_argument(
         "--api-key-env",
         help=(
@@ -497,16 +583,31 @@ def _build_parser() -> argparse.ArgumentParser:
             "OPENAI_API_KEY for Codex/Hermes/OpenCode and ANTHROPIC_API_KEY for Claude Code"
         ),
     )
-    api.add_argument("--codex-api-key-env", help="Codex-only API key environment variable")
-    api.add_argument("--claude-api-key-env", help="Claude Code-only API key environment variable")
+    api.add_argument(
+        "--codex-api-key-env", help="Codex-only API key environment variable"
+    )
+    api.add_argument(
+        "--claude-api-key-env", help="Claude Code-only API key environment variable"
+    )
 
     hermes = collect.add_argument_group("Hermes")
     hermes.add_argument(
-        "--hermes-toolset", action="append", metavar="NAME",
+        "--hermes-toolset",
+        action="append",
+        metavar="NAME",
         help="Hermes toolset to enable instead of terminal/file/vision; repeat to select several, or pass 'native' for native discovery",
     )
-    hermes.add_argument("--hermes-max-iterations", type=int, default=12, help="maximum model iterations per Hermes user turn (default: 12)")
-    hermes.add_argument("--hermes-context-length", type=int, help="override Hermes model context window (at least 64000 tokens)")
+    hermes.add_argument(
+        "--hermes-max-iterations",
+        type=int,
+        default=12,
+        help="maximum model iterations per Hermes user turn (default: 12)",
+    )
+    hermes.add_argument(
+        "--hermes-context-length",
+        type=int,
+        help="override Hermes model context window (at least 64000 tokens)",
+    )
     hermes.add_argument(
         "--hermes-vision",
         action=argparse.BooleanOptionalAction,
@@ -515,15 +616,30 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     opencode = collect.add_argument_group("OpenCode")
-    opencode.add_argument("--opencode-native-tools", action="store_true", help="permit every tool of the native OpenCode registry instead of the fixed tool list")
-    opencode.add_argument("--opencode-deny-tool", action="append", default=[], metavar="NAME", help="deny a native OpenCode tool or permission under --opencode-native-tools; repeat as needed")
+    opencode.add_argument(
+        "--opencode-native-tools",
+        action="store_true",
+        help="permit every tool of the native OpenCode registry instead of the fixed tool list",
+    )
+    opencode.add_argument(
+        "--opencode-deny-tool",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="deny a native OpenCode tool or permission under --opencode-native-tools; repeat as needed",
+    )
     opencode.add_argument(
         "--opencode-max-steps",
         type=int,
         default=None,
         help="maximum model steps per OpenCode user turn (default: 100 for SkillsBench, 12 otherwise)",
     )
-    opencode.add_argument("--opencode-context-length", type=int, default=128000, help="OpenCode model context window (default: 128000 tokens)")
+    opencode.add_argument(
+        "--opencode-context-length",
+        type=int,
+        default=128000,
+        help="OpenCode model context window (default: 128000 tokens)",
+    )
     opencode.add_argument(
         "--opencode-output-tokens",
         type=int,
@@ -541,18 +657,67 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     deepseek = collect.add_argument_group("DeepSeek")
-    deepseek.add_argument("--deepseek-profile", default="sdk-minimal", metavar="NAME", help="native DeepSeek SDK profile (default: sdk-minimal; sdk selects the full native tool set)")
-    deepseek.add_argument("--deepseek-permission-mode", choices=DEEPSEEK_PERMISSION_MODES, help="native DeepSeek permission mode inside the task container (default: the profile's own)")
-    deepseek.add_argument("--deepseek-max-steps", type=int, default=12, help="maximum model steps per DeepSeek user turn (default: 12)")
-    deepseek.add_argument("--deepseek-input-modalities", choices=("text", "text,image"), default="text", help="DeepSeek model input capabilities (default: text; text,image lets read_image send images to the model)")
-    deepseek.add_argument("--deepseek-context-length", type=int, default=128000, help="DeepSeek model context window (default: 128000 tokens)")
-    deepseek.add_argument("--deepseek-output-tokens", type=int, default=8192, help="DeepSeek maximum output tokens (default: 8192)")
+    deepseek.add_argument(
+        "--deepseek-profile",
+        default="sdk-minimal",
+        metavar="NAME",
+        help="native DeepSeek SDK profile (default: sdk-minimal; sdk selects the full native tool set)",
+    )
+    deepseek.add_argument(
+        "--deepseek-permission-mode",
+        choices=DEEPSEEK_PERMISSION_MODES,
+        help="native DeepSeek permission mode inside the task container (default: the profile's own)",
+    )
+    deepseek.add_argument(
+        "--deepseek-max-steps",
+        type=int,
+        default=12,
+        help="maximum model steps per DeepSeek user turn (default: 12)",
+    )
+    deepseek.add_argument(
+        "--deepseek-input-modalities",
+        choices=("text", "text,image"),
+        default="text",
+        help="DeepSeek model input capabilities (default: text; text,image lets read_image send images to the model)",
+    )
+    deepseek.add_argument(
+        "--deepseek-context-length",
+        type=int,
+        default=128000,
+        help="DeepSeek model context window (default: 128000 tokens)",
+    )
+    deepseek.add_argument(
+        "--deepseek-output-tokens",
+        type=int,
+        default=8192,
+        help="DeepSeek maximum output tokens (default: 8192)",
+    )
 
     pi = collect.add_argument_group("Pi")
-    pi.add_argument("--pi-max-steps", type=int, default=12, help="maximum model steps per Pi user turn (default: 12)")
-    pi.add_argument("--pi-input-modalities", choices=("text", "text,image"), default="text,image", help="Pi model input capabilities (default: text,image)")
-    pi.add_argument("--pi-context-length", type=int, default=128000, help="Pi model context window (default: 128000 tokens)")
-    pi.add_argument("--pi-output-tokens", type=int, default=8192, help="Pi maximum output tokens (default: 8192)")
+    pi.add_argument(
+        "--pi-max-steps",
+        type=int,
+        default=12,
+        help="maximum model steps per Pi user turn (default: 12)",
+    )
+    pi.add_argument(
+        "--pi-input-modalities",
+        choices=("text", "text,image"),
+        default="text,image",
+        help="Pi model input capabilities (default: text,image)",
+    )
+    pi.add_argument(
+        "--pi-context-length",
+        type=int,
+        default=128000,
+        help="Pi model context window (default: 128000 tokens)",
+    )
+    pi.add_argument(
+        "--pi-output-tokens",
+        type=int,
+        default=8192,
+        help="Pi maximum output tokens (default: 8192)",
+    )
 
     codex = collect.add_argument_group("Codex")
     codex.add_argument(
@@ -600,7 +765,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     claude = collect.add_argument_group("Claude Code")
     claude.add_argument(
-        "--claude-capture-calls", action="store_true",
+        "--claude-capture-calls",
+        action="store_true",
         help="save Claude main/subagent native files, full HTTP calls and participant relations",
     )
     claude.add_argument(
@@ -696,11 +862,15 @@ def _dry_run_payload(
     }
     payload = {
         "dry_run": True,
-        "harness": next(iter(agent_harnesses)) if len(agent_harnesses) == 1 else "mixed",
+        "harness": next(iter(agent_harnesses))
+        if len(agent_harnesses) == 1
+        else "mixed",
         "docker_image": args.docker_image,
         "tasks": len({request.task.id for request in requests}),
         "models": list(dict.fromkeys(request.model for request in requests)),
-        "model_labels": list(dict.fromkeys(request.display_model for request in requests)),
+        "model_labels": list(
+            dict.fromkeys(request.display_model for request in requests)
+        ),
         "trajectories": len(requests),
         "parallel": args.parallel,
         "launch_interval": args.launch_interval,
@@ -738,7 +908,9 @@ def _dry_run_payload(
                     if request.task.user_simulator is not None
                     else None
                 ),
-                "workspace": str(request.task.workspace) if request.task.workspace else None,
+                "workspace": str(request.task.workspace)
+                if request.task.workspace
+                else None,
                 "inputs": len(request.task.inputs),
                 "context_files": len(request.task.context_files),
                 "output_dir": request.task.output_dir,
@@ -752,7 +924,9 @@ def _dry_run_payload(
                 # The digests a real run records and compares on Resume.
                 "task_bundle_digest": bundles[request.task.id].manifest_digest,
                 "input_tree_digest": bundles[request.task.id].input_tree_digest,
-                "context_manifest_digest": bundles[request.task.id].context_manifest_digest,
+                "context_manifest_digest": bundles[
+                    request.task.id
+                ].context_manifest_digest,
             }
             for request in requests
         ],
@@ -794,9 +968,7 @@ def _repeat_bench_rows(
         task_id = row.get("id")
         bench = row.get("bench")
         if not isinstance(task_id, str) or not task_id:
-            raise TaskFormatError(
-                f"{adapter_name}: exported task has no valid id"
-            )
+            raise TaskFormatError(f"{adapter_name}: exported task has no valid id")
         if not isinstance(bench, dict):
             raise TaskFormatError(
                 f"{adapter_name}: exported task {task_id!r} has no bench block"
@@ -847,13 +1019,20 @@ def _validate_openclaw_models(
             logger.warning(
                 "model %s: provider %r is not in --model-config, so OpenClaw has to "
                 "know it already and its requests are not traced",
-                model, provider_name,
+                model,
+                provider_name,
             )
             continue
         listed = provider.get("models")
-        declared = [
-            item["id"] for item in listed if isinstance(item, dict) and isinstance(item.get("id"), str)
-        ] if isinstance(listed, list) else []
+        declared = (
+            [
+                item["id"]
+                for item in listed
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            ]
+            if isinstance(listed, list)
+            else []
+        )
         if model_id not in declared:
             raise ValueError(
                 f"model {model!r} is not declared for provider {provider_name!r} in "
@@ -963,7 +1142,12 @@ def _collect(args: argparse.Namespace) -> int:
             "exported_task_count": len(rows),
         }
     else:
-        if args.bench_root or args.bench_variant or args.bench_category or args.bench_task_id:
+        if (
+            args.bench_root
+            or args.bench_variant
+            or args.bench_category
+            or args.bench_task_id
+        ):
             raise ValueError("--bench-* selection options require --bench")
         if args.bench_timeout_multiplier != 1.0:
             raise ValueError("--bench-timeout-multiplier requires --bench")
@@ -977,7 +1161,7 @@ def _collect(args: argparse.Namespace) -> int:
         global_workspace=workspace,
     )
     end_index = args.start_index + args.limit if args.limit is not None else None
-    tasks = tasks[args.start_index:end_index]
+    tasks = tasks[args.start_index : end_index]
     requests = build_requests(
         tasks, args.model, args.timeout, samples_per_task=args.samples
     )
@@ -1019,24 +1203,53 @@ def _collect(args: argparse.Namespace) -> int:
             args.api_base = os.environ.get("OPENAI_BASE_URL")
         elif selected_harnesses == {"claude-code"}:
             args.api_base = os.environ.get("ANTHROPIC_BASE_URL")
-    hermes_api_base = args.hermes_api_base or requested_api_base or os.environ.get("OPENAI_BASE_URL")
-    opencode_api_base = args.opencode_api_base or requested_api_base or os.environ.get("OPENAI_BASE_URL")
-    deepseek_api_base = args.deepseek_api_base or requested_api_base or os.environ.get("DEEPSEEK_BASE_URL")
-    pi_api_base = args.pi_api_base or requested_api_base or os.environ.get("OPENAI_BASE_URL")
-    codex_api_base = args.codex_api_base or requested_api_base or os.environ.get("OPENAI_BASE_URL")
-    claude_api_base = args.claude_api_base or requested_api_base or os.environ.get("ANTHROPIC_BASE_URL")
+    hermes_api_base = (
+        args.hermes_api_base or requested_api_base or os.environ.get("OPENAI_BASE_URL")
+    )
+    opencode_api_base = (
+        args.opencode_api_base
+        or requested_api_base
+        or os.environ.get("OPENAI_BASE_URL")
+    )
+    deepseek_api_base = (
+        args.deepseek_api_base
+        or requested_api_base
+        or os.environ.get("DEEPSEEK_BASE_URL")
+    )
+    pi_api_base = (
+        args.pi_api_base or requested_api_base or os.environ.get("OPENAI_BASE_URL")
+    )
+    codex_api_base = (
+        args.codex_api_base or requested_api_base or os.environ.get("OPENAI_BASE_URL")
+    )
+    claude_api_base = (
+        args.claude_api_base
+        or requested_api_base
+        or os.environ.get("ANTHROPIC_BASE_URL")
+    )
     requested_api_key_env = args.api_key_env
     if args.api_key_env is None:
         args.api_key_env = (
-            "ANTHROPIC_API_KEY" if selected_harnesses == {"claude-code"}
+            "ANTHROPIC_API_KEY"
+            if selected_harnesses == {"claude-code"}
             else "OPENAI_API_KEY"
         )
-    hermes_api_key_env = args.hermes_api_key_env or requested_api_key_env or "OPENAI_API_KEY"
-    opencode_api_key_env = args.opencode_api_key_env or requested_api_key_env or "OPENAI_API_KEY"
-    deepseek_api_key_env = args.deepseek_api_key_env or requested_api_key_env or "DEEPSEEK_API_KEY"
+    hermes_api_key_env = (
+        args.hermes_api_key_env or requested_api_key_env or "OPENAI_API_KEY"
+    )
+    opencode_api_key_env = (
+        args.opencode_api_key_env or requested_api_key_env or "OPENAI_API_KEY"
+    )
+    deepseek_api_key_env = (
+        args.deepseek_api_key_env or requested_api_key_env or "DEEPSEEK_API_KEY"
+    )
     pi_api_key_env = args.pi_api_key_env or requested_api_key_env or "OPENAI_API_KEY"
-    codex_api_key_env = args.codex_api_key_env or requested_api_key_env or "OPENAI_API_KEY"
-    claude_api_key_env = args.claude_api_key_env or requested_api_key_env or "ANTHROPIC_API_KEY"
+    codex_api_key_env = (
+        args.codex_api_key_env or requested_api_key_env or "OPENAI_API_KEY"
+    )
+    claude_api_key_env = (
+        args.claude_api_key_env or requested_api_key_env or "ANTHROPIC_API_KEY"
+    )
     defaults = {
         "hermes": os.environ.get("ROLLER_HERMES_IMAGE", DEFAULT_HERMES_IMAGE),
         "opencode": os.environ.get("ROLLER_OPENCODE_IMAGE", DEFAULT_OPENCODE_IMAGE),
@@ -1044,7 +1257,9 @@ def _collect(args: argparse.Namespace) -> int:
         "pi": os.environ.get("ROLLER_PI_IMAGE", DEFAULT_PI_IMAGE),
         "openclaw": os.environ.get("ROLLER_OPENCLAW_IMAGE", DEFAULT_OPENCLAW_IMAGE),
         "codex": os.environ.get("ROLLER_CODEX_IMAGE", DEFAULT_CODEX_IMAGE),
-        "claude-code": os.environ.get("ROLLER_CLAUDE_CODE_IMAGE", DEFAULT_CLAUDE_CODE_IMAGE),
+        "claude-code": os.environ.get(
+            "ROLLER_CLAUDE_CODE_IMAGE", DEFAULT_CLAUDE_CODE_IMAGE
+        ),
     }
     image_overrides = {
         "hermes": args.hermes_image,
@@ -1067,7 +1282,9 @@ def _collect(args: argparse.Namespace) -> int:
     model_config_path: Path | None = None
     if args.model_config:
         if "openclaw" not in selected_harnesses:
-            raise ValueError("--model-config is only valid when an OpenClaw participant is selected")
+            raise ValueError(
+                "--model-config is only valid when an OpenClaw participant is selected"
+            )
         model_config_path = Path(args.model_config).expanduser().resolve()
         if not model_config_path.is_file():
             raise FileNotFoundError(f"model config not found: {model_config_path}")
@@ -1094,12 +1311,9 @@ def _collect(args: argparse.Namespace) -> int:
         )
         if not thinking_capabilities_path.is_file():
             raise FileNotFoundError(
-                "thinking capabilities not found: "
-                f"{thinking_capabilities_path}"
+                f"thinking capabilities not found: {thinking_capabilities_path}"
             )
-        thinking_capabilities = load_thinking_capabilities(
-            thinking_capabilities_path
-        )
+        thinking_capabilities = load_thinking_capabilities(thinking_capabilities_path)
         thinking_capabilities_digest = hashlib.sha256(
             thinking_capabilities_path.read_bytes()
         ).hexdigest()
@@ -1108,7 +1322,9 @@ def _collect(args: argparse.Namespace) -> int:
     codex_config_digest: str | None = None
     if args.codex_config:
         if "codex" not in selected_harnesses:
-            raise ValueError("--codex-config is only valid when a Codex participant is selected")
+            raise ValueError(
+                "--codex-config is only valid when a Codex participant is selected"
+            )
         codex_config_path = Path(args.codex_config).expanduser().resolve()
         if not codex_config_path.is_file():
             raise FileNotFoundError(f"Codex config not found: {codex_config_path}")
@@ -1119,16 +1335,16 @@ def _collect(args: argparse.Namespace) -> int:
     claude_settings_sha256: str | None = None
     if args.claude_settings:
         if "claude-code" not in selected_harnesses:
-            raise ValueError("--claude-settings is only valid when a Claude Code participant is selected")
+            raise ValueError(
+                "--claude-settings is only valid when a Claude Code participant is selected"
+            )
         claude_settings_path = Path(args.claude_settings).expanduser().resolve()
         if not claude_settings_path.is_file():
             raise FileNotFoundError(
                 f"Claude Code settings file not found: {claude_settings_path}"
             )
         claude_settings_content = claude_settings_path.read_bytes()
-        claude_settings_sha256 = hashlib.sha256(
-            claude_settings_content
-        ).hexdigest()
+        claude_settings_sha256 = hashlib.sha256(claude_settings_content).hexdigest()
 
     hermes_config: HermesConfig | None = None
     opencode_config: OpenCodeConfig | None = None
@@ -1159,7 +1375,8 @@ def _collect(args: argparse.Namespace) -> int:
             thinking=args.thinking,
             capture_cache_trace=args.cache_trace,
             wire_trace_mode=args.wire_trace,
-            capture_calls=args.capture_calls, capture_debug=args.capture_debug,
+            capture_calls=args.capture_calls,
+            capture_debug=args.capture_debug,
             keep_thinking=args.keep_thinking,
             collect_paths=tuple(args.collect_path),
             keep_container_on_error=args.keep_container_on_error,
@@ -1167,16 +1384,25 @@ def _collect(args: argparse.Namespace) -> int:
             docker_binary=args.docker_binary,
             config_set=tuple(args.openclaw_config_set),
         )
+
         def openclaw_endpoint(model: str) -> str | None:
             providers = (model_config or {}).get("providers", {})
-            provider = providers.get(model.split("/", 1)[0], {}) if isinstance(providers, dict) else {}
+            provider = (
+                providers.get(model.split("/", 1)[0], {})
+                if isinstance(providers, dict)
+                else {}
+            )
             endpoint = provider.get("baseUrl") if isinstance(provider, dict) else None
             return endpoint if isinstance(endpoint, str) else None
 
         _validate_thinking_requests(
-            requests, cli_harness=cli_harness, harness="openclaw",
-            api_base=openclaw_endpoint, default_effort=args.thinking,
-            effort_validator=normalize_thinking, capabilities=thinking_capabilities,
+            requests,
+            cli_harness=cli_harness,
+            harness="openclaw",
+            api_base=openclaw_endpoint,
+            default_effort=args.thinking,
+            effort_validator=normalize_thinking,
+            capabilities=thinking_capabilities,
         )
         if model_config is not None:
             _validate_openclaw_models(
@@ -1201,16 +1427,21 @@ def _collect(args: argparse.Namespace) -> int:
             supports_websockets=args.codex_websockets,
             responses_image_detail=args.codex_image_detail,
             wire_trace_mode=args.wire_trace,
-            capture_calls=args.capture_calls, capture_debug=args.capture_debug,
+            capture_calls=args.capture_calls,
+            capture_debug=args.capture_debug,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
             docker_binary=args.docker_binary,
             config_set=tuple(args.codex_config_set),
         )
         _validate_thinking_requests(
-            requests, cli_harness=cli_harness, harness="codex",
-            api_base=codex_api_base, default_effort=args.thinking,
-            effort_validator=codex_effort, capabilities=thinking_capabilities,
+            requests,
+            cli_harness=cli_harness,
+            harness="codex",
+            api_base=codex_api_base,
+            default_effort=args.thinking,
+            effort_validator=codex_effort,
+            capabilities=thinking_capabilities,
         )
     if "claude-code" in selected_harnesses:
         if args.collect_path and "openclaw" not in selected_harnesses:
@@ -1225,13 +1456,12 @@ def _collect(args: argparse.Namespace) -> int:
             config_sha256=claude_settings_sha256,
             api_base=claude_api_base,
             api_key_env=claude_api_key_env,
-            pass_env=_deduplicate(
-                (*PROXY_ENV_NAMES, *args.pass_env)
-            ),
+            pass_env=_deduplicate((*PROXY_ENV_NAMES, *args.pass_env)),
             reasoning_effort=args.thinking,
             max_thinking_tokens=args.claude_max_thinking_tokens,
             max_turns=args.claude_max_turns,
-            capture_calls=args.claude_capture_calls or args.capture_calls, capture_debug=args.capture_debug,
+            capture_calls=args.claude_capture_calls or args.capture_calls,
+            capture_debug=args.capture_debug,
             permission_mode=args.claude_permission_mode,
             unique_tool_ids=args.claude_unique_tool_ids,
             wire_trace_mode=args.wire_trace,
@@ -1240,51 +1470,71 @@ def _collect(args: argparse.Namespace) -> int:
             docker_binary=args.docker_binary,
         )
         _validate_thinking_requests(
-            requests, cli_harness=cli_harness, harness="claude-code",
-            api_base=claude_code_config.api_base, default_effort=args.thinking,
-            effort_validator=claude_effort, capabilities=thinking_capabilities,
+            requests,
+            cli_harness=cli_harness,
+            harness="claude-code",
+            api_base=claude_code_config.api_base,
+            default_effort=args.thinking,
+            effort_validator=claude_effort,
+            capabilities=thinking_capabilities,
         )
 
-    def bridge_options(name: str, api_base: str | None, api_key_env: str) -> dict[str, Any]:
+    def bridge_options(
+        name: str, api_base: str | None, api_key_env: str
+    ) -> dict[str, Any]:
         """Config fields shared by the Hermes, OpenCode, DeepSeek and Pi bridges."""
 
         return dict(
             docker_image=images[name],
-            container_user=None if args.container_user == "image" else args.container_user,
-            network=args.network, api_base=api_base, api_key_env=api_key_env,
+            container_user=None
+            if args.container_user == "image"
+            else args.container_user,
+            network=args.network,
+            api_base=api_base,
+            api_key_env=api_key_env,
             pass_env=_deduplicate((*PROXY_ENV_NAMES, *args.pass_env)),
-            reasoning_effort=args.thinking, wire_trace_mode=args.wire_trace,
-            capture_calls=args.capture_calls, capture_debug=args.capture_debug,
+            reasoning_effort=args.thinking,
+            wire_trace_mode=args.wire_trace,
+            capture_calls=args.capture_calls,
+            capture_debug=args.capture_debug,
             keep_thinking=args.keep_thinking,
-            keep_container_on_error=args.keep_container_on_error, docker_binary=args.docker_binary,
+            keep_container_on_error=args.keep_container_on_error,
+            docker_binary=args.docker_binary,
         )
 
     if "hermes" in selected_harnesses:
         hermes_config = HermesConfig(
             **bridge_options("hermes", hermes_api_base, hermes_api_key_env),
             max_iterations=args.hermes_max_iterations,
-            context_length=args.hermes_context_length, vision=args.hermes_vision,
+            context_length=args.hermes_context_length,
+            vision=args.hermes_vision,
             toolsets=tuple(args.hermes_toolset) if args.hermes_toolset else None,
         )
     if "opencode" in selected_harnesses:
         opencode_config = OpenCodeConfig(
             **bridge_options("opencode", opencode_api_base, opencode_api_key_env),
-            max_steps=args.opencode_max_steps, context_length=args.opencode_context_length,
-            output_tokens=args.opencode_output_tokens, vision=args.opencode_vision,
-            native_tools=args.opencode_native_tools, deny_tools=tuple(args.opencode_deny_tool),
+            max_steps=args.opencode_max_steps,
+            context_length=args.opencode_context_length,
+            output_tokens=args.opencode_output_tokens,
+            vision=args.opencode_vision,
+            native_tools=args.opencode_native_tools,
+            deny_tools=tuple(args.opencode_deny_tool),
         )
     if "deepseek" in selected_harnesses:
         deepseek_config = DeepSeekConfig(
             **bridge_options("deepseek", deepseek_api_base, deepseek_api_key_env),
-            max_steps=args.deepseek_max_steps, context_length=args.deepseek_context_length,
+            max_steps=args.deepseek_max_steps,
+            context_length=args.deepseek_context_length,
             output_tokens=args.deepseek_output_tokens,
-            profile=args.deepseek_profile, permission_mode=args.deepseek_permission_mode,
+            profile=args.deepseek_profile,
+            permission_mode=args.deepseek_permission_mode,
             input_modalities=tuple(args.deepseek_input_modalities.split(",")),
         )
     if "pi" in selected_harnesses:
         pi_config = PiConfig(
             **bridge_options("pi", pi_api_base, pi_api_key_env),
-            max_steps=args.pi_max_steps, context_length=args.pi_context_length,
+            max_steps=args.pi_max_steps,
+            context_length=args.pi_context_length,
             output_tokens=args.pi_output_tokens,
             input_modalities=tuple(args.pi_input_modalities.split(",")),
         )
@@ -1309,13 +1559,17 @@ def _collect(args: argparse.Namespace) -> int:
             continue
         harness = cli_harness or task.harness
         if not HARNESSES[harness].attach_images:
-            supported = ", ".join(name for name, item in HARNESSES.items() if item.attach_images)
+            supported = ", ".join(
+                name for name, item in HARNESSES.items() if item.attach_images
+            )
             raise ValueError(
                 f"task {task.id!r}: files.attach_images is not supported by the "
                 f"{HARNESSES[harness].label} Harness; use {supported}"
             )
         if harness == "opencode" and not args.opencode_vision:
-            raise ValueError(f"task {task.id!r}: files.attach_images requires --opencode-vision")
+            raise ValueError(
+                f"task {task.id!r}: files.attach_images requires --opencode-vision"
+            )
         if harness == "pi" and args.pi_input_modalities == "text":
             raise ValueError(
                 f"task {task.id!r}: files.attach_images requires --pi-input-modalities text,image"
@@ -1348,7 +1602,9 @@ def _collect(args: argparse.Namespace) -> int:
     run_dir = output_root / _run_name(run_label, args.run_name)
     existing_run = run_dir.exists() and any(run_dir.iterdir())
     if run_dir.exists() and not args.resume:
-        raise FileExistsError(f"run directory already exists; use --resume or another --run-name: {run_dir}")
+        raise FileExistsError(
+            f"run directory already exists; use --resume or another --run-name: {run_dir}"
+        )
     if existing_run:
         check_retired_cot_samples(run_dir, requests)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -1358,9 +1614,8 @@ def _collect(args: argparse.Namespace) -> int:
         tasks_snapshot = run_dir / "tasks.jsonl"
         if tasks_snapshot.is_file():
             recorded_manifest = tasks_snapshot.read_bytes()
-            if (
-                recorded_manifest != bench_manifest
-                and not _jsonl_equivalent(recorded_manifest, bench_manifest)
+            if recorded_manifest != bench_manifest and not _jsonl_equivalent(
+                recorded_manifest, bench_manifest
             ):
                 raise TaskFormatError(
                     "benchmark selection differs from the existing run's tasks.jsonl; "
@@ -1403,9 +1658,17 @@ def _collect(args: argparse.Namespace) -> int:
             "wire_trace": args.wire_trace,
             "pass_env_names": list(openclaw_config.pass_env),
             "collect_paths": args.collect_path,
-            **({"capture_calls": True, "capture_debug": args.capture_debug} if openclaw_config.capture_calls else {}),
+            **(
+                {"capture_calls": True, "capture_debug": args.capture_debug}
+                if openclaw_config.capture_calls
+                else {}
+            ),
             # Absent when unused so locks written before the option still match.
-            **({"config_set": recorded_config_assignments(openclaw_config.config_set)} if openclaw_config.config_set else {}),
+            **(
+                {"config_set": recorded_config_assignments(openclaw_config.config_set)}
+                if openclaw_config.config_set
+                else {}
+            ),
         }
     if codex_config is not None:
         harness_configurations["codex"] = {
@@ -1423,9 +1686,21 @@ def _collect(args: argparse.Namespace) -> int:
             "web_search": args.codex_web_search,
             "supports_websockets": args.codex_websockets,
             "pass_env_names": list(codex_config.pass_env),
-            **({"capture_calls": True, "capture_debug": args.capture_debug} if codex_config.capture_calls else {}),
-            **({"config_set": recorded_config_assignments(codex_config.config_set)} if codex_config.config_set else {}),
-            **({"responses_image_detail": codex_config.responses_image_detail} if codex_config.responses_image_detail else {}),
+            **(
+                {"capture_calls": True, "capture_debug": args.capture_debug}
+                if codex_config.capture_calls
+                else {}
+            ),
+            **(
+                {"config_set": recorded_config_assignments(codex_config.config_set)}
+                if codex_config.config_set
+                else {}
+            ),
+            **(
+                {"responses_image_detail": codex_config.responses_image_detail}
+                if codex_config.responses_image_detail
+                else {}
+            ),
         }
     if claude_code_config is not None:
         harness_configurations["claude-code"] = {
@@ -1437,9 +1712,7 @@ def _collect(args: argparse.Namespace) -> int:
             "config_sha256": claude_settings_sha256,
             "network": args.network,
             "api_base": (
-                redact_anthropic_base_url(claude_api_base)
-                if claude_api_base
-                else None
+                redact_anthropic_base_url(claude_api_base) if claude_api_base else None
             ),
             "api_key_env": claude_api_key_env,
             "reasoning_effort": args.thinking,
@@ -1449,68 +1722,134 @@ def _collect(args: argparse.Namespace) -> int:
             "wire_trace": args.wire_trace,
             "keep_thinking": args.keep_thinking,
             "pass_env_names": list(claude_code_config.pass_env),
-            **({"capture_calls": True, "capture_debug": args.capture_debug} if claude_code_config.capture_calls else {}),
+            **(
+                {"capture_calls": True, "capture_debug": args.capture_debug}
+                if claude_code_config.capture_calls
+                else {}
+            ),
             **({"unique_tool_ids": True} if claude_code_config.unique_tool_ids else {}),
         }
 
     if hermes_config is not None:
         harness_configurations["hermes"] = {
-            "docker_image": images["hermes"], "container_user": args.container_user,
-            "network": args.network, "api_base": hermes_api_base or "https://api.openai.com/v1",
-            "api_key_env": hermes_api_key_env, "reasoning_effort": args.thinking,
-            "max_iterations": args.hermes_max_iterations, "hermes_revision": HERMES_REVISION,
-            "context_length": args.hermes_context_length, "vision": args.hermes_vision,
-            "toolsets": hermes_config.enabled_toolsets, "api_mode": "chat_completions",
-            **({"disabled_toolsets": hermes_config.disabled_toolsets} if hermes_config.toolsets is not None else {}),
+            "docker_image": images["hermes"],
+            "container_user": args.container_user,
+            "network": args.network,
+            "api_base": hermes_api_base or "https://api.openai.com/v1",
+            "api_key_env": hermes_api_key_env,
+            "reasoning_effort": args.thinking,
+            "max_iterations": args.hermes_max_iterations,
+            "hermes_revision": HERMES_REVISION,
+            "context_length": args.hermes_context_length,
+            "vision": args.hermes_vision,
+            "toolsets": hermes_config.enabled_toolsets,
+            "api_mode": "chat_completions",
+            **(
+                {"disabled_toolsets": hermes_config.disabled_toolsets}
+                if hermes_config.toolsets is not None
+                else {}
+            ),
             "wire_trace": args.wire_trace,
-            "keep_thinking": args.keep_thinking, "pass_env_names": list(hermes_config.pass_env),
-            **({"capture_calls": True, "capture_debug": args.capture_debug} if hermes_config.capture_calls else {}),
+            "keep_thinking": args.keep_thinking,
+            "pass_env_names": list(hermes_config.pass_env),
+            **(
+                {"capture_calls": True, "capture_debug": args.capture_debug}
+                if hermes_config.capture_calls
+                else {}
+            ),
         }
 
     if opencode_config is not None:
         harness_configurations["opencode"] = {
-            "docker_image": images["opencode"], "container_user": args.container_user,
-            "network": args.network, "api_base": opencode_api_base or "https://api.openai.com/v1",
-            "api_key_env": opencode_api_key_env, "reasoning_effort": args.thinking,
-            "max_steps": args.opencode_max_steps, "opencode_version": OPENCODE_VERSION,
-            "context_length": args.opencode_context_length, "output_tokens": args.opencode_output_tokens,
+            "docker_image": images["opencode"],
+            "container_user": args.container_user,
+            "network": args.network,
+            "api_base": opencode_api_base or "https://api.openai.com/v1",
+            "api_key_env": opencode_api_key_env,
+            "reasoning_effort": args.thinking,
+            "max_steps": args.opencode_max_steps,
+            "opencode_version": OPENCODE_VERSION,
+            "context_length": args.opencode_context_length,
+            "output_tokens": args.opencode_output_tokens,
             "vision": args.opencode_vision,
-            **opencode_config.tool_selection, "api_mode": "chat_completions",
+            **opencode_config.tool_selection,
+            "api_mode": "chat_completions",
             "wire_trace": args.wire_trace,
-            "keep_thinking": args.keep_thinking, "pass_env_names": list(opencode_config.pass_env),
+            "keep_thinking": args.keep_thinking,
+            "pass_env_names": list(opencode_config.pass_env),
             "compaction": {"auto": False, "prune": False},
-            **({"capture_calls": True, "capture_debug": args.capture_debug, "subagent_profile_policy": "explore-tool-restrictions/v1"} if opencode_config.capture_calls else {}),
+            **(
+                {
+                    "capture_calls": True,
+                    "capture_debug": args.capture_debug,
+                    "subagent_profile_policy": "explore-tool-restrictions/v1",
+                }
+                if opencode_config.capture_calls
+                else {}
+            ),
         }
 
     if deepseek_config is not None:
         harness_configurations["deepseek"] = {
-            "docker_image": images["deepseek"], "container_user": args.container_user,
-            "network": args.network, "api_base": deepseek_api_base or "https://api.deepseek.com",
-            "api_key_env": deepseek_api_key_env, "reasoning_effort": args.thinking,
-            "max_steps": args.deepseek_max_steps, "deepseek_version": DEEPSEEK_VERSION,
-            "context_length": args.deepseek_context_length, "output_tokens": args.deepseek_output_tokens,
-            "tools": deepseek_config.tools, "api_mode": "chat_completions",
+            "docker_image": images["deepseek"],
+            "container_user": args.container_user,
+            "network": args.network,
+            "api_base": deepseek_api_base or "https://api.deepseek.com",
+            "api_key_env": deepseek_api_key_env,
+            "reasoning_effort": args.thinking,
+            "max_steps": args.deepseek_max_steps,
+            "deepseek_version": DEEPSEEK_VERSION,
+            "context_length": args.deepseek_context_length,
+            "output_tokens": args.deepseek_output_tokens,
+            "tools": deepseek_config.tools,
+            "api_mode": "chat_completions",
             "wire_trace": args.wire_trace,
-            "keep_thinking": args.keep_thinking, "pass_env_names": list(deepseek_config.pass_env),
-            "profile": deepseek_config.profile, "retry_count": 0,
-            **({"permission_mode": deepseek_config.native_permission_mode} if deepseek_config.native_permission_mode else {}),
-            **({"input_modalities": list(deepseek_config.input_modalities)} if deepseek_config.input_modalities != ("text",) else {}),
-            **({"capture_calls": True, "capture_debug": args.capture_debug} if deepseek_config.capture_calls else {}),
+            "keep_thinking": args.keep_thinking,
+            "pass_env_names": list(deepseek_config.pass_env),
+            "profile": deepseek_config.profile,
+            "retry_count": 0,
+            **(
+                {"permission_mode": deepseek_config.native_permission_mode}
+                if deepseek_config.native_permission_mode
+                else {}
+            ),
+            **(
+                {"input_modalities": list(deepseek_config.input_modalities)}
+                if deepseek_config.input_modalities != ("text",)
+                else {}
+            ),
+            **(
+                {"capture_calls": True, "capture_debug": args.capture_debug}
+                if deepseek_config.capture_calls
+                else {}
+            ),
         }
 
     if pi_config is not None:
         harness_configurations["pi"] = {
-            "docker_image": images["pi"], "container_user": args.container_user,
-            "network": args.network, "api_base": pi_api_base or "https://api.openai.com/v1",
-            "api_key_env": pi_api_key_env, "reasoning_effort": pi_config.reasoning_effort,
-            "max_steps": args.pi_max_steps, "pi_version": PI_VERSION,
-            "context_length": args.pi_context_length, "output_tokens": args.pi_output_tokens,
+            "docker_image": images["pi"],
+            "container_user": args.container_user,
+            "network": args.network,
+            "api_base": pi_api_base or "https://api.openai.com/v1",
+            "api_key_env": pi_api_key_env,
+            "reasoning_effort": pi_config.reasoning_effort,
+            "max_steps": args.pi_max_steps,
+            "pi_version": PI_VERSION,
+            "context_length": args.pi_context_length,
+            "output_tokens": args.pi_output_tokens,
             "input_modalities": list(pi_config.input_modalities),
-            "tools": list(PI_TOOLS), "api_mode": "chat_completions",
+            "tools": list(PI_TOOLS),
+            "api_mode": "chat_completions",
             "wire_trace": args.wire_trace,
-            "keep_thinking": args.keep_thinking, "pass_env_names": list(pi_config.pass_env),
-            "compaction": {"auto": False}, "retry_count": 0,
-            **({"capture_calls": True, "capture_debug": args.capture_debug} if pi_config.capture_calls else {}),
+            "keep_thinking": args.keep_thinking,
+            "pass_env_names": list(pi_config.pass_env),
+            "compaction": {"auto": False},
+            "retry_count": 0,
+            **(
+                {"capture_calls": True, "capture_debug": args.capture_debug}
+                if pi_config.capture_calls
+                else {}
+            ),
         }
 
     # OpenClaw user simulators run in the worker slots after the agents', so
@@ -1547,9 +1886,7 @@ def _collect(args: argparse.Namespace) -> int:
             "resume": args.resume,
             "task_schema": "roller.task/v1",
             "thinking_capabilities_path": (
-                str(thinking_capabilities_path)
-                if thinking_capabilities_path
-                else None
+                str(thinking_capabilities_path) if thinking_capabilities_path else None
             ),
             "thinking_capabilities_sha256": thinking_capabilities_digest,
             "conversation": {
@@ -1586,7 +1923,9 @@ def _collect(args: argparse.Namespace) -> int:
 
     results: list[dict] | None = None
     gateway_ports: GatewayPortReservation | None = None
-    with tempfile.TemporaryDirectory(prefix=".roller-bundle-", dir=output_root) as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix=".roller-bundle-", dir=output_root
+    ) as temporary:
         bundle_store = TaskBundleStore(Path(temporary), bundle_policy)
         try:
             if openclaw_config is not None and args.network == "host":
@@ -1605,7 +1944,9 @@ def _collect(args: argparse.Namespace) -> int:
                 harness_configurations["openclaw"]["gateway_port_start"] = ports.start
                 logger.info(
                     "OpenClaw gateway ports %d-%d (every %d)",
-                    ports.start, ports[-1], ports.step,
+                    ports.start,
+                    ports[-1],
+                    ports.step,
                 )
             bundles = bundle_store.prepare_all(tasks)
             requests = bundle_store.attach(requests, bundles)
@@ -1650,9 +1991,7 @@ def _collect(args: argparse.Namespace) -> int:
             if args.resume and existing_run and isinstance(claude_execution, dict):
                 # Previous v1 locks used a short BLAKE2b settings fingerprint.
                 legacy_fingerprint = (
-                    hashlib.blake2b(
-                        claude_settings_content, digest_size=16
-                    ).hexdigest()
+                    hashlib.blake2b(claude_settings_content, digest_size=16).hexdigest()
                     if claude_settings_content is not None
                     else None
                 )
@@ -1735,7 +2074,9 @@ def _collect(args: argparse.Namespace) -> int:
                     replacements["docker_image"] = task_image
                 if task_workspace:
                     replacements["workspace_container_path"] = task_workspace
-                return harness_type(dataclasses.replace(base_config, **replacements), slot)
+                return harness_type(
+                    dataclasses.replace(base_config, **replacements), slot
+                )
 
             def harness_factory(slot: int, request):
                 agent = make_harness(
@@ -1749,7 +2090,9 @@ def _collect(args: argparse.Namespace) -> int:
                         else None
                     ),
                 )
-                binding = binding_from_task_row(getattr(request.task, "raw", None) or {})
+                binding = binding_from_task_row(
+                    getattr(request.task, "raw", None) or {}
+                )
                 if binding is not None and binding.grade is not None:
                     # Grading has to read the container the agent just wrote to,
                     # so it runs inside the session rather than after teardown.
@@ -1780,6 +2123,7 @@ def _collect(args: argparse.Namespace) -> int:
                     simulator,
                     keep_aux_traces=keep_aux_traces,
                 )
+
             collector = Collector(
                 CollectionConfig(
                     run_dir=run_dir,
@@ -1885,8 +2229,9 @@ def _bench(args: argparse.Namespace) -> int:
         print(f"Exported {len(rows)} {adapter.name} tasks to {output}")
         if categories:
             print(f"Categories: {', '.join(categories)}")
-        print("Run with: roller collect --tasks "
-              f"{output} --model <model> --task-timeouts")
+        print(
+            f"Run with: roller collect --tasks {output} --model <model> --task-timeouts"
+        )
         return 0
     return _bench_report(args)
 
@@ -1930,9 +2275,11 @@ def _bench_report(args: argparse.Namespace) -> int:
         raise TaskFormatError(f"no graded bench samples found under {samples_root}")
     label = ", ".join(sorted(bench_names)) or "unknown"
     try:
-        report = get_bench(sorted(bench_names)[0]).aggregate(rows) if len(
-            bench_names
-        ) == 1 else mean_aggregate(rows)
+        report = (
+            get_bench(sorted(bench_names)[0]).aggregate(rows)
+            if len(bench_names) == 1
+            else mean_aggregate(rows)
+        )
     except KeyError:
         report = mean_aggregate(rows)
     print(format_report(label, report))
@@ -1949,7 +2296,11 @@ def _init(args: argparse.Namespace) -> int:
 
     package = Path(__file__).resolve().parent
     # Wheels ship the examples inside the package; a source checkout keeps them at the repository root.
-    source = package / "examples" if (package / "examples").is_dir() else package.parents[1] / "examples"
+    source = (
+        package / "examples"
+        if (package / "examples").is_dir()
+        else package.parents[1] / "examples"
+    )
     target = Path(args.directory) / "examples"
     written = kept = 0
     for name in ("tasks", "config", "benchmarks", "env"):
@@ -1963,8 +2314,13 @@ def _init(args: argparse.Namespace) -> int:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, destination)
             written += 1
-    print(f"Wrote {written} files to {target}" + (f" ({kept} existing files kept)" if kept else ""))
-    print(f"Next: cp {target / 'env' / 'api.env.example'} {target / 'env' / 'api.env'} and set the model service URL and API key")
+    print(
+        f"Wrote {written} files to {target}"
+        + (f" ({kept} existing files kept)" if kept else "")
+    )
+    print(
+        f"Next: cp {target / 'env' / 'api.env.example'} {target / 'env' / 'api.env'} and set the model service URL and API key"
+    )
     return 0
 
 
@@ -1992,7 +2348,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         else:
             parser.error(f"unsupported command: {args.command}")
             return
-    except (FileNotFoundError, FileExistsError, TaskFormatError, ValueError, RuntimeError) as exc:
+    except (
+        FileNotFoundError,
+        FileExistsError,
+        TaskFormatError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
         logger.error("%s", exc)
         exit_code = 2
     raise SystemExit(exit_code)

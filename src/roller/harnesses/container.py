@@ -1,4 +1,5 @@
 """Pieces shared by every Harness that runs a task in a disposable Docker container."""
+
 from __future__ import annotations
 
 import logging
@@ -17,7 +18,14 @@ from roller.version import __version__
 logger = logging.getLogger(__name__)
 
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-PROXY_ENV_NAMES = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy")
+PROXY_ENV_NAMES = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+)
 INPUTS_CONTAINER_PATH = "/roller/task/inputs"
 CONTEXT_CONTAINER_PATH = "/roller/task/context"
 OUTPUTS_CONTAINER_PATH = "/roller/task/outputs"
@@ -55,17 +63,24 @@ def docker_run_args(
     bundle, task = request.bundle, request.task
     if bundle is not None:
         args += [
-            "-v", f"{bundle.inputs_root}:{INPUTS_CONTAINER_PATH}:ro",
-            "-v", f"{bundle.context_root}:{CONTEXT_CONTAINER_PATH}:ro",
+            "-v",
+            f"{bundle.inputs_root}:{INPUTS_CONTAINER_PATH}:ro",
+            "-v",
+            f"{bundle.context_root}:{CONTEXT_CONTAINER_PATH}:ro",
         ]
         if not bundle.legacy_workspace and task.input_mode == "mount":
             for spec in task.inputs:
                 source = bundle.inputs_root / spec.path
                 if source.exists():
-                    args += ["-v", f"{source}:{config.workspace_container_path}/{spec.path}:ro"]
+                    args += [
+                        "-v",
+                        f"{source}:{config.workspace_container_path}/{spec.path}:ro",
+                    ]
     elif task.workspace is not None:
         if not task.workspace.is_dir():
-            raise FileNotFoundError(f"task workspace is not a directory: {task.workspace}")
+            raise FileNotFoundError(
+                f"task workspace is not a directory: {task.workspace}"
+            )
         args += ["-v", f"{task.workspace}:{WORKSPACE_INPUT_CONTAINER_PATH}:ro"]
     return args
 
@@ -88,7 +103,11 @@ def collect_outputs(
     staging_root.mkdir(parents=True, exist_ok=True)
     try:
         result = runtime.run(
-            ["cp", f"{container}:{workspace}/{request.task.output_dir}/.", str(staging_root)],
+            [
+                "cp",
+                f"{container}:{workspace}/{request.task.output_dir}/.",
+                str(staging_root),
+            ],
             timeout=timeout,
         )
         copy_error = None if result.returncode == 0 else error_text(result, error_limit)
@@ -189,7 +208,9 @@ class ContainerCommands:
             # A setup step hitting its own limit is not a task timeout. Drop the
             # exception too: its command text can carry container credentials.
             self._bounded(None, description)  # unless the budget was the limit
-            raise RuntimeError(f"{description} timed out after {exc.timeout:g}s") from None
+            raise RuntimeError(
+                f"{description} timed out after {exc.timeout:g}s"
+            ) from None
         if result.returncode != 0:
             raise RuntimeError(f"{description} failed: {self._error_text(result)}")
         return result
@@ -198,8 +219,12 @@ class ContainerCommands:
         self, container: str, request: RunRequest, output_dir: Path
     ) -> tuple[ArtifactCollectionResult, str | None]:
         return collect_outputs(
-            self.runtime, container, request, output_dir,
-            self.config.workspace_container_path, error_limit=self.error_limit,
+            self.runtime,
+            container,
+            request,
+            output_dir,
+            self.config.workspace_container_path,
+            error_limit=self.error_limit,
         )
 
     def _image_digest(self) -> str | None:

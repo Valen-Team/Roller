@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from roller.harnesses.bridge import BridgeHarness, BridgeSession, positive_int, validate_bridge_config
+from roller.harnesses.bridge import (
+    BridgeHarness,
+    BridgeSession,
+    positive_int,
+    validate_bridge_config,
+)
 from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
 from roller.hermes_actf import convert_hermes_trace, extract_hermes_usage
 from roller.thinking import normalize_thinking, resolve_thinking
@@ -21,7 +26,9 @@ NATIVE_TOOLSETS = "native"
 def hermes_effort(value: str | None) -> str | None:
     value = normalize_thinking(value, field="Hermes reasoning effort")
     if value not in {None, "off", "minimal", "low", "medium", "high", "xhigh"}:
-        raise ValueError("Hermes reasoning effort must be off|minimal|low|medium|high|xhigh; provider support is required")
+        raise ValueError(
+            "Hermes reasoning effort must be off|minimal|low|medium|high|xhigh; provider support is required"
+        )
     return value
 
 
@@ -52,7 +59,12 @@ class HermesConfig:
         """Toolsets passed to Hermes; ``None`` leaves discovery to the native registry."""
 
         if self.toolsets is None:
-            return ["terminal", "file", *(["delegation"] if self.capture_calls else []), *(["vision"] if self.vision else [])]
+            return [
+                "terminal",
+                "file",
+                *(["delegation"] if self.capture_calls else []),
+                *(["vision"] if self.vision else []),
+            ]
         return None if self.toolsets == (NATIVE_TOOLSETS,) else list(self.toolsets)
 
     @property
@@ -61,21 +73,32 @@ class HermesConfig:
 
         if self.toolsets is None:
             return []
-        return [*([] if self.capture_calls else ["delegation"]), *([] if self.vision else ["vision"])]
+        return [
+            *([] if self.capture_calls else ["delegation"]),
+            *([] if self.vision else ["vision"]),
+        ]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reasoning_effort", hermes_effort(self.reasoning_effort))
+        object.__setattr__(
+            self, "reasoning_effort", hermes_effort(self.reasoning_effort)
+        )
         validate_bridge_config(self, "Hermes")
         if self.toolsets is not None:
-            if not self.toolsets or any(not isinstance(name, str) or not name.strip() for name in self.toolsets):
+            if not self.toolsets or any(
+                not isinstance(name, str) or not name.strip() for name in self.toolsets
+            ):
                 raise ValueError("Hermes toolsets must contain non-empty names")
             if NATIVE_TOOLSETS in self.toolsets and len(self.toolsets) > 1:
-                raise ValueError("Hermes toolset 'native' cannot be combined with named toolsets")
+                raise ValueError(
+                    "Hermes toolset 'native' cannot be combined with named toolsets"
+                )
             if "delegation" in self.toolsets and not self.capture_calls:
                 raise ValueError("Hermes delegation toolset requires --capture-calls")
         if not positive_int(self.max_iterations):
             raise ValueError("Hermes max iterations must be a positive integer")
-        if self.context_length is not None and not (positive_int(self.context_length) and self.context_length >= 64000):
+        if self.context_length is not None and not (
+            positive_int(self.context_length) and self.context_length >= 64000
+        ):
             raise ValueError("Hermes context length must be at least 64000 tokens")
 
 
@@ -89,12 +112,19 @@ class HermesSession(BridgeSession):
     version_check = "revision and hook check"
 
     def effort(self) -> str | None:
-        return hermes_effort(resolve_thinking(self.request.task.thinking, self.harness.config.reasoning_effort))
+        return hermes_effort(
+            resolve_thinking(
+                self.request.task.thinking, self.harness.config.reasoning_effort
+            )
+        )
 
     def harness_environment(self, api_base: str) -> dict[str, str]:
         return dict(
-            OPENAI_BASE_URL=api_base, HERMES_HOME=self.home, HERMES_DISABLE_LAZY_INSTALLS="1",
-            TERMINAL_ENV="local", TERMINAL_CWD=self.harness.config.workspace_container_path,
+            OPENAI_BASE_URL=api_base,
+            HERMES_HOME=self.home,
+            HERMES_DISABLE_LAZY_INSTALLS="1",
+            TERMINAL_ENV="local",
+            TERMINAL_CWD=self.harness.config.workspace_container_path,
         )
 
     def turn_options(self, timeout: float) -> dict[str, Any]:
@@ -102,12 +132,23 @@ class HermesSession(BridgeSession):
         # implicit host/profile discovery is disabled in the bridge.
         config = self.harness.config
         return {
-            "max_iterations": config.max_iterations, "context_length": config.context_length, "vision": config.vision,
-            **({"toolsets": config.enabled_toolsets, "disabled_toolsets": config.disabled_toolsets} if config.toolsets is not None else {}),
+            "max_iterations": config.max_iterations,
+            "context_length": config.context_length,
+            "vision": config.vision,
+            **(
+                {
+                    "toolsets": config.enabled_toolsets,
+                    "disabled_toolsets": config.disabled_toolsets,
+                }
+                if config.toolsets is not None
+                else {}
+            ),
         }
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:
-        return convert_hermes_trace(trace, destination, keep_thinking=self.harness.config.keep_thinking)
+        return convert_hermes_trace(
+            trace, destination, keep_thinking=self.harness.config.keep_thinking
+        )
 
     def extract_usage(self, trace: Path) -> dict[str, int | float]:
         return extract_hermes_usage(trace)
@@ -118,14 +159,25 @@ class HermesSession(BridgeSession):
     def settings(self) -> dict[str, Any]:
         config = self.harness.config
         return {
-            "max_iterations": config.max_iterations, "context_length": config.context_length, "vision": config.vision,
+            "max_iterations": config.max_iterations,
+            "context_length": config.context_length,
+            "vision": config.vision,
             "toolsets": config.enabled_toolsets,
-            **({"disabled_toolsets": config.disabled_toolsets} if config.toolsets is not None else {}),
+            **(
+                {"disabled_toolsets": config.disabled_toolsets}
+                if config.toolsets is not None
+                else {}
+            ),
         }
 
     def collect_native_evidence(self, usage: dict[str, int | float]) -> None:
         assert self.capture is not None
-        self.capture.copy_native(self.harness.runtime, self.container, STATE + "/capture-native/.", "children")
+        self.capture.copy_native(
+            self.harness.runtime,
+            self.container,
+            STATE + "/capture-native/.",
+            "children",
+        )
         children = self.capture.recorder.directory / "native" / "children"
         if not children.is_dir():
             return
@@ -137,7 +189,9 @@ class HermesSession(BridgeSession):
             try:
                 child_usage = extract_hermes_usage(child_trace)
             except Exception as exc:
-                self.capture.errors.append("Hermes child usage extraction failed: " + self.redact(str(exc)))
+                self.capture.errors.append(
+                    "Hermes child usage extraction failed: " + self.redact(str(exc))
+                )
             else:
                 for key in ZERO_USAGE:
                     usage[key] += child_usage[key]

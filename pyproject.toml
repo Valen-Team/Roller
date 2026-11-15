@@ -70,6 +70,13 @@ replacement = '](https://github.com/Valen-Team/Roller/blob/v$HFPR_VERSION/\1)'
 
 [tool.ruff]
 target-version = "py310"
+# These files are data, checksummed byte for byte: task inputs, coverage
+# fixtures, and the SWE-Bench Pro grader whose source is part of its protocol.
+extend-exclude = [
+  "examples/coverage/fixtures",
+  "examples/tasks/files",
+  "src/roller/benches/swebench_pro/grader.py",
+]
 
 [tool.ruff.lint]
 # Pyflakes: unused imports and names, undefined names.

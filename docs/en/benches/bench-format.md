@@ -103,9 +103,11 @@ standard task fields:
 Grader calling convention:
 
 ```python
-def grade(transcript, workspace_path):   # transcript is passed only when needs_transcript is set
+def grade(
+    transcript, workspace_path
+):  # transcript is passed only when needs_transcript is set
     ...
-    return {"overall_score": 0.75, "detail": {...}}   # must return a dict
+    return {"overall_score": 0.75, "detail": {...}}  # must return a dict
 ```
 
 A non-dict return raises an error. Roller wraps the function in a runner, copies
@@ -174,6 +176,7 @@ definitions without executing tasks:
 # src/roller/benches/mybench.py
 from roller.benches.base import BenchAdapter, BenchBinding, GradeSpec
 
+
 class MyBenchAdapter(BenchAdapter):
     name = "mybench"
     description = "MyBench: one-line description"
@@ -186,14 +189,16 @@ class MyBenchAdapter(BenchAdapter):
                 category=spec.category,
                 grade=GradeSpec(code=spec.grader_source, env_names=("JUDGE_MODEL",)),
             )
-            rows.append({
-                "schema_version": "roller.task/v1",
-                "id": spec.id,
-                "harness": "openclaw",
-                "prompt": spec.prompt,
-                "timeout_seconds": spec.timeout,
-                "bench": binding.as_dict(),
-            })
+            rows.append(
+                {
+                    "schema_version": "roller.task/v1",
+                    "id": spec.id,
+                    "harness": "openclaw",
+                    "prompt": spec.prompt,
+                    "timeout_seconds": spec.timeout,
+                    "bench": binding.as_dict(),
+                }
+            )
         return rows
 ```
 

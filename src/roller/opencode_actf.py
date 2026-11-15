@@ -1,4 +1,5 @@
 """Project OpenCode's native session export and request journal into ACTF."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -17,7 +18,11 @@ def read_opencode_events(path: Path) -> list[dict[str, Any]]:
     # JSON Lines records are delimited by LF, not every character recognized by
     # str.splitlines().  In particular, U+2028/U+2029 are legal inside a JSON
     # string and must remain part of the record.
-    events = [json.loads(line) for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
+    events = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").split("\n")
+        if line.strip()
+    ]
     if not all(isinstance(e, dict) for e in events):
         raise ValueError("OpenCode journal must contain JSON object events")
     return events
@@ -30,24 +35,40 @@ def root_session_ids(events: list[dict[str, Any]]) -> set[str]:
         info = None
         if row.get("type") == "session_export":
             info = row.get("data", {}).get("info")
-        elif row.get("type") == "event" and row.get("event", {}).get("type") in {"session.created", "session.updated"}:
+        elif row.get("type") == "event" and row.get("event", {}).get("type") in {
+            "session.created",
+            "session.updated",
+        }:
             info = row["event"].get("properties", {}).get("info")
         if isinstance(info, dict) and info.get("id"):
             sessions[info["id"]] = {**sessions.get(info["id"], {}), **info}
         parts = []
         if row.get("type") == "session_export":
-            parts = [p for m in row.get("data", {}).get("messages", []) for p in m.get("parts", [])]
-        elif row.get("type") == "event" and row.get("event", {}).get("type") == "message.part.updated":
+            parts = [
+                p
+                for m in row.get("data", {}).get("messages", [])
+                for p in m.get("parts", [])
+            ]
+        elif (
+            row.get("type") == "event"
+            and row.get("event", {}).get("type") == "message.part.updated"
+        ):
             parts = [row["event"].get("properties", {}).get("part", {})]
         for part in parts:
             if part.get("type") == "tool" and part.get("tool") == "task":
                 child = part.get("state", {}).get("metadata", {}).get("sessionId")
                 if child:
                     children.add(child)
-    return {sid for sid, info in sessions.items() if not info.get("parentID") and sid not in children}
+    return {
+        sid
+        for sid, info in sessions.items()
+        if not info.get("parentID") and sid not in children
+    }
 
 
-def native_messages(events: list[dict[str, Any]], *, root_only: bool = False) -> list[dict[str, Any]]:
+def native_messages(
+    events: list[dict[str, Any]], *, root_only: bool = False
+) -> list[dict[str, Any]]:
     messages, parts = {}, {}
 
     def record_message(info: dict[str, Any]) -> None:
@@ -93,11 +114,24 @@ def native_messages(events: list[dict[str, Any]], *, root_only: bool = False) ->
             if info.get("sessionID"):
                 candidates = candidates | {info["sessionID"]}
             if len(candidates) != 1:
-                raise ValueError(f"OpenCode message {mid} has missing or conflicting session identity")
+                raise ValueError(
+                    f"OpenCode message {mid} has missing or conflicting session identity"
+                )
             info["sessionID"] = next(iter(candidates))
-    return [{"info": info, "parts": sorted((p for p in parts.values() if p["messageID"] == info["id"]), key=lambda p: p["id"])}
-            for info in sorted(messages.values(), key=lambda i: (i.get("time", {}).get("created", 0), i["id"]))
-            if not root_only or not roots or info.get("sessionID") in roots]
+    return [
+        {
+            "info": info,
+            "parts": sorted(
+                (p for p in parts.values() if p["messageID"] == info["id"]),
+                key=lambda p: p["id"],
+            ),
+        }
+        for info in sorted(
+            messages.values(),
+            key=lambda i: (i.get("time", {}).get("created", 0), i["id"]),
+        )
+        if not root_only or not roots or info.get("sessionID") in roots
+    ]
 
 
 def _timestamp(milliseconds):
@@ -139,9 +173,11 @@ def _attachment_metadata(value: Any) -> Any:
 
 def _attachment_placeholder(attachments: list[Any]) -> str:
     metadata = _attachment_metadata(attachments)
-    return "[OpenCode attachments omitted from text-only export: " + json.dumps(
-        metadata, ensure_ascii=False, separators=(",", ":")
-    ) + "]"
+    return (
+        "[OpenCode attachments omitted from text-only export: "
+        + json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+        + "]"
+    )
 
 
 def _image_block(file: dict[str, Any]) -> dict[str, Any] | None:
@@ -177,14 +213,20 @@ def _tool_result_content(result: str, attachments: list[Any]) -> list[dict[str, 
     return content
 
 
-def opencode_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: bool = True) -> dict[str, Any]:
+def opencode_events_to_actf(
+    events: Iterable[dict[str, Any]], *, keep_thinking: bool = True
+) -> dict[str, Any]:
     events = list(events)
     schemas, systems = {}, []
     roots = root_session_ids(events)
     for event in events:
         if event.get("type") != "request":
             continue
-        if event.get("native_session_id") and roots and event["native_session_id"] not in roots:
+        if (
+            event.get("native_session_id")
+            and roots
+            and event["native_session_id"] not in roots
+        ):
             continue
         body = event["body"]
         for tool in body.get("tools", []):
@@ -218,7 +260,11 @@ def opencode_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: 
                 if not isinstance(part.get("text"), str):
                     raise ValueError("OpenCode text part must contain text")
                 content.append({"type": "text", "text": part["text"]})
-            elif kind == "file" and role == "user" and (image := _image_block(part)) is not None:
+            elif (
+                kind == "file"
+                and role == "user"
+                and (image := _image_block(part)) is not None
+            ):
                 content.append(image)
             elif kind == "reasoning" and role == "assistant":
                 content.append({"type": "thinking", "thinking": part["text"]})
@@ -232,25 +278,52 @@ def opencode_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: 
                 if not call_id or call_id in calls_seen:
                     raise ValueError("OpenCode tool call ID is missing or repeated")
                 if name not in schemas:
-                    raise ValueError(f"OpenCode tool call has no captured schema: {name}")
+                    raise ValueError(
+                        f"OpenCode tool call has no captured schema: {name}"
+                    )
                 calls_seen.add(call_id)
-                content.append({"type": "toolCall", "id": call_id, "name": name, "arguments": arguments})
-                result = state.get("error") if state["status"] == "error" else state.get("output")
+                content.append(
+                    {
+                        "type": "toolCall",
+                        "id": call_id,
+                        "name": name,
+                        "arguments": arguments,
+                    }
+                )
+                result = (
+                    state.get("error")
+                    if state["status"] == "error"
+                    else state.get("output")
+                )
                 if not isinstance(result, str):
                     raise ValueError("OpenCode tool result must be text")
                 attachments = state.get("attachments")
-                message: dict[str, Any] = {"role": "toolResult", "toolCallId": call_id, "toolName": name, "content": result, "isError": state["status"] == "error"}
+                message: dict[str, Any] = {
+                    "role": "toolResult",
+                    "toolCallId": call_id,
+                    "toolName": name,
+                    "content": result,
+                    "isError": state["status"] == "error",
+                }
                 if attachments:
                     if not isinstance(attachments, list):
                         raise ValueError("OpenCode tool attachments must be a list")
                     metadata = _attachment_metadata(attachments)
                     message["content"] = _tool_result_content(result, attachments)
                     message["details"] = {"attachments": metadata}
-                results.append({"type": "message", "timestamp": _timestamp(state.get("time", {}).get("end")), "message": message})
+                results.append(
+                    {
+                        "type": "message",
+                        "timestamp": _timestamp(state.get("time", {}).get("end")),
+                        "message": message,
+                    }
+                )
             elif kind in {"step-start", "step-finish", "snapshot", "patch", "retry"}:
                 continue  # Execution metadata remains in the native journal.
             else:
-                raise ValueError(f"OpenCode part would lose data in text-only SFT: {kind}")
+                raise ValueError(
+                    f"OpenCode part would lose data in text-only SFT: {kind}"
+                )
         visible_content = any(
             part.get("type") == "toolCall"
             or (part.get("type") == "text" and bool(part.get("text")))
@@ -284,14 +357,39 @@ def opencode_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: 
             continue
         tokens = info.get("tokens") or {}
         cache = tokens.get("cache") or {}
-        message = {"role": role, "content": content, "usage": {"input": (tokens.get("input") or 0) + (cache.get("read") or 0) + (cache.get("write") or 0), "output": tokens.get("output") or 0}, "stopReason": info.get("finish", "")}
-        rows.append({"type": "message", "timestamp": _timestamp(info.get("time", {}).get("created")), "message": message})
+        message = {
+            "role": role,
+            "content": content,
+            "usage": {
+                "input": (tokens.get("input") or 0)
+                + (cache.get("read") or 0)
+                + (cache.get("write") or 0),
+                "output": tokens.get("output") or 0,
+            },
+            "stopReason": info.get("finish", ""),
+        }
+        rows.append(
+            {
+                "type": "message",
+                "timestamp": _timestamp(info.get("time", {}).get("created")),
+                "message": message,
+            }
+        )
         rows.extend(results)
-    return openclaw_events_to_actf(rows, system_prompts=["\n\n".join(systems)], tools=list(schemas.values()), keep_thinking=keep_thinking)
+    return openclaw_events_to_actf(
+        rows,
+        system_prompts=["\n\n".join(systems)],
+        tools=list(schemas.values()),
+        keep_thinking=keep_thinking,
+    )
 
 
-def convert_opencode_trace(source: Path, destination: Path, *, keep_thinking: bool = True) -> dict[str, Any]:
-    trajectory = opencode_events_to_actf(read_opencode_events(source), keep_thinking=keep_thinking)
+def convert_opencode_trace(
+    source: Path, destination: Path, *, keep_thinking: bool = True
+) -> dict[str, Any]:
+    trajectory = opencode_events_to_actf(
+        read_opencode_events(source), keep_thinking=keep_thinking
+    )
     atomic_write_json(destination, trajectory)
     return trajectory
 
@@ -304,11 +402,29 @@ def extract_opencode_usage(source: Path) -> dict[str, int | float]:
             continue
         tokens = info.get("tokens") or {}
         cache = tokens.get("cache") or {}
-        values = {"input_tokens": tokens.get("input", 0), "output_tokens": tokens.get("output", 0), "cache_read_tokens": cache.get("read", 0), "cache_write_tokens": cache.get("write", 0), "cost_usd": info.get("cost", 0)}
+        values = {
+            "input_tokens": tokens.get("input", 0),
+            "output_tokens": tokens.get("output", 0),
+            "cache_read_tokens": cache.get("read", 0),
+            "cache_write_tokens": cache.get("write", 0),
+            "cost_usd": info.get("cost", 0),
+        }
         totals["request_count"] += 1
         for key, value in values.items():
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 totals[key] += value
         total = tokens.get("total")
-        totals["total_tokens"] += total if isinstance(total, (int, float)) else sum(values[k] or 0 for k in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"))
+        totals["total_tokens"] += (
+            total
+            if isinstance(total, (int, float))
+            else sum(
+                values[k] or 0
+                for k in (
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_read_tokens",
+                    "cache_write_tokens",
+                )
+            )
+        )
     return totals

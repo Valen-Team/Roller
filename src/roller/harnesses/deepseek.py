@@ -6,7 +6,12 @@ import re
 from typing import Any
 
 from roller.deepseek_actf import convert_deepseek_trace, extract_deepseek_usage
-from roller.harnesses.bridge import BridgeHarness, BridgeSession, validate_bridge_config, validate_step_limits
+from roller.harnesses.bridge import (
+    BridgeHarness,
+    BridgeSession,
+    validate_bridge_config,
+    validate_step_limits,
+)
 from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
 from roller.thinking import normalize_thinking, resolve_thinking
 
@@ -23,7 +28,9 @@ DEEPSEEK_PERMISSION_MODES = ("read-only", "workspace-write", "danger-full-access
 def deepseek_effort(value: str | None) -> str | None:
     value = normalize_thinking(value, field="DeepSeek reasoning effort")
     if value not in {None, "off", "low", "high", "max"}:
-        raise ValueError("DeepSeek reasoning effort must be off|low|high|max; provider support is required")
+        raise ValueError(
+            "DeepSeek reasoning effort must be off|low|high|max; provider support is required"
+        )
     return value
 
 
@@ -71,14 +78,23 @@ class DeepSeekConfig:
         return list(DEEPSEEK_TOOLS) if self.profile == "sdk-minimal" else None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reasoning_effort", deepseek_effort(self.reasoning_effort))
+        object.__setattr__(
+            self, "reasoning_effort", deepseek_effort(self.reasoning_effort)
+        )
         validate_bridge_config(self, "DeepSeek")
-        if not isinstance(self.profile, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.profile):
+        if not isinstance(self.profile, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.profile
+        ):
             raise ValueError("DeepSeek profile must be a native profile name")
         if self.input_modalities not in (("text",), ("text", "image")):
             raise ValueError("DeepSeek input modalities must be text or text,image")
-        if self.permission_mode is not None and self.permission_mode not in DEEPSEEK_PERMISSION_MODES:
-            raise ValueError("DeepSeek permission mode must be read-only|workspace-write|danger-full-access")
+        if (
+            self.permission_mode is not None
+            and self.permission_mode not in DEEPSEEK_PERMISSION_MODES
+        ):
+            raise ValueError(
+                "DeepSeek permission mode must be read-only|workspace-write|danger-full-access"
+            )
         validate_step_limits(self, "DeepSeek")
 
 
@@ -97,14 +113,25 @@ class DeepSeekSession(BridgeSession):
     redact_trace = True
 
     def effort(self) -> str | None:
-        return deepseek_effort(resolve_thinking(self.request.task.thinking, self.harness.config.reasoning_effort))
+        return deepseek_effort(
+            resolve_thinking(
+                self.request.task.thinking, self.harness.config.reasoning_effort
+            )
+        )
 
     def harness_environment(self, api_base: str) -> dict[str, str]:
         config = self.harness.config
         return dict(
-            DEEPSEEK_BASE_URL=api_base, HOME=self.home, DSH_HOME=self.home,
-            DSH_RUNTIME_MODE="exe", ROLLER_DEEPSEEK_JOURNAL=STATE + "/trace.jsonl",
-            **({"DSH_PERMISSION_MODE": config.native_permission_mode} if config.native_permission_mode else {}),
+            DEEPSEEK_BASE_URL=api_base,
+            HOME=self.home,
+            DSH_HOME=self.home,
+            DSH_RUNTIME_MODE="exe",
+            ROLLER_DEEPSEEK_JOURNAL=STATE + "/trace.jsonl",
+            **(
+                {"DSH_PERMISSION_MODE": config.native_permission_mode}
+                if config.native_permission_mode
+                else {}
+            ),
         )
 
     def turn_options(self, timeout: float) -> dict[str, Any]:
@@ -112,14 +139,21 @@ class DeepSeekSession(BridgeSession):
         # owns tool discovery inside the isolated DSH_HOME.
         config = self.harness.config
         return {
-            "turn": self.turns, "profile": config.profile, "max_steps": config.max_steps,
-            "context_length": config.context_length, "output_tokens": config.output_tokens,
+            "turn": self.turns,
+            "profile": config.profile,
+            "max_steps": config.max_steps,
+            "context_length": config.context_length,
+            "output_tokens": config.output_tokens,
             "input_modalities": list(config.input_modalities),
-            "tool_env_names": sorted(set((*config.pass_env, *self.request.task.env_names))),
+            "tool_env_names": sorted(
+                set((*config.pass_env, *self.request.task.env_names))
+            ),
         }
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:
-        return convert_deepseek_trace(trace, destination, keep_thinking=self.harness.config.keep_thinking)
+        return convert_deepseek_trace(
+            trace, destination, keep_thinking=self.harness.config.keep_thinking
+        )
 
     def extract_usage(self, trace: Path) -> dict[str, int | float]:
         return extract_deepseek_usage(trace)
@@ -127,14 +161,28 @@ class DeepSeekSession(BridgeSession):
     def version_fields(self) -> dict[str, Any]:
         config = self.harness.config
         return {
-            "deepseek_version": self.version, "profile": config.profile,
-            **({"permission_mode": config.native_permission_mode} if config.native_permission_mode else {}),
-            **({"input_modalities": list(config.input_modalities)} if config.input_modalities != ("text",) else {}),
+            "deepseek_version": self.version,
+            "profile": config.profile,
+            **(
+                {"permission_mode": config.native_permission_mode}
+                if config.native_permission_mode
+                else {}
+            ),
+            **(
+                {"input_modalities": list(config.input_modalities)}
+                if config.input_modalities != ("text",)
+                else {}
+            ),
         }
 
     def settings(self) -> dict[str, Any]:
         config = self.harness.config
-        return {"max_steps": config.max_steps, "context_length": config.context_length, "output_tokens": config.output_tokens, "tools": config.tools}
+        return {
+            "max_steps": config.max_steps,
+            "context_length": config.context_length,
+            "output_tokens": config.output_tokens,
+            "tools": config.tools,
+        }
 
 
 class DeepSeekHarness(BridgeHarness):

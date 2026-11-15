@@ -1,4 +1,5 @@
 """Loss-aware conversion of the Hermes runner's native message event journal."""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -34,14 +35,22 @@ def _text(value: Any) -> str:
     if isinstance(value, list):
         parts = []
         for block in value:
-            if not isinstance(block, dict) or block.get("type") != "text" or not isinstance(block.get("text"), str):
-                raise ValueError("Hermes assistant/user content is non-text; ACTF conversion would lose data")
+            if (
+                not isinstance(block, dict)
+                or block.get("type") != "text"
+                or not isinstance(block.get("text"), str)
+            ):
+                raise ValueError(
+                    "Hermes assistant/user content is non-text; ACTF conversion would lose data"
+                )
             parts.append(block["text"])
         return "\n".join(parts)
     raise ValueError("Hermes message content must be text or text blocks")
 
 
-def hermes_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: bool = True) -> dict[str, Any]:
+def hermes_events_to_actf(
+    events: Iterable[dict[str, Any]], *, keep_thinking: bool = True
+) -> dict[str, Any]:
     """Retain executed messages, even when Hermes compresses its active history.
 
     Request snapshots supply the actual system prompt and tool definitions;
@@ -57,7 +66,9 @@ def hermes_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: bo
                 if not name:
                     raise ValueError("Hermes tool schema is missing its function name")
                 if name in tools and tools[name] != tool:
-                    raise ValueError(f"Hermes tool schema changed during the trajectory: {name}")
+                    raise ValueError(
+                        f"Hermes tool schema changed during the trajectory: {name}"
+                    )
                 tools[name] = deepcopy(tool)
             for message in event.get("messages", []):
                 if message.get("role") == "system":
@@ -77,7 +88,9 @@ def hermes_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: bo
         if role == "assistant":
             content = []
             text = _text(message.get("content"))
-            reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
+            reasoning = (
+                message.get("reasoning_content") or message.get("reasoning") or ""
+            )
             if not isinstance(reasoning, str):
                 raise ValueError("Hermes reasoning must be text")
             if text:
@@ -97,35 +110,71 @@ def hermes_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: bo
                 if name not in tools:
                     raise ValueError(f"Hermes tool call has no recorded schema: {name}")
                 call_names[call_id] = name
-                content.append({"type": "toolCall", "id": call_id, "name": name, "arguments": arguments})
+                content.append(
+                    {
+                        "type": "toolCall",
+                        "id": call_id,
+                        "name": name,
+                        "arguments": arguments,
+                    }
+                )
             usage = event.get("usage") or {}
-            message = {"role": "assistant", "content": content, "usage": {"input": usage.get("prompt_tokens", 0), "output": usage.get("completion_tokens", 0)}, "stopReason": event.get("finish_reason", "")}
+            message = {
+                "role": "assistant",
+                "content": content,
+                "usage": {
+                    "input": usage.get("prompt_tokens", 0),
+                    "output": usage.get("completion_tokens", 0),
+                },
+                "stopReason": event.get("finish_reason", ""),
+            }
         elif role == "tool":
             call_id = message.get("tool_call_id")
             if call_id not in call_names:
                 raise ValueError(f"Hermes tool result has no preceding call: {call_id}")
             # Preserve typed blocks; the shared SFT exporter rejects unsupported media.
-            message = {"role": "toolResult", "toolCallId": call_id, "toolName": call_names[call_id], "content": _normalize_tool_content(message.get("content", "")), "isError": bool(message.get("is_error", False))}
+            message = {
+                "role": "toolResult",
+                "toolCallId": call_id,
+                "toolName": call_names[call_id],
+                "content": _normalize_tool_content(message.get("content", "")),
+                "isError": bool(message.get("is_error", False)),
+            }
         elif role == "user":
             message["content"] = _text(message.get("content"))
         else:
             raise ValueError(f"unsupported Hermes message role: {role}")
-        rows.append({"type": "message", "timestamp": event.get("timestamp"), "message": message})
-    return openclaw_events_to_actf(rows, system_prompts=["\n\n".join(systems)], tools=list(tools.values()), keep_thinking=keep_thinking)
+        rows.append(
+            {"type": "message", "timestamp": event.get("timestamp"), "message": message}
+        )
+    return openclaw_events_to_actf(
+        rows,
+        system_prompts=["\n\n".join(systems)],
+        tools=list(tools.values()),
+        keep_thinking=keep_thinking,
+    )
 
 
 def read_hermes_events(source: Path) -> list[dict[str, Any]]:
     # Do not silently turn a truncated/corrupt journal into a successful sample.
     # Split only on LF: U+2028/U+2029 are valid JSON string content rather than
     # JSON Lines record separators.
-    events = [json.loads(line) for line in source.read_text(encoding="utf-8").split("\n") if line.strip()]
+    events = [
+        json.loads(line)
+        for line in source.read_text(encoding="utf-8").split("\n")
+        if line.strip()
+    ]
     if not all(isinstance(event, dict) for event in events):
         raise ValueError("Hermes journal must contain JSON object events")
     return events
 
 
-def convert_hermes_trace(source: Path, destination: Path, *, keep_thinking: bool = True) -> dict[str, Any]:
-    trajectory = hermes_events_to_actf(read_hermes_events(source), keep_thinking=keep_thinking)
+def convert_hermes_trace(
+    source: Path, destination: Path, *, keep_thinking: bool = True
+) -> dict[str, Any]:
+    trajectory = hermes_events_to_actf(
+        read_hermes_events(source), keep_thinking=keep_thinking
+    )
     atomic_write_json(destination, trajectory)
     return trajectory
 
@@ -133,12 +182,25 @@ def convert_hermes_trace(source: Path, destination: Path, *, keep_thinking: bool
 def extract_hermes_usage(source: Path) -> dict[str, int | float]:
     totals = dict(ZERO_USAGE)
     for event in read_hermes_events(source):
-        if event.get("type") != "message" or event.get("message", {}).get("role") != "assistant":
+        if (
+            event.get("type") != "message"
+            or event.get("message", {}).get("role") != "assistant"
+        ):
             continue
         usage = event.get("usage") or {}
         totals["request_count"] += 1
-        for output, field in (("input_tokens", "prompt_tokens"), ("output_tokens", "completion_tokens"), ("total_tokens", "total_tokens")):
-            value = usage.get(field, (usage.get("prompt_tokens", 0) or 0) + (usage.get("completion_tokens", 0) or 0) if field == "total_tokens" else 0)
+        for output, field in (
+            ("input_tokens", "prompt_tokens"),
+            ("output_tokens", "completion_tokens"),
+            ("total_tokens", "total_tokens"),
+        ):
+            value = usage.get(
+                field,
+                (usage.get("prompt_tokens", 0) or 0)
+                + (usage.get("completion_tokens", 0) or 0)
+                if field == "total_tokens"
+                else 0,
+            )
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 totals[output] += value
         cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)

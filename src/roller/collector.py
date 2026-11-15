@@ -17,8 +17,17 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from roller.harnesses.base import Harness
-from roller.capture import _safe_file, read_jsonl, recover_capture_retention, validate_capture
-from roller.compaction_sft import SFT_SEGMENTS_DIR, export_compaction_segments, has_main_compaction
+from roller.capture import (
+    _safe_file,
+    read_jsonl,
+    recover_capture_retention,
+    validate_capture,
+)
+from roller.compaction_sft import (
+    SFT_SEGMENTS_DIR,
+    export_compaction_segments,
+    has_main_compaction,
+)
 from roller.harness_registry import allows_raw_only_actf
 from roller.integrity import (
     has_legacy_claude_sidechain,
@@ -30,7 +39,10 @@ from roller.models import HarnessResult, RunRequest
 from roller.sft import SFTConversionError, validate_sft_record, write_sft
 from roller.storage import atomic_write_json, safe_component, write_jsonl
 from roller.trajectory_audit import (
-    SEGMENTED_SFT_REASON, record_training_audits, sft_exclusion_reason, training_summary,
+    SEGMENTED_SFT_REASON,
+    record_training_audits,
+    sft_exclusion_reason,
+    training_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,9 +93,12 @@ def check_retired_cot_samples(run_dir: Path, requests: list[RunRequest]) -> None
                 interrupted = {
                     match.group(1)
                     for entry in capture_root.iterdir()
-                    if (match := re.fullmatch(
-                        r"\.(attempt-\d+)\.retention-(?:stage|backup)", entry.name
-                    )) is not None
+                    if (
+                        match := re.fullmatch(
+                            r"\.(attempt-\d+)\.retention-(?:stage|backup)", entry.name
+                        )
+                    )
+                    is not None
                 }
                 for attempt in interrupted:
                     recover_capture_retention(
@@ -98,7 +113,11 @@ def check_retired_cot_samples(run_dir: Path, requests: list[RunRequest]) -> None
                 info = json.loads(info_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            if isinstance(info, dict) and info.get("harness") == "claude-code" and info.get("status") == "ok":
+            if (
+                isinstance(info, dict)
+                and info.get("harness") == "claude-code"
+                and info.get("status") == "ok"
+            ):
                 actf_path = base / "trace_ACTF.json"
                 try:
                     actf = json.loads(actf_path.read_text(encoding="utf-8"))
@@ -183,7 +202,9 @@ class _LaunchGate:
 
 
 class Collector:
-    def __init__(self, config: CollectionConfig, harness_factory: HarnessFactory) -> None:
+    def __init__(
+        self, config: CollectionConfig, harness_factory: HarnessFactory
+    ) -> None:
         self.config = config
         self.harness_factory = harness_factory
         self.run_dir = config.run_dir.expanduser().resolve()
@@ -193,15 +214,21 @@ class Collector:
                 parameter
                 for parameter in parameters
                 if parameter.kind
-                in {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+                in {
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                }
             ]
-            self._factory_accepts_request = any(
-                parameter.kind == inspect.Parameter.VAR_POSITIONAL
+            self._factory_accepts_request = (
+                any(
+                    parameter.kind == inspect.Parameter.VAR_POSITIONAL
+                    for parameter in parameters
+                )
+                or len(positional) >= 2
+            )
+            self._factory_request_keyword = not self._factory_accepts_request and any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
                 for parameter in parameters
-            ) or len(positional) >= 2
-            self._factory_request_keyword = (
-                not self._factory_accepts_request
-                and any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters)
             )
         except (TypeError, ValueError):
             self._factory_accepts_request = True
@@ -236,9 +263,11 @@ class Collector:
                 )
                 return None
             provenance = payload.get("provenance")
-            if not isinstance(provenance, dict) or provenance.get(
-                "task_bundle_digest"
-            ) != request.bundle.manifest_digest:
+            if (
+                not isinstance(provenance, dict)
+                or provenance.get("task_bundle_digest")
+                != request.bundle.manifest_digest
+            ):
                 logger.info(
                     "[%s | %s] task bundle changed; rerunning",
                     request.task.id,
@@ -369,19 +398,28 @@ class Collector:
                     raise ValueError("canonical ACTF trajectory must be a JSON object")
                 if final.status == "ok":
                     if trajectory_conversion_unavailable(metadata) == "sft":
-                        raise SFTConversionError(metadata["trajectory_conversion"]["error"])
+                        raise SFTConversionError(
+                            metadata["trajectory_conversion"]["error"]
+                        )
                     capture = metadata.get("capture") or {}
-                    manifest = capture.get("manifest") if isinstance(capture, dict) else None
+                    manifest = (
+                        capture.get("manifest") if isinstance(capture, dict) else None
+                    )
                     if isinstance(manifest, str):
                         sft_segments = export_compaction_segments(
-                            sample_dir, harness_name, manifest,
-                            keep_thinking=keeps_thinking(metadata))
+                            sample_dir,
+                            harness_name,
+                            manifest,
+                            keep_thinking=keeps_thinking(metadata),
+                        )
                         if sft_segments:
                             sft_path.unlink(missing_ok=True)
                         else:
                             write_sft(sft_path, trajectory)
                     elif has_main_compaction(trace_path, harness_name):
-                        raise SFTConversionError("context reset SFT requires captured Calls")
+                        raise SFTConversionError(
+                            "context reset SFT requires captured Calls"
+                        )
                     else:
                         write_sft(sft_path, trajectory)
             except SFTConversionError as exc:
@@ -412,7 +450,8 @@ class Collector:
             _clear_sft_segments(sample_dir)
             sft_segments = []
         record_training_audits(
-            metadata, trajectory if isinstance(trajectory, dict) else None,
+            metadata,
+            trajectory if isinstance(trajectory, dict) else None,
             sample_dir / "wire_trace.jsonl",
         )
         if attempts and attempts[-1].get("status") != final.status:
@@ -491,7 +530,9 @@ class Collector:
                     "model_label": request.display_model,
                 }
             )
-            logger.info("[%s | %s] already complete; skipping", request.task.id, request.model)
+            logger.info(
+                "[%s | %s] already complete; skipping", request.task.id, request.model
+            )
             return resumed
 
         # Wait before touching the sample directory, so a rollout cancelled
@@ -519,8 +560,7 @@ class Collector:
                 # The backoff runs first, so the launch turn is taken when the
                 # retry is ready to start and no other launch waits behind it.
                 if not (
-                    self._launch_gate.pause(backoff)
-                    and self._launch_gate.wait_turn()
+                    self._launch_gate.pause(backoff) and self._launch_gate.wait_turn()
                 ):
                     # Interrupted between attempts: keep the last failure.
                     logger.warning(
@@ -542,8 +582,12 @@ class Collector:
             try:
                 final = harness.run(request, sample_dir, attempt)
             except Exception as exc:
-                logger.exception("[%s | %s] harness exception", request.task.id, request.model)
-                final = HarnessResult.error_result(str(exc), time.perf_counter() - attempt_start)
+                logger.exception(
+                    "[%s | %s] harness exception", request.task.id, request.model
+                )
+                final = HarnessResult.error_result(
+                    str(exc), time.perf_counter() - attempt_start
+                )
             attempt_rows.append(
                 {
                     "attempt": attempt,
@@ -662,12 +706,18 @@ class Collector:
                 for item in segments:
                     relative = item.get("path") if isinstance(item, dict) else None
                     parts = Path(relative).parts if isinstance(relative, str) else ()
-                    if len(parts) != 2 or parts[0] != SFT_SEGMENTS_DIR or not parts[1].endswith(".json"):
+                    if (
+                        len(parts) != 2
+                        or parts[0] != SFT_SEGMENTS_DIR
+                        or not parts[1].endswith(".json")
+                    ):
                         raise RuntimeError(f"invalid SFT segment path: {relative!r}")
                     try:
                         paths.append(_safe_file(sample_dir, relative))
                     except ValueError as exc:
-                        raise RuntimeError(f"cannot aggregate SFT segment {relative}: {exc}") from exc
+                        raise RuntimeError(
+                            f"cannot aggregate SFT segment {relative}: {exc}"
+                        ) from exc
                 if not paths:
                     paths = [sample_dir / "trace_SFT.json"]
                 for path in paths:
@@ -688,16 +738,22 @@ class Collector:
                     # Keep masked segments separate from legacy linear records.
                     if bool(segments) == segmented:
                         if not segmented and "target_start_index" in row:
-                            raise RuntimeError(f"legacy SFT record has a target mask: {path}")
+                            raise RuntimeError(
+                                f"legacy SFT record has a target mask: {path}"
+                            )
                         yield row
 
         write_jsonl(self.run_dir / "sft.jsonl", rows(False))
         segment_dataset = self.run_dir / "sft_segments.jsonl"
-        if any(isinstance(r.get("trajectory"), dict) and
-               r["trajectory"].get("sft_segments") for r in results):
+        if any(
+            isinstance(r.get("trajectory"), dict)
+            and r["trajectory"].get("sft_segments")
+            for r in results
+        ):
             write_jsonl(segment_dataset, rows(True))
         else:
             segment_dataset.unlink(missing_ok=True)
+
         def calls() -> Iterator[dict[str, Any]]:
             for result in results:
                 if result.get("status") not in {"ok", "skipped"}:
@@ -710,10 +766,15 @@ class Collector:
                 manifest_path = sample / capture["manifest"]
                 for call in read_jsonl(manifest_path.parent / "calls.jsonl"):
                     if call.get("export_status") == "available":
-                        yield {**call, "sample": sample.relative_to(self.run_dir).as_posix(),
-                               "capture_manifest": capture["manifest"],
-                               "task_id": result["task_id"], "model_label": result.get("model_label"),
-                               "sample_index": result.get("sample_index", 0)}
+                        yield {
+                            **call,
+                            "sample": sample.relative_to(self.run_dir).as_posix(),
+                            "capture_manifest": capture["manifest"],
+                            "task_id": result["task_id"],
+                            "model_label": result.get("model_label"),
+                            "sample_index": result.get("sample_index", 0),
+                        }
+
         # Separate schema; historical assistant content is input, output is the
         # current response. Never append these records to legacy sft.jsonl.
         if any(isinstance(r.get("runtime", {}).get("capture"), dict) for r in results):
@@ -723,9 +784,7 @@ class Collector:
         check_retired_cot_samples(self.run_dir, requests)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         total_requests = len(requests)
-        self._write_run_info(
-            [], total_requests=total_requests, state="running"
-        )
+        self._write_run_info([], total_requests=total_requests, state="running")
         # Rebuilt per collect(): an interrupt cancels the gate for good.
         self._launch_gate = _LaunchGate(self.config.launch_interval)
         slots: queue.Queue[int] = queue.Queue()
@@ -783,9 +842,7 @@ class Collector:
                 and now - checkpoint_time < RUN_CHECKPOINT_TIME_INTERVAL_SECONDS
             ):
                 return []
-            ordered = sorted(
-                results, key=lambda row: int(row.get("request_index", -1))
-            )
+            ordered = sorted(results, key=lambda row: int(row.get("request_index", -1)))
             self._write_run_info(
                 ordered,
                 total_requests=total_requests,

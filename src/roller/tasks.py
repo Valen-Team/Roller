@@ -52,7 +52,9 @@ def _string_list(value: Any, field_name: str, index: int) -> tuple[str, ...]:
         return tuple(line.strip() for line in value.splitlines() if line.strip())
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return tuple(item.strip() for item in value if item.strip())
-    raise TaskFormatError(f"task {index}: {field_name!r} must be a string or string list")
+    raise TaskFormatError(
+        f"task {index}: {field_name!r} must be a string or string list"
+    )
 
 
 def _parse_messages(value: Any, index: int) -> tuple[tuple[str, ...], tuple[bool, ...]]:
@@ -73,7 +75,9 @@ def _parse_messages(value: Any, index: int) -> tuple[tuple[str, ...], tuple[bool
                     f"task {index}, message {message_index}: only user messages are accepted"
                 )
         else:
-            raise TaskFormatError(f"task {index}, message {message_index}: invalid message")
+            raise TaskFormatError(
+                f"task {index}, message {message_index}: invalid message"
+            )
         if not isinstance(reset, bool):
             raise TaskFormatError(
                 f"task {index}, message {message_index}: new_session must be boolean"
@@ -83,7 +87,9 @@ def _parse_messages(value: Any, index: int) -> tuple[tuple[str, ...], tuple[bool
                 f"task {index}, message {message_index}: the first message already starts a new session"
             )
         if not isinstance(content, str) or not content.strip():
-            raise TaskFormatError(f"task {index}, message {message_index}: empty content")
+            raise TaskFormatError(
+                f"task {index}, message {message_index}: empty content"
+            )
         prompts.append(content.strip())
         new_session.append(reset)
     return tuple(prompts), tuple(new_session)
@@ -141,9 +147,13 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
                 try:
                     row = json.loads(line)
                 except json.JSONDecodeError as exc:
-                    raise TaskFormatError(f"{path}:{line_number}: invalid JSON: {exc.msg}") from exc
+                    raise TaskFormatError(
+                        f"{path}:{line_number}: invalid JSON: {exc.msg}"
+                    ) from exc
                 if not isinstance(row, dict):
-                    raise TaskFormatError(f"{path}:{line_number}: each row must be an object")
+                    raise TaskFormatError(
+                        f"{path}:{line_number}: each row must be an object"
+                    )
                 rows.append(row)
         return rows
 
@@ -154,11 +164,17 @@ def _read_rows(path: Path) -> list[dict[str, Any]]:
             raise TaskFormatError(f"{path}: invalid JSON: {exc.msg}") from exc
         if isinstance(payload, dict) and isinstance(payload.get("tasks"), list):
             payload = payload["tasks"]
-        if not isinstance(payload, list) or not all(isinstance(row, dict) for row in payload):
-            raise TaskFormatError(f"{path}: expected a list of task objects or {{'tasks': [...]}}")
+        if not isinstance(payload, list) or not all(
+            isinstance(row, dict) for row in payload
+        ):
+            raise TaskFormatError(
+                f"{path}: expected a list of task objects or {{'tasks': [...]}}"
+            )
         return payload
 
-    raise TaskFormatError(f"unsupported task-list extension {suffix!r}; use .jsonl or .json")
+    raise TaskFormatError(
+        f"unsupported task-list extension {suffix!r}; use .jsonl or .json"
+    )
 
 
 def _resolve_source(value: Any, base_dir: Path, label: str) -> Path:
@@ -175,7 +191,9 @@ def _resolve_file_root(row: dict[str, Any], task_list: Path, index: int) -> Path
     if value is None:
         return task_list.parent
     if not isinstance(value, str) or not value.strip():
-        raise TaskFormatError(f"task {index}: file_root must be a non-empty path string")
+        raise TaskFormatError(
+            f"task {index}: file_root must be a non-empty path string"
+        )
     root = Path(value).expanduser()
     if not root.is_absolute():
         root = task_list.parent / root
@@ -249,7 +267,9 @@ def _parse_inputs(value: Any, base_dir: Path, index: int) -> tuple[InputFile, ..
             if not isinstance(expected_sha256, str) or not re.fullmatch(
                 r"[0-9a-fA-F]{64}", expected_sha256
             ):
-                raise TaskFormatError(f"{label}: sha256 must contain exactly 64 hex characters")
+                raise TaskFormatError(
+                    f"{label}: sha256 must contain exactly 64 hex characters"
+                )
             expected_sha256 = expected_sha256.lower()
         inputs.append(
             InputFile(
@@ -269,7 +289,9 @@ def _parse_attach_images(
     if value is None:
         return ()
     if not isinstance(value, list):
-        raise TaskFormatError(f"task {index}: files.attach_images must be a list of input paths")
+        raise TaskFormatError(
+            f"task {index}: files.attach_images must be a list of input paths"
+        )
     images: list[str] = []
     for item in value:
         path = normalize_relative_path(item, f"task {index}: files.attach_images")
@@ -496,7 +518,9 @@ def load_tasks(
             )
         task_id_value = row.get(id_key, f"task_{index:08d}")
         if not isinstance(task_id_value, (str, int)) or not str(task_id_value).strip():
-            raise TaskFormatError(f"task {index}: {id_key!r} must be a non-empty string or integer")
+            raise TaskFormatError(
+                f"task {index}: {id_key!r} must be a non-empty string or integer"
+            )
         task_id = str(task_id_value).strip()
         if task_id in seen_ids:
             raise TaskFormatError(f"task {index}: duplicate task id {task_id!r}")
@@ -515,9 +539,7 @@ def load_tasks(
                 )
             )
             conflicting = [
-                name
-                for name in predefined_fields
-                if row.get(name) is not None
+                name for name in predefined_fields if row.get(name) is not None
             ]
             if conflicting:
                 raise TaskFormatError(
@@ -543,7 +565,9 @@ def load_tasks(
         row_workspace = row.get("workspace") or row.get("workspace_path")
         if row_workspace is not None:
             if not isinstance(row_workspace, str) or not row_workspace.strip():
-                raise TaskFormatError(f"task {index}: workspace must be a non-empty path string")
+                raise TaskFormatError(
+                    f"task {index}: workspace must be a non-empty path string"
+                )
             workspace = Path(row_workspace).expanduser()
             if not workspace.is_absolute():
                 workspace = path.parent / workspace
@@ -609,7 +633,9 @@ def load_tasks(
                     f"task {index}: 'harness' and 'agent_harness' must match when both are set"
                 )
         task_harness = _parse_harness(
-            task_harness_value if task_harness_value is not None else agent_harness_value,
+            task_harness_value
+            if task_harness_value is not None
+            else agent_harness_value,
             index,
             "harness",
         )
@@ -627,10 +653,10 @@ def load_tasks(
         if not isinstance(runtime, dict):
             raise TaskFormatError(f"task {index}: runtime must be an object")
         image = runtime.get("image")
-        if image is not None and (
-            not isinstance(image, str) or not image.strip()
-        ):
-            raise TaskFormatError(f"task {index}: runtime.image must be a non-empty string")
+        if image is not None and (not isinstance(image, str) or not image.strip()):
+            raise TaskFormatError(
+                f"task {index}: runtime.image must be a non-empty string"
+            )
         docker_image = image.strip() if isinstance(image, str) else None
         image_build = _parse_image_build(
             runtime.get("image_build"), docker_image, file_root, index
@@ -667,7 +693,9 @@ def load_tasks(
                 workspace=workspace,
                 harness=task_harness,
                 model=model.strip() if isinstance(model, str) else None,
-                env_names=_string_list(runtime.get("env", row.get("env")), "runtime.env", index),
+                env_names=_string_list(
+                    runtime.get("env", row.get("env")), "runtime.env", index
+                ),
                 setup_commands=_string_list(
                     runtime.get("setup", row.get("setup", row.get("warmup"))),
                     "runtime.setup",

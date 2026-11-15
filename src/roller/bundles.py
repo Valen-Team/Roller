@@ -99,7 +99,9 @@ class TaskBundleStore:
         except OSError:
             pass
 
-    def _scan_source(self, source: Path, required: bool, label: str) -> _ScannedSource | None:
+    def _scan_source(
+        self, source: Path, required: bool, label: str
+    ) -> _ScannedSource | None:
         if not source.exists():
             if required:
                 raise BundleError(f"{label} does not exist: {source}")
@@ -152,7 +154,9 @@ class TaskBundleStore:
                 for name in dir_names:
                     directory = current_path / name
                     if directory.is_symlink():
-                        raise BundleError(f"{label} contains a symbolic-link directory: {directory}")
+                        raise BundleError(
+                            f"{label} contains a symbolic-link directory: {directory}"
+                        )
                     relative = directory.relative_to(source).as_posix()
                     directories.append(relative)
                 for name in file_names:
@@ -175,7 +179,9 @@ class TaskBundleStore:
                 ],
             }
         )
-        scanned = _ScannedSource(tuple(files), tuple(sorted(directories)), digest, total_bytes)
+        scanned = _ScannedSource(
+            tuple(files), tuple(sorted(directories)), digest, total_bytes
+        )
         self._scan_cache[source] = scanned
         return scanned
 
@@ -189,7 +195,9 @@ class TaskBundleStore:
                 while chunk := source.read(1024 * 1024):
                     size += len(chunk)
                     if size > item.size:
-                        raise BundleError(f"{label} changed while snapshotting: {item.source}")
+                        raise BundleError(
+                            f"{label} changed while snapshotting: {item.source}"
+                        )
                     digest.update(chunk)
                     target.write(chunk)
             if digest.hexdigest() != item.sha256 or size != item.size:
@@ -205,7 +213,9 @@ class TaskBundleStore:
     ) -> None:
         if target == ".":
             return
-        if target in files or any(target.startswith(f"{existing}/") for existing in files):
+        if target in files or any(
+            target.startswith(f"{existing}/") for existing in files
+        ):
             raise BundleError(f"{label} file/directory collision at: {target}")
         directories.add(target)
 
@@ -216,7 +226,10 @@ class TaskBundleStore:
         if target in files or target in directories:
             raise BundleError(f"{label} target collision: {target}")
         prefix = f"{target}/"
-        if any(existing.startswith(prefix) or target.startswith(f"{existing}/") for existing in files):
+        if any(
+            existing.startswith(prefix) or target.startswith(f"{existing}/")
+            for existing in files
+        ):
             raise BundleError(f"{label} file/directory collision at: {target}")
         if any(existing.startswith(prefix) for existing in directories):
             raise BundleError(f"{label} file/directory collision at: {target}")
@@ -247,7 +260,9 @@ class TaskBundleStore:
                         f"({total_bytes} > {self.policy.max_task_input_bytes})"
                     )
                 digest = hashlib.sha256(encoded).hexdigest()
-                del encoded  # Retain only the original string, not every UTF-8 encoding.
+                del (
+                    encoded
+                )  # Retain only the original string, not every UTF-8 encoding.
                 if spec.expected_sha256 and digest != spec.expected_sha256:
                     raise BundleError(
                         f"task {task.id} input {index} sha256 mismatch: "
@@ -280,7 +295,9 @@ class TaskBundleStore:
                 )
                 continue
             assert spec.source is not None
-            scanned = self._scan_source(spec.source, spec.required, f"task {task.id} input {index}")
+            scanned = self._scan_source(
+                spec.source, spec.required, f"task {task.id} input {index}"
+            )
             if scanned is None:
                 declarations.append(
                     {"path": spec.path, "required": spec.required, "present": False}
@@ -383,7 +400,9 @@ class TaskBundleStore:
         }
         return tree_root, manifest
 
-    def _prepare_context(self, task: Task, task_key: str) -> tuple[Path, dict[str, Any]]:
+    def _prepare_context(
+        self, task: Task, task_key: str
+    ) -> tuple[Path, dict[str, Any]]:
         context_root = self.runtime_root / "context" / task_key
         if self.materialize:
             if context_root.exists():
@@ -437,7 +456,9 @@ class TaskBundleStore:
                         f"task {task.id} context",
                     )
                     if self.materialize:
-                        (context_root / target_directory).mkdir(parents=True, exist_ok=True)
+                        (context_root / target_directory).mkdir(
+                            parents=True, exist_ok=True
+                        )
                     declaration["directories"].append(target_directory)
             if spec.source.is_dir() and spec.target != ".":
                 self._add_directory(
@@ -450,8 +471,10 @@ class TaskBundleStore:
                     (context_root / spec.target).mkdir(parents=True, exist_ok=True)
                 declaration["directories"].append(spec.target)
             for item in scanned.files:
-                target = spec.target if item.relative_path == "." else _join_target(
-                    spec.target, item.relative_path
+                target = (
+                    spec.target
+                    if item.relative_path == "."
+                    else _join_target(spec.target, item.relative_path)
                 )
                 if PurePosixPath(target).parts[0] in {"inputs", "outputs", "context"}:
                     raise BundleError(
@@ -503,7 +526,9 @@ class TaskBundleStore:
             "schema_version": task.schema_version,
             "id": task.id,
             "source_index": task.source_index,
-            "messages": [{"role": "user", "content": prompt} for prompt in task.prompts],
+            "messages": [
+                {"role": "user", "content": prompt} for prompt in task.prompts
+            ],
             "model": task.model,
             "files": {
                 # Preserve historical names in the digest; manifests stay in memory.
@@ -588,9 +613,13 @@ class TaskBundleStore:
                         blobs.mkdir(parents=True, exist_ok=True)
                         for directory in (blobs.parent, blobs):
                             directory.chmod(0o700)
-                        fd, temporary = tempfile.mkstemp(prefix=f".{digest}.", dir=blob.parent)
+                        fd, temporary = tempfile.mkstemp(
+                            prefix=f".{digest}.", dir=blob.parent
+                        )
                         os.close(fd)
-                        shutil.copyfile(bundle.context_root / record["logical_path"], temporary)
+                        shutil.copyfile(
+                            bundle.context_root / record["logical_path"], temporary
+                        )
                         os.chmod(temporary, 0o400)
                         os.replace(temporary, blob)
                     files.append({**record, "blob": f"context/sha256/{digest}"})
@@ -609,7 +638,9 @@ class TaskBundleStore:
     def attach(
         self, requests: Iterable[RunRequest], bundles: dict[str, TaskBundle]
     ) -> list[RunRequest]:
-        return [replace(request, bundle=bundles[request.task.id]) for request in requests]
+        return [
+            replace(request, bundle=bundles[request.task.id]) for request in requests
+        ]
 
     def cleanup_runtime(self) -> None:
         if self.runtime_root.exists():

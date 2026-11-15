@@ -88,17 +88,27 @@ def _events() -> list[dict]:
 
 class ClaudeCodeActfTests(unittest.TestCase):
     def test_user_images_survive_prompt_cleanup_in_native_order(self) -> None:
-        image = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}}
+        image = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "AA=="},
+        }
         events = _events()
         events[0]["message"]["content"] = [
-            {"type": "text", "text": " inspect input.txt\n"}, image,
+            {"type": "text", "text": " inspect input.txt\n"},
+            image,
             {"type": "document", "source": {"type": "text", "data": "ignored"}},
         ]
-        for user_messages, text in ((["inspect input.txt"], "inspect input.txt"), (None, " inspect input.txt\n")):
+        for user_messages, text in (
+            (["inspect input.txt"], "inspect input.txt"),
+            (None, " inspect input.txt\n"),
+        ):
             with self.subTest(user_messages=user_messages):
-                trajectory = claude_code_events_to_actf(events, user_messages=user_messages)
+                trajectory = claude_code_events_to_actf(
+                    events, user_messages=user_messages
+                )
                 self.assertEqual(
-                    trajectory["steps"][0]["user_content"], [{"type": "text", "text": text}, image]
+                    trajectory["steps"][0]["user_content"],
+                    [{"type": "text", "text": text}, image],
                 )
                 record = actf_to_sft(trajectory)
                 self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
@@ -106,21 +116,42 @@ class ClaudeCodeActfTests(unittest.TestCase):
 
         # A message without prompt text is not user input Roller sent.
         events[0]["message"]["content"] = [image]
-        events.insert(1, {"type": "user", "uuid": "user-2", "timestamp": "2026-08-22T01:00:00Z",
-                          "message": {"role": "user", "content": "second"}})
+        events.insert(
+            1,
+            {
+                "type": "user",
+                "uuid": "user-2",
+                "timestamp": "2026-08-22T01:00:00Z",
+                "message": {"role": "user", "content": "second"},
+            },
+        )
         trajectory = claude_code_events_to_actf(events)
         self.assertEqual(trajectory["steps"][0]["user_content"], "second")
 
     def test_consecutive_user_messages_merge_text_around_images(self) -> None:
-        image = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}}
+        image = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "AA=="},
+        }
         events = _events()
         events[0]["message"]["content"] = [{"type": "text", "text": "first"}, image]
-        events.insert(1, {"type": "user", "uuid": "user-2", "timestamp": "2026-08-22T01:00:00Z",
-                          "message": {"role": "user", "content": "second"}})
+        events.insert(
+            1,
+            {
+                "type": "user",
+                "uuid": "user-2",
+                "timestamp": "2026-08-22T01:00:00Z",
+                "message": {"role": "user", "content": "second"},
+            },
+        )
         trajectory = claude_code_events_to_actf(events)
         self.assertEqual(
             trajectory["steps"][0]["user_content"],
-            [{"type": "text", "text": "first"}, image, {"type": "text", "text": "second"}],
+            [
+                {"type": "text", "text": "first"},
+                image,
+                {"type": "text", "text": "second"},
+            ],
         )
 
     def test_native_background_notification_survives_prompt_filter(self) -> None:
@@ -129,47 +160,104 @@ class ClaudeCodeActfTests(unittest.TestCase):
         for native_origin in (True, False):
             with self.subTest(native_origin=native_origin):
                 events = _events()
-                events.insert(3, {
-                    "type": "user", "uuid": "notice", "timestamp": "2026-08-22T01:00:02.500Z", "origin": {"kind": "task-notification"} if native_origin else {},
-                    "message": {"role": "user", "content": notice},
-                })
+                events.insert(
+                    3,
+                    {
+                        "type": "user",
+                        "uuid": "notice",
+                        "timestamp": "2026-08-22T01:00:02.500Z",
+                        "origin": {"kind": "task-notification"}
+                        if native_origin
+                        else {},
+                        "message": {"role": "user", "content": notice},
+                    },
+                )
                 trajectory = claude_code_events_to_actf(
-                    events, user_messages=["inspect input.txt"], notification_inputs={notice: wrapper})
-                users = [m["content"] for m in actf_to_sft(trajectory)["messages"] if m["role"] == "user"]
-                self.assertEqual(users, ["inspect input.txt", wrapper] if native_origin else ["inspect input.txt"])
+                    events,
+                    user_messages=["inspect input.txt"],
+                    notification_inputs={notice: wrapper},
+                )
+                users = [
+                    m["content"]
+                    for m in actf_to_sft(trajectory)["messages"]
+                    if m["role"] == "user"
+                ]
+                self.assertEqual(
+                    users,
+                    ["inspect input.txt", wrapper]
+                    if native_origin
+                    else ["inspect input.txt"],
+                )
 
     def test_conversion_recovers_wire_notification_wrapper(self) -> None:
         notice = "<task-notification><result>CHILD_DONE</result></task-notification>"
         wrapper = "[SYSTEM NOTIFICATION - NOT USER INPUT]\nNative event.\n\n" + notice
         events = _events()
-        events.insert(3, {"type": "user", "uuid": "notice", "timestamp": "2026-08-22T01:00:02.500Z", "origin": {"kind": "task-notification"},
-                          "message": {"role": "user", "content": notice}})
+        events.insert(
+            3,
+            {
+                "type": "user",
+                "uuid": "notice",
+                "timestamp": "2026-08-22T01:00:02.500Z",
+                "origin": {"kind": "task-notification"},
+                "message": {"role": "user", "content": notice},
+            },
+        )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source, wire = root / "native.jsonl", root / "wire.jsonl"
             source.write_text("\n".join(json.dumps(e) for e in events))
-            wire.write_text(json.dumps({"body": {"messages": [{"role": "user", "content": [{"type": "text", "text": wrapper}]}]}}))
-            trajectory = convert_claude_code_trace(source, root / "trace.json", user_messages=["inspect input.txt"], wire_trace=wire)
-            users = [m["content"] for m in actf_to_sft(trajectory)["messages"] if m["role"] == "user"]
+            wire.write_text(
+                json.dumps(
+                    {
+                        "body": {
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": [{"type": "text", "text": wrapper}],
+                                }
+                            ]
+                        }
+                    }
+                )
+            )
+            trajectory = convert_claude_code_trace(
+                source,
+                root / "trace.json",
+                user_messages=["inspect input.txt"],
+                wire_trace=wire,
+            )
+            users = [
+                m["content"]
+                for m in actf_to_sft(trajectory)["messages"]
+                if m["role"] == "user"
+            ]
             self.assertEqual(users, ["inspect input.txt", wrapper])
 
-    def test_signed_thinking_preserves_only_native_text_and_does_not_mutate_raw(self) -> None:
+    def test_signed_thinking_preserves_only_native_text_and_does_not_mutate_raw(
+        self,
+    ) -> None:
         for native in ("", "Visible summary."):
             with self.subTest(native=native):
                 events = _events()
                 events[1]["message"]["content"] = [
-                    {"type": "thinking", "thinking": native, "signature": "opaque-signature"},
+                    {
+                        "type": "thinking",
+                        "thinking": native,
+                        "signature": "opaque-signature",
+                    },
                     {"type": "redacted_thinking", "data": "opaque-ciphertext"},
                     {"type": "text", "text": "answer"},
                 ]
                 before = json.dumps(events)
                 trajectory = claude_code_events_to_actf(events)
                 record = actf_to_sft(trajectory)
-                assistant = next(m for m in record["messages"] if m["role"] == "assistant")
+                assistant = next(
+                    m for m in record["messages"] if m["role"] == "assistant"
+                )
                 self.assertEqual(assistant["reasoning_content"], native)
                 self.assertNotIn("opaque-", json.dumps(record))
                 self.assertEqual(json.dumps(events), before)
-
 
     def test_converts_thinking_tools_results_usage_and_sft(self) -> None:
         trajectory = claude_code_events_to_actf(
@@ -186,11 +274,15 @@ class ClaudeCodeActfTests(unittest.TestCase):
         self.assertEqual(first["assistant_content"]["tool_calls"][0]["id"], "toolu-1")
         self.assertEqual(first["observation"][0]["content"][0]["text"], "hello\n")
         self.assertEqual(first["metric"]["prompt_tokens_len"], 32)
-        self.assertEqual(second["assistant_content"]["content"], "The file contains hello.")
+        self.assertEqual(
+            second["assistant_content"]["content"], "The file contains hello."
+        )
         self.assertEqual(trajectory["tools"][0]["function"]["name"], "Read")
 
         sft = actf_to_sft(trajectory)
-        self.assertEqual(sft["messages"][1], {"role": "user", "content": "inspect input.txt"})
+        self.assertEqual(
+            sft["messages"][1], {"role": "user", "content": "inspect input.txt"}
+        )
         self.assertEqual(sft["messages"][2]["reasoning_content"], "I should read it.")
         self.assertEqual(sft["messages"][3]["role"], "tool")
 
@@ -202,7 +294,9 @@ class ClaudeCodeActfTests(unittest.TestCase):
                     {
                         "kind": "tools",
                         "params": {
-                            "system": [{"type": "text", "text": "You are Claude Code."}],
+                            "system": [
+                                {"type": "text", "text": "You are Claude Code."}
+                            ],
                             "max_tokens": 32000,
                         },
                         "tools": [
@@ -229,7 +323,9 @@ class ClaudeCodeActfTests(unittest.TestCase):
 
     def test_strip_thinking_and_decode_only_plain_openrouter_reasoning(self) -> None:
         payload = base64.b64encode(
-            json.dumps({"type": "reasoning.text", "text": "visible proxy thought"}).encode()
+            json.dumps(
+                {"type": "reasoning.text", "text": "visible proxy thought"}
+            ).encode()
         ).decode()
         events = _events()
         events[1]["message"]["content"] = [
@@ -288,7 +384,11 @@ class ClaudeCodeActfTests(unittest.TestCase):
             },
             {
                 "type": "image",
-                "source": {"type": "base64", "media_type": "image/jpeg", "data": "AQ=="},
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": "AQ==",
+                },
             },
         ]
 

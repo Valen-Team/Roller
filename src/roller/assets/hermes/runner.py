@@ -3,6 +3,7 @@
 Each turn restores native conversation history in the same disposable container.
 The append-only journal lives separately from Hermes' compressible history.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,13 +39,18 @@ def openai_compatible_tool_media(messages):
     def flush_images():
         if not pending_images:
             return
-        rewritten.append({
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Images returned by the preceding tool results:"},
-                *pending_images,
-            ],
-        })
+        rewritten.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Images returned by the preceding tool results:",
+                    },
+                    *pending_images,
+                ],
+            }
+        )
         pending_images.clear()
 
     for message in messages:
@@ -56,12 +62,19 @@ def openai_compatible_tool_media(messages):
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "image_url":
                         pending_images.append(deepcopy(block))
-                    elif isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
+                    elif (
+                        isinstance(block, dict)
+                        and block.get("type") == "text"
+                        and isinstance(block.get("text"), str)
+                    ):
                         text_parts.append(block["text"])
                     elif isinstance(block, str):
                         text_parts.append(block)
                 if pending_images:
-                    copied["content"] = "\n".join(text_parts) or "Image attached in the following user message."
+                    copied["content"] = (
+                        "\n".join(text_parts)
+                        or "Image attached in the following user message."
+                    )
             rewritten.append(copied)
             continue
         flush_images()
@@ -88,7 +101,17 @@ class Journal:
 
     def write(self, kind, **fields):
         with self.lock, self.path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps({"type": kind, "timestamp": datetime.now(timezone.utc).isoformat(), **fields}, ensure_ascii=False) + "\n")
+            stream.write(
+                json.dumps(
+                    {
+                        "type": kind,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        **fields,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
             stream.flush()
 
     def observe_tools(self, messages):
@@ -99,7 +122,10 @@ class Journal:
                 call_id = message.get("tool_call_id")
                 if message.get("role") != "tool" or call_id in self.tools_seen:
                     continue
-                self.write("message", message={k: v for k, v in message.items() if not k.startswith("_")})
+                self.write(
+                    "message",
+                    message={k: v for k, v in message.items() if not k.startswith("_")},
+                )
                 self.tools_seen.add(call_id)
 
 
@@ -135,18 +161,31 @@ def journaled_agent(base_class, journal, *, capture=False, root_session_id=None)
             self._roller_journal = journal
             if capture:
                 if self.session_id != root_session_id:
-                    child_path = journal.path.parent / "capture-native" / (self.session_id + ".jsonl")
+                    child_path = (
+                        journal.path.parent
+                        / "capture-native"
+                        / (self.session_id + ".jsonl")
+                    )
                     child_path.parent.mkdir(parents=True, exist_ok=True)
                     self._roller_journal = Journal(child_path)
                 owner = DELEGATE_CALL.get()
-                self._roller_journal.write("participant", session_id=self.session_id,
+                self._roller_journal.write(
+                    "participant",
+                    session_id=self.session_id,
                     parent_session_id=getattr(self, "_parent_session_id", None),
-                    tool_call_id=owner[1] if owner and owner[0] == getattr(self, "_parent_session_id", None) else None)
+                    tool_call_id=owner[1]
+                    if owner and owner[0] == getattr(self, "_parent_session_id", None)
+                    else None,
+                )
                 callback = self.tool_start_callback
+
                 def tool_started(call_id, name, arguments):
-                    DELEGATE_CALL.set((self.session_id, call_id) if name == "delegate_task" else None)
+                    DELEGATE_CALL.set(
+                        (self.session_id, call_id) if name == "delegate_task" else None
+                    )
                     if callback:
                         callback(call_id, name, arguments)
+
                 self.tool_start_callback = tool_started
                 self._disable_streaming = True
 
@@ -157,13 +196,17 @@ def journaled_agent(base_class, journal, *, capture=False, root_session_id=None)
             outgoing = dict(api_kwargs)
             outgoing["messages"] = openai_compatible_tool_media(native_messages)
             if capture:
-                outgoing["extra_headers"] = {**outgoing.get("extra_headers", {}),
-                    "x-roller-native-session-id": self.session_id}
+                outgoing["extra_headers"] = {
+                    **outgoing.get("extra_headers", {}),
+                    "x-roller-native-session-id": self.session_id,
+                }
             # Capture untruncated assembled prompts and actual schemas, without
             # HTTP authorization headers or the SDK client configuration.
             journal.write(
-                "request", messages=outgoing["messages"],
-                tools=outgoing.get("tools", []), model=outgoing.get("model"),
+                "request",
+                messages=outgoing["messages"],
+                tools=outgoing.get("tools", []),
+                model=outgoing.get("model"),
                 **request_audit_parameters(outgoing),
             )
             response = super()._interruptible_api_call(outgoing)
@@ -171,9 +214,16 @@ def journaled_agent(base_class, journal, *, capture=False, root_session_id=None)
             journal.write("response", response=data)
             choices = data.get("choices", [])
             if len(choices) != 1:
-                raise RuntimeError("Hermes bridge requires exactly one completion choice")
+                raise RuntimeError(
+                    "Hermes bridge requires exactly one completion choice"
+                )
             choice = choices[0]
-            journal.write("message", message=choice["message"], usage=data.get("usage") or {}, finish_reason=choice.get("finish_reason"))
+            journal.write(
+                "message",
+                message=choice["message"],
+                usage=data.get("usage") or {},
+                finish_reason=choice.get("finish_reason"),
+            )
             return response
 
         def _flush_messages_to_session_db(self, messages, conversation_history=None):
@@ -185,8 +235,14 @@ def journaled_agent(base_class, journal, *, capture=False, root_session_id=None)
                 result = super().run_conversation(*args, **kwargs)
                 self._roller_journal.observe_tools(result.get("messages", []))
                 if capture and self.session_id != root_session_id:
-                    self._roller_journal.write("child_end", completed=bool(result.get("completed")
-                        and not result.get("failed") and not result.get("error")))
+                    self._roller_journal.write(
+                        "child_end",
+                        completed=bool(
+                            result.get("completed")
+                            and not result.get("failed")
+                            and not result.get("error")
+                        ),
+                    )
                 return result
             except BaseException:
                 if capture and self.session_id != root_session_id:
@@ -234,8 +290,11 @@ def run_turn(config, state_dir):
         (state_dir / "capture-native").mkdir(exist_ok=True)
         # Native Hermes falls back to inline delegation for finite sessions.
         os.environ["HERMES_SINGLE_QUERY_SESSION"] = "1"
-        recorded = journaled_agent(AIAgent, journal, capture=True, root_session_id=config["session_id"])
+        recorded = journaled_agent(
+            AIAgent, journal, capture=True, root_session_id=config["session_id"]
+        )
         import run_agent
+
         run_agent.AIAgent = recorded
     else:
         recorded = journaled_agent(AIAgent, journal)
@@ -243,12 +302,21 @@ def run_turn(config, state_dir):
     history = json.loads(history_path.read_text()) if history_path.exists() else []
     journal.write("message", message={"role": "user", "content": config["message"]})
     effort = config.get("thinking")
-    reasoning = None if effort is None else ({"enabled": False} if effort == "off" else {"enabled": True, "effort": effort})
+    reasoning = (
+        None
+        if effort is None
+        else (
+            {"enabled": False}
+            if effort == "off"
+            else {"enabled": True, "effort": effort}
+        )
+    )
     # Keep Hermes' capability-neutral custom transport for compatibility with
     # arbitrary OpenAI-compatible models. The explicit model/image settings
     # above opt only the vision tool into its native image path.
     provider = "custom"
     from agent.auxiliary_client import reset_runtime_main, set_runtime_main
+
     runtime_token = set_runtime_main(
         provider,
         config["model"],
@@ -259,38 +327,74 @@ def run_turn(config, state_dir):
     if "toolsets" in config:
         # --hermes-toolset: None leaves discovery to the native registry. The
         # host withholds delegation unless child calls are being captured.
-        toolsets = {"enabled_toolsets": config["toolsets"], "disabled_toolsets": config["disabled_toolsets"] or None}
+        toolsets = {
+            "enabled_toolsets": config["toolsets"],
+            "disabled_toolsets": config["disabled_toolsets"] or None,
+        }
     else:
-        toolsets = {"enabled_toolsets": ["terminal", "file", *(["vision"] if config.get("vision", True) else []),
-                                         *(["delegation"] if capture else [])]}
+        toolsets = {
+            "enabled_toolsets": [
+                "terminal",
+                "file",
+                *(["vision"] if config.get("vision", True) else []),
+                *(["delegation"] if capture else []),
+            ]
+        }
     try:
         agent = recorded(
-            model=config["model"], provider=provider, api_mode="chat_completions",
-            base_url=os.environ["OPENAI_BASE_URL"], api_key=os.environ["OPENAI_API_KEY"],
+            model=config["model"],
+            provider=provider,
+            api_mode="chat_completions",
+            base_url=os.environ["OPENAI_BASE_URL"],
+            api_key=os.environ["OPENAI_API_KEY"],
             max_iterations=config["max_iterations"],
             **toolsets,
-            quiet_mode=True, save_trajectories=False, session_id=config["session_id"],
+            quiet_mode=True,
+            save_trajectories=False,
+            session_id=config["session_id"],
             ephemeral_system_prompt=config["system_prompt"],
-            skip_context_files=True, load_soul_identity=False, skip_memory=True,
-            skip_background_review=True, checkpoints_enabled=False,
-            reasoning_config=reasoning, run_budget_seconds=config["timeout_seconds"],
+            skip_context_files=True,
+            load_soul_identity=False,
+            skip_memory=True,
+            skip_background_review=True,
+            checkpoints_enabled=False,
+            reasoning_config=reasoning,
+            run_budget_seconds=config["timeout_seconds"],
         )
         # This bridge captures the Chat Completions response atomically. Hermes'
         # streaming path is a separate private API and is deliberately disabled.
         agent._disable_streaming = True
         result = agent.run_conversation(
-            config["message"], conversation_history=history, task_id=config["session_id"]
+            config["message"],
+            conversation_history=history,
+            task_id=config["session_id"],
         )
     finally:
         reset_runtime_main(runtime_token)
     journal.observe_tools(result.get("messages", []))
     temporary = history_path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(result.get("messages", []), ensure_ascii=False), encoding="utf-8")
+    temporary.write_text(
+        json.dumps(result.get("messages", []), ensure_ascii=False), encoding="utf-8"
+    )
     temporary.replace(history_path)
     reply = result.get("final_response")
-    if (not result.get("completed") or result.get("failed") or result.get("interrupted")
-            or result.get("error") or not isinstance(reply, str) or not reply.strip()):
-        raise RuntimeError("Hermes turn did not complete: " + str(result.get("error") or result.get("failure_reason") or reply or "empty response")[:2000])
+    if (
+        not result.get("completed")
+        or result.get("failed")
+        or result.get("interrupted")
+        or result.get("error")
+        or not isinstance(reply, str)
+        or not reply.strip()
+    ):
+        raise RuntimeError(
+            "Hermes turn did not complete: "
+            + str(
+                result.get("error")
+                or result.get("failure_reason")
+                or reply
+                or "empty response"
+            )[:2000]
+        )
     return {"ok": True, "content": reply, "api_calls": result.get("api_calls", 0)}
 
 
@@ -302,9 +406,12 @@ def main():
     args = parser.parse_args()
     actual = Path("/opt/hermes/roller-revision").read_text().strip()
     if actual != REVISION:
-        raise RuntimeError(f"Hermes revision mismatch: expected {REVISION}, got {actual}")
+        raise RuntimeError(
+            f"Hermes revision mismatch: expected {REVISION}, got {actual}"
+        )
     if args.check:
         from run_agent import AIAgent
+
         assert callable(AIAgent._interruptible_api_call)
         assert callable(AIAgent._flush_messages_to_session_db)
         print("Hermes " + REVISION)

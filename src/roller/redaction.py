@@ -1,4 +1,5 @@
 """Literal secret redaction of trace and log files in bounded memory."""
+
 from __future__ import annotations
 
 import os

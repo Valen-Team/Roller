@@ -96,7 +96,9 @@ def _pull_image_id(runtime: Any, image: str) -> str:
     return inspected.stdout.strip()
 
 
-def _openclaw_dockerfile(source_image: str, harness_image: str, architecture: str) -> str:
+def _openclaw_dockerfile(
+    source_image: str, harness_image: str, architecture: str
+) -> str:
     library_dir, loader = _GLIBC_LAYOUTS[architecture]
     return f"""\
 FROM {harness_image} AS harness

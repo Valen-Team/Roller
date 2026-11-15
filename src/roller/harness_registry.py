@@ -1,4 +1,5 @@
 """Dependency-free Harness capabilities shared by parsing and artifact checks."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,21 +21,50 @@ class HarnessCapabilities:
 
 
 HARNESSES = {
-    "openclaw": HarnessCapabilities("OpenClaw", cache_trace=True,
+    "openclaw": HarnessCapabilities(
+        "OpenClaw",
+        cache_trace=True,
         capture_reader="roller.openclaw_capture:read_openclaw_native",
-        compaction_mode="openclaw", allows_raw_only_actf=True, attach_images=True),
-    "codex": HarnessCapabilities("Codex", capture_reader="roller.codex_capture:read_codex_native",
-        compaction_mode="codex", attach_images=True),
-    "claude-code": HarnessCapabilities("Claude Code", capture_reader="roller.claude_capture:read_claude_native",
-        compaction_mode="claude", attach_images=True),
-    "hermes": HarnessCapabilities("Hermes", capture_reader="roller.bridge_capture:read_bridge_native",
-        capture_reader_kwargs=(("harness", "hermes"),)),
-    "opencode": HarnessCapabilities("OpenCode", capture_reader="roller.opencode_capture:read_opencode_native",
-        compaction_mode="opencode", allows_raw_only_actf=True, attach_images=True),
-    "deepseek": HarnessCapabilities("DeepSeek Harness", capture_reader="roller.bridge_capture:read_bridge_native",
-        capture_reader_kwargs=(("harness", "deepseek"),)),
-    "pi": HarnessCapabilities("Pi Agent", capture_reader="roller.bridge_capture:read_bridge_native",
-        capture_reader_kwargs=(("harness", "pi"),), compaction_mode="pi", attach_images=True),
+        compaction_mode="openclaw",
+        allows_raw_only_actf=True,
+        attach_images=True,
+    ),
+    "codex": HarnessCapabilities(
+        "Codex",
+        capture_reader="roller.codex_capture:read_codex_native",
+        compaction_mode="codex",
+        attach_images=True,
+    ),
+    "claude-code": HarnessCapabilities(
+        "Claude Code",
+        capture_reader="roller.claude_capture:read_claude_native",
+        compaction_mode="claude",
+        attach_images=True,
+    ),
+    "hermes": HarnessCapabilities(
+        "Hermes",
+        capture_reader="roller.bridge_capture:read_bridge_native",
+        capture_reader_kwargs=(("harness", "hermes"),),
+    ),
+    "opencode": HarnessCapabilities(
+        "OpenCode",
+        capture_reader="roller.opencode_capture:read_opencode_native",
+        compaction_mode="opencode",
+        allows_raw_only_actf=True,
+        attach_images=True,
+    ),
+    "deepseek": HarnessCapabilities(
+        "DeepSeek Harness",
+        capture_reader="roller.bridge_capture:read_bridge_native",
+        capture_reader_kwargs=(("harness", "deepseek"),),
+    ),
+    "pi": HarnessCapabilities(
+        "Pi Agent",
+        capture_reader="roller.bridge_capture:read_bridge_native",
+        capture_reader_kwargs=(("harness", "pi"),),
+        compaction_mode="pi",
+        attach_images=True,
+    ),
 }
 HARNESS_NAMES = tuple(HARNESSES)
 

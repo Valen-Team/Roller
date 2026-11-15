@@ -31,9 +31,7 @@ class CodexHarnessTests(unittest.TestCase):
         )
 
     def test_maps_named_host_secret_to_openai_api_key(self) -> None:
-        harness = CodexHarness(
-            CodexConfig(api_key_env="ROLLER_TEST_CODEX_KEY"), 0
-        )
+        harness = CodexHarness(CodexConfig(api_key_env="ROLLER_TEST_CODEX_KEY"), 0)
         with patch.dict(
             os.environ,
             {"ROLLER_TEST_CODEX_KEY": "secret", "HTTPS_PROXY": "proxy"},
@@ -67,27 +65,35 @@ class CodexHarnessTests(unittest.TestCase):
             'model_providers.roller_api.base_url="http://example.test/v1"',
             command,
         )
-        self.assertIn(
-            "model_providers.roller_api.supports_websockets=false", command
-        )
+        self.assertIn("model_providers.roller_api.supports_websockets=false", command)
         self.assertIn("disable_response_storage=true", command)
         self.assertEqual(command[-2:], ["--", "hello"])
 
     def test_attached_images_join_the_first_prompt_only(self) -> None:
         harness = CodexHarness(CodexConfig(workspace_container_path="/work"), 0)
         request = RunRequest(
-            0, Task("task", ("hello",), 0, attach_images=("inputs/a.png", "inputs/b.jpg")),
-            "gpt-5.6-sol", 30,
+            0,
+            Task("task", ("hello",), 0, attach_images=("inputs/a.png", "inputs/b.jpg")),
+            "gpt-5.6-sol",
+            30,
         )
         first = harness._codex_command("container", request, "hello", resume=False)
         self.assertEqual(
             first[-6:],
-            ["--image", "/work/inputs/a.png", "--image", "/work/inputs/b.jpg", "--", "hello"],
+            [
+                "--image",
+                "/work/inputs/a.png",
+                "--image",
+                "/work/inputs/b.jpg",
+                "--",
+                "hello",
+            ],
         )
         resumed = harness._codex_command("container", request, "next", resume=True)
         self.assertNotIn("--image", resumed)
         self.assertNotIn(
-            "--image", harness._codex_command("container", self._request(), "hello", resume=False)
+            "--image",
+            harness._codex_command("container", self._request(), "hello", resume=False),
         )
 
     def test_config_set_follows_roller_overrides_on_every_turn(self) -> None:
@@ -142,7 +148,9 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertEqual(CodexConfig(config_set=setting).config_set, setting)
         with self.assertRaisesRegex(ValueError, "--capture-calls"):
             CodexConfig(
-                api_base="http://example.test/v1", capture_calls=True, config_set=setting
+                api_base="http://example.test/v1",
+                capture_calls=True,
+                config_set=setting,
             )
 
     def test_config_set_roller_provider_requires_api_base(self) -> None:
@@ -193,14 +201,11 @@ class CodexHarnessTests(unittest.TestCase):
                 command = harness._codex_command(
                     "container", self._request(), "hello", resume=False
                 )
-                self.assertIn(
-                    f'model_reasoning_effort="{effort}"', command
-                )
+                self.assertIn(f'model_reasoning_effort="{effort}"', command)
 
     def test_requires_absolute_http_api_base(self) -> None:
         with self.assertRaisesRegex(ValueError, "absolute http"):
             CodexConfig(api_base="example.test/v1")
-
 
     def test_full_wire_trace_requires_api_base_and_host_network(self) -> None:
         with self.assertRaisesRegex(ValueError, "full requires --api-base"):
@@ -214,9 +219,10 @@ class CodexHarnessTests(unittest.TestCase):
 
     def test_wire_proxy_retries_encrypted_content_rejections(self) -> None:
         harness = CodexHarness(CodexConfig(api_base="http://example.test/v1"), 0)
-        with tempfile.TemporaryDirectory() as temporary, patch(
-            "roller.harnesses.codex.WireTraceProxy"
-        ) as proxy:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch("roller.harnesses.codex.WireTraceProxy") as proxy,
+        ):
             harness._start_wire_proxy(Path(temporary))
         self.assertEqual(
             proxy.call_args.kwargs["encrypted_content_retries"],
@@ -225,17 +231,17 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertGreater(CODEX_ENCRYPTED_CONTENT_RETRIES, 0)
         proxy.return_value.start.assert_called_once_with()
 
-
     def test_wire_proxy_shutdown_redacts_sensitive_body_fields(self) -> None:
         harness = CodexHarness(CodexConfig(), 0)
         with tempfile.TemporaryDirectory() as temporary:
             log_path = Path(temporary) / "wire.jsonl"
             log_path.write_text(
-                json.dumps({"body": {"api_key": "secret", "input": "keep"}})
-                + "\n",
+                json.dumps({"body": {"api_key": "secret", "input": "keep"}}) + "\n",
                 encoding="utf-8",
             )
-            proxy = MagicMock(log_path=log_path, recording_error=None, responses_tools_path=None)
+            proxy = MagicMock(
+                log_path=log_path, recording_error=None, responses_tools_path=None
+            )
             harness._wire_proxy = proxy
 
             harness._stop_wire_proxy()

@@ -109,7 +109,9 @@ def _resolve_environment(
     return value
 
 
-def _mapping(config: Mapping[str, Any], key: str, *, required: bool = False) -> dict[str, Any]:
+def _mapping(
+    config: Mapping[str, Any], key: str, *, required: bool = False
+) -> dict[str, Any]:
     value = config.get(key)
     if value is None and not required:
         return {}
@@ -360,9 +362,7 @@ def _openclaw_model_config(
         provider_id = "roller"
         upstream_model_id = model_id
     if not provider_id or not upstream_model_id or "/" in provider_id:
-        raise ValueError(
-            "model.provider must be a non-empty OpenClaw provider name"
-        )
+        raise ValueError("model.provider must be a non-empty OpenClaw provider name")
     base_url = _required_string(model, "base_url", "model")
     api_key_env = _required_string(model, "api_key_env", "model")
     protocol = str(model.get("api_protocol") or "openai-completions")
@@ -460,9 +460,7 @@ def load_bench_run_plan(
         "configuration",
     )
     if resolved.get("schema_version") != BENCH_RUN_SCHEMA:
-        raise ValueError(
-            f"schema_version must be {BENCH_RUN_SCHEMA!r}"
-        )
+        raise ValueError(f"schema_version must be {BENCH_RUN_SCHEMA!r}")
 
     benchmark = _mapping(resolved, "benchmark", required=True)
     model = _mapping(resolved, "model", required=True)
@@ -507,9 +505,7 @@ def load_bench_run_plan(
     benchmark_root = _required_string(benchmark, "root", "benchmark")
     harness_id = _required_string(harness, "id", "harness")
     if harness_id not in HARNESS_NAMES:
-        raise ValueError(
-            f"harness.id must be one of: {', '.join(HARNESS_NAMES)}"
-        )
+        raise ValueError(f"harness.id must be one of: {', '.join(HARNESS_NAMES)}")
     model_id = _required_string(model, "id", "model")
     model_provider = _optional_string(model, "provider", "model")
     base_url = _optional_string(model, "base_url", "model")
@@ -551,9 +547,13 @@ def load_bench_run_plan(
         argv.extend(("--bench-category", category))
     for task_id in _string_list(benchmark, "task_ids", "benchmark"):
         argv.extend(("--bench-task-id", task_id))
-    _append_value(argv, "--bench-variant", _optional_string(benchmark, "variant", "benchmark"))
+    _append_value(
+        argv, "--bench-variant", _optional_string(benchmark, "variant", "benchmark")
+    )
     if "timeout_multiplier" in benchmark:
-        _append_value(argv, "--bench-timeout-multiplier", benchmark["timeout_multiplier"])
+        _append_value(
+            argv, "--bench-timeout-multiplier", benchmark["timeout_multiplier"]
+        )
     benchmark_extra = _mapping(benchmark, "extra")
     _append_benchmark_extra(argv, benchmark_id, benchmark_extra)
 
@@ -622,7 +622,9 @@ def load_bench_run_plan(
 
     redacted = _redact(resolved)
     digest = hashlib.sha256(
-        json.dumps(redacted, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            redacted, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
     ).hexdigest()
     provenance = {
         "schema_version": BENCH_RUN_SCHEMA,

@@ -5,6 +5,7 @@ Hermes, OpenCode, DeepSeek and Pi each ship a ``runner.py`` under
 ``result.json`` and appends to a native journal. This module owns the Docker
 side of that contract; subclasses declare what differs per Harness.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -32,7 +33,11 @@ from roller.harnesses.container import (
     docker_run_args,
     output_collection_metadata,
 )
-from roller.harnesses.docker import DockerRuntime, remove_container, warn_if_image_changed
+from roller.harnesses.docker import (
+    DockerRuntime,
+    remove_container,
+    warn_if_image_changed,
+)
 from roller.models import HarnessResult, RunRequest
 from roller.redaction import REDACTED, redact_file_literals
 from roller.storage import atomic_write_json
@@ -52,23 +57,46 @@ def validate_bridge_config(config: Any, label: str) -> None:
         raise ValueError(f"{label} container user must be non-empty or None")
     if not config.workspace_container_path.startswith("/"):
         raise ValueError(f"{label} workspace container path must be absolute")
-    if not all(ENV_NAME.fullmatch(name) for name in (config.api_key_env, *config.pass_env)):
+    if not all(
+        ENV_NAME.fullmatch(name) for name in (config.api_key_env, *config.pass_env)
+    ):
         raise ValueError(f"invalid {label} environment variable name")
     if config.api_base:
         try:
             parsed = urlsplit(config.api_base)
             parsed.port
-            valid = parsed.scheme in {"http", "https"} and parsed.hostname and not (parsed.username or parsed.password or parsed.query or parsed.fragment)
+            valid = (
+                parsed.scheme in {"http", "https"}
+                and parsed.hostname
+                and not (
+                    parsed.username
+                    or parsed.password
+                    or parsed.query
+                    or parsed.fragment
+                )
+            )
         except ValueError:
             valid = False
         if not valid:
-            raise ValueError(f"{label} API base must be an absolute http(s) URL without credentials, query or fragment")
+            raise ValueError(
+                f"{label} API base must be an absolute http(s) URL without credentials, query or fragment"
+            )
     if config.wire_trace_mode not in {"off", "actf", "full"}:
         raise ValueError(f"{label} wire trace mode must be off|actf|full")
-    if config.wire_trace_mode == "full" and (not config.api_base or config.network != "host"):
-        raise ValueError(f"{label} --wire-trace full requires --api-base and --network host")
-    if config.capture_calls and (not config.api_base or config.network != "host" or config.wire_trace_mode == "off"):
-        raise ValueError(f"{label} call capture requires --api-base, --network host and wire tracing")
+    if config.wire_trace_mode == "full" and (
+        not config.api_base or config.network != "host"
+    ):
+        raise ValueError(
+            f"{label} --wire-trace full requires --api-base and --network host"
+        )
+    if config.capture_calls and (
+        not config.api_base
+        or config.network != "host"
+        or config.wire_trace_mode == "off"
+    ):
+        raise ValueError(
+            f"{label} call capture requires --api-base, --network host and wire tracing"
+        )
 
 
 def positive_int(value: Any) -> bool:
@@ -82,8 +110,13 @@ def validate_step_limits(config: Any, label: str) -> None:
         raise ValueError(f"{label} max steps must be a positive integer")
     if not positive_int(config.context_length) or config.context_length < 1024:
         raise ValueError(f"{label} context length must be at least 1024 tokens")
-    if not positive_int(config.output_tokens) or config.output_tokens >= config.context_length:
-        raise ValueError(f"{label} output tokens must be positive and smaller than context length")
+    if (
+        not positive_int(config.output_tokens)
+        or config.output_tokens >= config.context_length
+    ):
+        raise ValueError(
+            f"{label} output tokens must be positive and smaller than context length"
+        )
 
 
 class BridgeSession(InteractiveSession):
@@ -109,13 +142,20 @@ class BridgeSession(InteractiveSession):
     attaches_images: ClassVar[bool] = False
 
     def __init__(
-        self, harness: BridgeHarness, request: RunRequest, output_dir: Path,
-        attempt: int, *, collect_outputs: bool = True,
+        self,
+        harness: BridgeHarness,
+        request: RunRequest,
+        output_dir: Path,
+        attempt: int,
+        *,
+        collect_outputs: bool = True,
     ) -> None:
         self.harness, self.request = harness, request
         self.output_dir, self.attempt = Path(output_dir), attempt
         self.collect_outputs = collect_outputs
-        self.container = f"roller-{harness.name}-{request.index}-{uuid.uuid4().hex[:12]}"
+        self.container = (
+            f"roller-{harness.name}-{request.index}-{uuid.uuid4().hex[:12]}"
+        )
         self.container_started = False
         self.transcript_container_path = self.state_dir + "/trace.jsonl"
         self.home = f"/roller/{harness.name}-home"
@@ -126,7 +166,11 @@ class BridgeSession(InteractiveSession):
         self.version: str | None = None
         self.proxy: WireTraceProxy | None = None
         config = harness.config
-        self.capture = CaptureRuntime(self.output_dir, attempt, harness.name, config.capture_debug) if config.capture_calls else None
+        self.capture = (
+            CaptureRuntime(self.output_dir, attempt, harness.name, config.capture_debug)
+            if config.capture_calls
+            else None
+        )
         self.capture_metadata: dict[str, Any] = {}
         self.warnings: list[str] = []
         self.trajectory_conversion: dict[str, Any] | None = None
@@ -167,7 +211,9 @@ class BridgeSession(InteractiveSession):
 
     def inherited_environment(self) -> dict[str, str]:
         config = self.harness.config
-        return {name: os.environ[name] for name in config.pass_env if os.environ.get(name)}
+        return {
+            name: os.environ[name] for name in config.pass_env if os.environ.get(name)
+        }
 
     def system_prompt(self) -> str:
         config, task = self.harness.config, self.request.task
@@ -208,7 +254,11 @@ class BridgeSession(InteractiveSession):
         )
 
     def checked(
-        self, args: Sequence[str], description: str, *, timeout: float = 60,
+        self,
+        args: Sequence[str],
+        description: str,
+        *,
+        timeout: float = 60,
     ) -> subprocess.CompletedProcess[str]:
         limit = min(timeout, self.remaining())
         try:
@@ -220,14 +270,20 @@ class BridgeSession(InteractiveSession):
                 raise TimeoutError(f"{self.label} task timed out") from None
             raise RuntimeError(f"{description} timed out after {limit:g}s") from None
         if result.returncode:
-            detail = self.redact((result.stderr or result.stdout or "unknown error").strip())[-2000:]
+            detail = self.redact(
+                (result.stderr or result.stdout or "unknown error").strip()
+            )[-2000:]
             raise RuntimeError(f"{description} failed: {detail}")
         return result
 
     def start(self) -> None:
         if self.container_started or self._result is not None:
             raise RuntimeError(f"{self.label} session has already started or finished")
-        config, task, bundle = self.harness.config, self.request.task, self.request.bundle
+        config, task, bundle = (
+            self.harness.config,
+            self.request.task,
+            self.request.bundle,
+        )
         if task.attach_images and not self.attaches_images:
             raise ValueError(f"{self.label} does not support files.attach_images")
         self.effort()
@@ -235,32 +291,61 @@ class BridgeSession(InteractiveSession):
         environment = self.inherited_environment()
         for name in task.env_names:
             if not ENV_NAME.fullmatch(name) or not os.environ.get(name):
-                raise ValueError(f"task requires missing or invalid environment variable: {name}")
+                raise ValueError(
+                    f"task requires missing or invalid environment variable: {name}"
+                )
             environment[name] = os.environ[name]
         if not os.environ.get(config.api_key_env):
-            raise ValueError(f"{self.label} requires a non-empty API key in {config.api_key_env}")
+            raise ValueError(
+                f"{self.label} requires a non-empty API key in {config.api_key_env}"
+            )
         environment[self.api_key_name] = os.environ[config.api_key_env]
         api_base = config.api_base or self.default_api_base
         if config.wire_trace_mode == "full" or config.capture_calls:
-            self.proxy = WireTraceProxy(api_base, self.output_dir / "wire_trace.jsonl", mode="full",
+            self.proxy = WireTraceProxy(
+                api_base,
+                self.output_dir / "wire_trace.jsonl",
+                mode="full",
                 capture_recorder=self.capture.recorder if self.capture else None,
-                capture_identity_header="x-roller-native-session-id" if self.capture else None)
+                capture_identity_header="x-roller-native-session-id"
+                if self.capture
+                else None,
+            )
             self.proxy.start()
             api_base = self.proxy.proxy_base_url
         environment.update(self.harness_environment(api_base))
         self.environment = environment
-        self.image_digest = self.checked(["image", "inspect", config.docker_image, "--format", "{{.Id}}"], f"{self.label} image inspection").stdout.strip()
-        warn_if_image_changed(logger, config.docker_image, config.preflight_image_digest, self.image_digest)
-        args = docker_run_args(self.harness.name, self.container, config, environment, self.request)
+        self.image_digest = self.checked(
+            ["image", "inspect", config.docker_image, "--format", "{{.Id}}"],
+            f"{self.label} image inspection",
+        ).stdout.strip()
+        warn_if_image_changed(
+            logger,
+            config.docker_image,
+            config.preflight_image_digest,
+            self.image_digest,
+        )
+        args = docker_run_args(
+            self.harness.name, self.container, config, environment, self.request
+        )
         # Run the image that was inspected, so a tag moved in between cannot
         # make the recorded id differ from the image in use.
-        args += ["--entrypoint", "/bin/bash", self.image_digest, "-c", "tail -f /dev/null"]
+        args += [
+            "--entrypoint",
+            "/bin/bash",
+            self.image_digest,
+            "-c",
+            "tail -f /dev/null",
+        ]
         # Mark before run: a timed-out Docker client may already have created it.
         self.container_started = True
         self.checked(args, f"{self.label} container startup")
         workspace = shlex.quote(config.workspace_container_path)
         output = shlex.quote(f"{config.workspace_container_path}/{task.output_dir}")
-        script = f"mkdir -p {workspace} {self.state_dir} {self.home} /roller/task" + self.setup_script()
+        script = (
+            f"mkdir -p {workspace} {self.state_dir} {self.home} /roller/task"
+            + self.setup_script()
+        )
         if bundle and (bundle.legacy_workspace or task.input_mode == "copy"):
             script += f" && cp -a {INPUTS_CONTAINER_PATH}/. {workspace}/ && chmod -R u+w {workspace}"
         elif task.workspace and not bundle:
@@ -268,13 +353,41 @@ class BridgeSession(InteractiveSession):
         if bundle:
             script += f" && cp -a {CONTEXT_CONTAINER_PATH}/. {workspace}/"
         script += f" && rm -rf {output} && mkdir -p {output} && ln -s {output} {OUTPUTS_CONTAINER_PATH}"
-        self.checked(["exec", self.container, "/bin/bash", "-c", script], f"{self.label} workspace setup")
-        self.checked(["cp", str(self.runner_source), f"{self.container}:{self.runner}"], f"{self.label} runner copy")
+        self.checked(
+            ["exec", self.container, "/bin/bash", "-c", script],
+            f"{self.label} workspace setup",
+        )
+        self.checked(
+            ["cp", str(self.runner_source), f"{self.container}:{self.runner}"],
+            f"{self.label} runner copy",
+        )
         for name, destination, description in self.assets:
-            self.checked(["cp", str(self.runner_source.with_name(name)), f"{self.container}:{destination}"], f"{self.label} {description}")
+            self.checked(
+                [
+                    "cp",
+                    str(self.runner_source.with_name(name)),
+                    f"{self.container}:{destination}",
+                ],
+                f"{self.label} {description}",
+            )
         for command in task.setup_commands:
-            self.checked(["exec", "-w", config.workspace_container_path, self.container, "/bin/bash", "-c", command], "task setup", timeout=self.remaining())
-        self.version = self.checked(["exec", self.container, self.python, self.runner, "--check"], f"{self.label} {self.version_check}").stdout.strip()
+            self.checked(
+                [
+                    "exec",
+                    "-w",
+                    config.workspace_container_path,
+                    self.container,
+                    "/bin/bash",
+                    "-c",
+                    command,
+                ],
+                "task setup",
+                timeout=self.remaining(),
+            )
+        self.version = self.checked(
+            ["exec", self.container, self.python, self.runner, "--check"],
+            f"{self.label} {self.version_check}",
+        ).stdout.strip()
 
     def send(self, message: str, timeout_seconds: float) -> TurnResult:
         if not self.container_started or self._result is not None:
@@ -286,47 +399,95 @@ class BridgeSession(InteractiveSession):
         config = self.harness.config
         self.turns += 1
         payload = {
-            "capture_calls": config.capture_calls, "session_id": self.container,
-            "model": self.request.model, "message": message, "thinking": self.effort(),
-            "timeout_seconds": timeout, "system_prompt": self.system_prompt(),
+            "capture_calls": config.capture_calls,
+            "session_id": self.container,
+            "model": self.request.model,
+            "message": message,
+            "thinking": self.effort(),
+            "timeout_seconds": timeout,
+            "system_prompt": self.system_prompt(),
             **self.turn_options(timeout),
         }
         config_path = self.output_dir / f".{self.harness.name}-turn.json"
         atomic_write_json(config_path, payload)
-        log_path = self.output_dir / "rollout" / f"{self.harness.name}.attempt-{self.attempt}.log"
+        log_path = (
+            self.output_dir
+            / "rollout"
+            / f"{self.harness.name}.attempt-{self.attempt}.log"
+        )
         process = None
         try:
-            self.checked(["cp", str(config_path), f"{self.container}:{self.state_dir}/turn.json"], f"{self.label} turn configuration")
-            args = ["exec", "-w", config.workspace_container_path, self.container, self.python, self.runner, "--config", self.state_dir + "/turn.json"]
+            self.checked(
+                [
+                    "cp",
+                    str(config_path),
+                    f"{self.container}:{self.state_dir}/turn.json",
+                ],
+                f"{self.label} turn configuration",
+            )
+            args = [
+                "exec",
+                "-w",
+                config.workspace_container_path,
+                self.container,
+                self.python,
+                self.runner,
+                "--config",
+                self.state_dir + "/turn.json",
+            ]
             process = self.harness.runtime.popen(args, log_path, append=True)
             try:
-                return_code = process.wait(timeout=max(0.001, timeout - (time.monotonic() - started)))
+                return_code = process.wait(
+                    timeout=max(0.001, timeout - (time.monotonic() - started))
+                )
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=10)
                 # Stop the container's exec process before collecting partial artifacts.
                 self.harness.runtime.run(["kill", self.container], timeout=30)
                 raise TimeoutError(f"{self.label} turn timed out") from None
-            response = self.checked(["exec", self.container, "cat", self.state_dir + "/result.json"], f"{self.label} turn result")
+            response = self.checked(
+                ["exec", self.container, "cat", self.state_dir + "/result.json"],
+                f"{self.label} turn result",
+            )
             result = json.loads(response.stdout)
             if result.get("timeout") is True:
                 self.harness.runtime.run(["kill", self.container], timeout=30)
                 raise TimeoutError(f"{self.label} turn timed out")
-            if return_code or result.get("ok") is not True or not isinstance(result.get("content"), str) or not result["content"].strip():
-                raise RuntimeError(self.redact(str(result.get("error") or f"{self.label} runner exited with code {return_code}")))
-            return TurnResult(result["content"], time.monotonic() - started, return_code)
+            if (
+                return_code
+                or result.get("ok") is not True
+                or not isinstance(result.get("content"), str)
+                or not result["content"].strip()
+            ):
+                raise RuntimeError(
+                    self.redact(
+                        str(
+                            result.get("error")
+                            or f"{self.label} runner exited with code {return_code}"
+                        )
+                    )
+                )
+            return TurnResult(
+                result["content"], time.monotonic() - started, return_code
+            )
         finally:
             config_path.unlink(missing_ok=True)
             self.harness.runtime.close_log(process)
             if log_path.exists():
                 self.redact_file(log_path, errors="replace")
 
-    def _collect_trace(self, problems: list[str]) -> tuple[Path | None, Path | None, dict[str, int | float]]:
+    def _collect_trace(
+        self, problems: list[str]
+    ) -> tuple[Path | None, Path | None, dict[str, int | float]]:
         runtime = self.harness.runtime
         usage: dict[str, int | float] = dict(ZERO_USAGE)
         trace = self.output_dir / "rollout" / "trace.jsonl"
         trace.parent.mkdir(parents=True, exist_ok=True)
-        copied = runtime.run(["cp", f"{self.container}:{self.transcript_container_path}", str(trace)], timeout=30)
+        copied = runtime.run(
+            ["cp", f"{self.container}:{self.transcript_container_path}", str(trace)],
+            timeout=30,
+        )
         if copied.returncode or not trace.is_file() or not trace.stat().st_size:
             problems.append(f"no {self.label} journal was collected")
             return None, None, usage
@@ -347,7 +508,11 @@ class BridgeSession(InteractiveSession):
                 # observed the workspace; a missing text-only trajectory must
                 # not turn a valid evaluation sample into an agent error.
                 self.warnings.append(message)
-                self.trajectory_conversion = {"status": "unavailable", "target": "actf", "error": self.redact(str(exc))}
+                self.trajectory_conversion = {
+                    "status": "unavailable",
+                    "target": "actf",
+                    "error": self.redact(str(exc)),
+                }
             return trace, None, usage
 
     def finish(self, status: str, error: str | None = None) -> HarnessResult:
@@ -364,15 +529,24 @@ class BridgeSession(InteractiveSession):
                 try:
                     trace, trajectory, usage = self._collect_trace(problems)
                 except Exception as exc:
-                    problems.append(f"{self.label} trace conversion failed: " + self.redact(str(exc)))
+                    problems.append(
+                        f"{self.label} trace conversion failed: "
+                        + self.redact(str(exc))
+                    )
                 if self.collect_outputs:
                     collected, copy_error = collect_outputs(
-                        runtime, self.container, self.request, self.output_dir,
-                        config.workspace_container_path, timeout=30,
+                        runtime,
+                        self.container,
+                        self.request,
+                        self.output_dir,
+                        config.workspace_container_path,
+                        timeout=30,
                     )
                     if copy_error is not None:
                         problems.append("output collection failed")
-                    output_metadata = output_collection_metadata(collected, self.request, self.output_dir)
+                    output_metadata = output_collection_metadata(
+                        collected, self.request, self.output_dir
+                    )
                     if not collected.passed:
                         problems.append("unsafe output files were rejected")
             else:
@@ -393,42 +567,78 @@ class BridgeSession(InteractiveSession):
                     try:
                         self.capture.add_native(trace, self.native_trace_name)
                     except OSError as exc:
-                        self.capture.errors.append(f"native evidence collection failed: {self.native_trace_name}: {exc}")
+                        self.capture.errors.append(
+                            f"native evidence collection failed: {self.native_trace_name}: {exc}"
+                        )
                 self.collect_native_evidence(usage)
                 if self.redact_capture_errors:
-                    self.capture_metadata = self.capture.finish(status, error_formatter=lambda exc: self.redact(str(exc)))
+                    self.capture_metadata = self.capture.finish(
+                        status, error_formatter=lambda exc: self.redact(str(exc))
+                    )
                 else:
                     self.capture_metadata = self.capture.finish(status)
             if problems and status == "ok":
                 status, error = "error", "; ".join(problems)
-            retained = self.container_started and config.keep_container_on_error and status != "ok"
+            retained = (
+                self.container_started
+                and config.keep_container_on_error
+                and status != "ok"
+            )
             if self.container_started and not retained:
                 try:
                     removed = remove_container(runtime, self.container)
                     if removed.returncode:
-                        logger.warning("%s container removal failed: %s", self.label, self.container)
+                        logger.warning(
+                            "%s container removal failed: %s",
+                            self.label,
+                            self.container,
+                        )
                 except Exception:
-                    logger.warning("%s container removal failed: %s", self.label, self.container, exc_info=True)
+                    logger.warning(
+                        "%s container removal failed: %s",
+                        self.label,
+                        self.container,
+                        exc_info=True,
+                    )
         elapsed = time.monotonic() - self.started
         usage["elapsed_seconds"] = round(elapsed, 3)
         provenance = build_provenance(
-            self.request, harness=self.harness.name, docker_image=config.docker_image,
+            self.request,
+            harness=self.harness.name,
+            docker_image=config.docker_image,
             docker_image_digest=self.image_digest,
             api_base_urls=[config.api_base or self.default_api_base],
-            environment=self.environment, attempt=self.attempt, started_at=self.started_at,
-            finished_at=datetime.now(timezone.utc).isoformat(), **self.version_fields(),
+            environment=self.environment,
+            attempt=self.attempt,
+            started_at=self.started_at,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            **self.version_fields(),
         )
         self._result = HarnessResult(
-            status=status, error=self.redact(error) if error else None, elapsed_seconds=elapsed, usage=usage,
+            status=status,
+            error=self.redact(error) if error else None,
+            elapsed_seconds=elapsed,
+            usage=usage,
             trace_path=trace.relative_to(self.output_dir).as_posix() if trace else None,
-            trajectory_path=trajectory.relative_to(self.output_dir).as_posix() if trajectory else None,
+            trajectory_path=trajectory.relative_to(self.output_dir).as_posix()
+            if trajectory
+            else None,
             metadata={
-                **self.capture_metadata, "raw_trace_schema": self.raw_trace_schema, **self.version_fields(),
-                "provenance": provenance, "output_collection": output_metadata, "turn_count": self.turns,
+                **self.capture_metadata,
+                "raw_trace_schema": self.raw_trace_schema,
+                **self.version_fields(),
+                "provenance": provenance,
+                "output_collection": output_metadata,
+                "turn_count": self.turns,
                 **self.result_metadata(),
                 "retained_container": self.container if retained else None,
-                "settings": {"reasoning_effort": resolve_thinking(self.request.task.thinking, config.reasoning_effort),
-                             **self.settings(), "keep_thinking": config.keep_thinking},
+                "settings": {
+                    "reasoning_effort": resolve_thinking(
+                        self.request.task.thinking, config.reasoning_effort
+                    ),
+                    **self.settings(),
+                    "keep_thinking": config.keep_thinking,
+                },
             },
         )
         return self._result
@@ -437,15 +647,23 @@ class BridgeSession(InteractiveSession):
 class BridgeHarness(InteractiveHarness):
     session_class: ClassVar[type[BridgeSession]]
 
-    def __init__(self, config: Any, worker_slot: int, runtime: DockerRuntime | None = None):
+    def __init__(
+        self, config: Any, worker_slot: int, runtime: DockerRuntime | None = None
+    ):
         self.config, self.worker_slot = config, worker_slot
         self.runtime = runtime or DockerRuntime(config.docker_binary)
 
     def create_session(
-        self, request: RunRequest, output_dir: Path, attempt: int, *,
+        self,
+        request: RunRequest,
+        output_dir: Path,
+        attempt: int,
+        *,
         collect_outputs: bool = True,
     ) -> BridgeSession:
-        return self.session_class(self, request, output_dir, attempt, collect_outputs=collect_outputs)
+        return self.session_class(
+            self, request, output_dir, attempt, collect_outputs=collect_outputs
+        )
 
     def run(self, request: RunRequest, output_dir: Path, attempt: int) -> HarnessResult:
         session = self.create_session(request, output_dir, attempt)
@@ -453,7 +671,11 @@ class BridgeHarness(InteractiveHarness):
         try:
             session.start()
             for index, message in enumerate(request.task.prompts):
-                if session.supports_reset and index < len(request.task.new_session) and request.task.new_session[index]:
+                if (
+                    session.supports_reset
+                    and index < len(request.task.new_session)
+                    and request.task.new_session[index]
+                ):
                     session.reset()
                 session.send(message, session.remaining())
         except (TimeoutError, subprocess.TimeoutExpired):

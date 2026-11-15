@@ -52,11 +52,7 @@ def warn_if_image_changed(
     preflight_digest: str | None,
     rollout_digest: str | None,
 ) -> None:
-    if (
-        preflight_digest
-        and rollout_digest
-        and preflight_digest != rollout_digest
-    ):
+    if preflight_digest and rollout_digest and preflight_digest != rollout_digest:
         logger.warning(
             "Docker image %s changed after preflight: expected %s, found %s; "
             "the rollout uses and records the current image",

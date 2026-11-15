@@ -5,7 +5,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from roller.harnesses.bridge import BridgeHarness, BridgeSession, validate_bridge_config, validate_step_limits
+from roller.harnesses.bridge import (
+    BridgeHarness,
+    BridgeSession,
+    validate_bridge_config,
+    validate_step_limits,
+)
 from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
 from roller.native_images import attached_images
 from roller.pi_actf import convert_pi_trace, extract_pi_usage
@@ -24,7 +29,9 @@ PI_TOOLS = ("read", "bash", "edit", "write", "grep", "find", "ls")
 def pi_effort(value: str | None) -> str | None:
     value = normalize_thinking(value, field="Pi reasoning effort")
     if value not in {None, "off", "minimal", "low", "medium", "high", "xhigh", "max"}:
-        raise ValueError("Pi reasoning effort must be off|minimal|low|medium|high|xhigh|max; provider support is required")
+        raise ValueError(
+            "Pi reasoning effort must be off|minimal|low|medium|high|xhigh|max; provider support is required"
+        )
     return value
 
 
@@ -51,7 +58,9 @@ class PiConfig:
     preflight_image_digest: str | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "reasoning_effort", pi_effort(self.reasoning_effort) or "off")
+        object.__setattr__(
+            self, "reasoning_effort", pi_effort(self.reasoning_effort) or "off"
+        )
         if self.input_modalities not in (("text",), ("text", "image")):
             raise ValueError("Pi input modalities must be text or text,image")
         validate_bridge_config(self, "Pi")
@@ -70,27 +79,49 @@ class PiSession(BridgeSession):
     attaches_images = True
 
     def effort(self) -> str | None:
-        return pi_effort(resolve_thinking(self.request.task.thinking, self.harness.config.reasoning_effort))
+        return pi_effort(
+            resolve_thinking(
+                self.request.task.thinking, self.harness.config.reasoning_effort
+            )
+        )
 
     def harness_environment(self, api_base: str) -> dict[str, str]:
-        return dict(PI_BASE_URL=api_base, HOME=self.home, PI_CODING_AGENT_DIR=self.home + "/agent", PI_OFFLINE="1")
+        return dict(
+            PI_BASE_URL=api_base,
+            HOME=self.home,
+            PI_CODING_AGENT_DIR=self.home + "/agent",
+            PI_OFFLINE="1",
+        )
 
     def turn_options(self, timeout: float) -> dict[str, Any]:
         # Pass explicit Context paths while keeping Pi resource discovery isolated.
         config = self.harness.config
-        images = attached_images(self.request, config.workspace_container_path, first_message=self.turns == 1)
+        images = attached_images(
+            self.request, config.workspace_container_path, first_message=self.turns == 1
+        )
         if images and "image" not in config.input_modalities:
-            raise ValueError("files.attach_images requires --pi-input-modalities text,image")
+            raise ValueError(
+                "files.attach_images requires --pi-input-modalities text,image"
+            )
         return {
-            "turn": self.turns, "max_steps": config.max_steps,
-            "context_length": config.context_length, "output_tokens": config.output_tokens,
-            "input_modalities": list(config.input_modalities), "tools": list(PI_TOOLS),
-            "context_paths": [item.target for item in self.request.task.context_files if item.role != "skill"],
+            "turn": self.turns,
+            "max_steps": config.max_steps,
+            "context_length": config.context_length,
+            "output_tokens": config.output_tokens,
+            "input_modalities": list(config.input_modalities),
+            "tools": list(PI_TOOLS),
+            "context_paths": [
+                item.target
+                for item in self.request.task.context_files
+                if item.role != "skill"
+            ],
             **({"images": images} if images else {}),
         }
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:
-        return convert_pi_trace(trace, destination, keep_thinking=self.harness.config.keep_thinking)
+        return convert_pi_trace(
+            trace, destination, keep_thinking=self.harness.config.keep_thinking
+        )
 
     def extract_usage(self, trace: Path) -> dict[str, int | float]:
         return extract_pi_usage(trace)
@@ -100,15 +131,22 @@ class PiSession(BridgeSession):
 
     def settings(self) -> dict[str, Any]:
         config = self.harness.config
-        return {"max_steps": config.max_steps, "context_length": config.context_length, "output_tokens": config.output_tokens,
-                "input_modalities": list(config.input_modalities), "tools": list(PI_TOOLS)}
+        return {
+            "max_steps": config.max_steps,
+            "context_length": config.context_length,
+            "output_tokens": config.output_tokens,
+            "input_modalities": list(config.input_modalities),
+            "tools": list(PI_TOOLS),
+        }
 
     def collect_diagnostics(self) -> None:
         # Startup/import failures may precede the native journal.
         try:
             log = self.output_dir / "rollout" / f"pi.runtime.attempt-{self.attempt}.log"
             log.parent.mkdir(parents=True, exist_ok=True)
-            self.harness.runtime.run(["cp", f"{self.container}:{STATE}/runtime.log", str(log)], timeout=30)
+            self.harness.runtime.run(
+                ["cp", f"{self.container}:{STATE}/runtime.log", str(log)], timeout=30
+            )
             if log.is_file():
                 self.redact_file(log, errors="replace")
         except Exception:

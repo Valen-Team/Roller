@@ -152,7 +152,11 @@ def _assistant_parts(
 
 def _usage_number(usage: Mapping[str, Any], name: str) -> int:
     value = usage.get(name)
-    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+    return (
+        int(value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else 0
+    )
 
 
 def _metric(usage: Any, stop_reason: Any) -> dict[str, Any]:
@@ -327,7 +331,6 @@ def claude_code_events_to_actf(
     notification_inputs: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Convert Claude Code user/assistant session events to ``ACTF_v1.0``."""
-
 
     raw_rows = list(events)
     seen_uuids: set[str] = set()
@@ -504,7 +507,10 @@ def claude_code_events_to_actf(
         if not raw_text.strip():
             continue
         selected: str | None = None
-        if isinstance(row.get("origin"), Mapping) and row["origin"].get("kind") == "task-notification":
+        if (
+            isinstance(row.get("origin"), Mapping)
+            and row["origin"].get("kind") == "task-notification"
+        ):
             # Native completion is input to the root model, not child output
             # to flatten or another user-supplied prompt to filter out.
             selected = (notification_inputs or {}).get(raw_text, raw_text)
@@ -523,7 +529,6 @@ def claude_code_events_to_actf(
                 user_content(user_blocks, selected) if has_image else selected,
             )
             pending_user_time = pending_user_time or timestamp
-
 
     steps: list[dict[str, Any]] = []
     for turn in turns:
@@ -546,7 +551,11 @@ def claude_code_events_to_actf(
         normalized_tools = _inferred_tools(steps)
 
     first_time = next(
-        (_timestamp(row.get("timestamp")) for row in rows if _timestamp(row.get("timestamp"))),
+        (
+            _timestamp(row.get("timestamp"))
+            for row in rows
+            if _timestamp(row.get("timestamp"))
+        ),
         "",
     )
     last_time = next(
@@ -586,19 +595,34 @@ def convert_claude_code_trace(
         if wire_trace.is_file():
             for entry in _read_events(wire_trace):
                 body = entry.get("body", {})
-                for message in body.get("messages", []) if isinstance(body, Mapping) else []:
-                    if not isinstance(message, Mapping) or message.get("role") != "user":
+                for message in (
+                    body.get("messages", []) if isinstance(body, Mapping) else []
+                ):
+                    if (
+                        not isinstance(message, Mapping)
+                        or message.get("role") != "user"
+                    ):
                         continue
                     content = message.get("content", [])
                     if isinstance(content, str):
                         texts = [content]
                     elif isinstance(content, list):
-                        texts = [b.get("text", "") for b in content if isinstance(b, Mapping)]
+                        texts = [
+                            b.get("text", "") for b in content if isinstance(b, Mapping)
+                        ]
                     else:
                         texts = []
                     for text in texts:
-                        if isinstance(text, str) and text.startswith("[SYSTEM NOTIFICATION - NOT USER INPUT]\n") and "<task-notification>" in text:
-                            notification_inputs[text[text.index("<task-notification>"):]] = text
+                        if (
+                            isinstance(text, str)
+                            and text.startswith(
+                                "[SYSTEM NOTIFICATION - NOT USER INPUT]\n"
+                            )
+                            and "<task-notification>" in text
+                        ):
+                            notification_inputs[
+                                text[text.index("<task-notification>") :]
+                            ] = text
     trajectory = claude_code_events_to_actf(
         _read_events(source),
         user_messages=user_messages,

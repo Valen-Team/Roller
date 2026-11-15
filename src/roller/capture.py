@@ -3,6 +3,7 @@
 The HTTP recorder never guesses an agent from timing or prompt text. Attribution
 is resolved after collection using response IDs and native assistant IDs.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -15,9 +16,15 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO
-from roller.capture_states import CallExecutionStatus, CaptureStatus, ExportStatus, IdentityStatus
+from roller.capture_states import (
+    CallExecutionStatus,
+    CaptureStatus,
+    ExportStatus,
+    IdentityStatus,
+)
 
 logger = logging.getLogger(__name__)
+
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows = []
@@ -48,8 +55,11 @@ class CallRecorder:
 
     def write(self, row: dict[str, Any]) -> None:
         try:
-            row = {"schema_version": "roller.capture-event/v1",
-                   "timestamp": datetime.now(timezone.utc).isoformat(), **row}
+            row = {
+                "schema_version": "roller.capture-event/v1",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                **row,
+            }
             with self._lock:
                 if self.sealed:
                     return
@@ -58,15 +68,29 @@ class CallRecorder:
         except Exception as exc:
             self.error = str(exc)
 
-    def begin(self, seq: int, path: str, body: dict[str, Any], *, native_identity: dict[str, str] | None = None) -> str:
+    def begin(
+        self,
+        seq: int,
+        path: str,
+        body: dict[str, Any],
+        *,
+        native_identity: dict[str, str] | None = None,
+    ) -> str:
         call_id = f"{self.scope_id}:{self.directory.name}:call-{seq:08d}"
         with self._lock:
             if self.sealed:
                 return call_id
             self.request_seqs.add(seq)
-            self.write({"type": "request", "call_id": call_id,
-                        "request_seq": seq, "path": path, "body": body,
-                        **({"native_identity": native_identity} if native_identity else {})})
+            self.write(
+                {
+                    "type": "request",
+                    "call_id": call_id,
+                    "request_seq": seq,
+                    "path": path,
+                    "body": body,
+                    **({"native_identity": native_identity} if native_identity else {}),
+                }
+            )
         return call_id
 
     def response_path(self, seq: int) -> Path:
@@ -74,13 +98,29 @@ class CallRecorder:
         directory.mkdir(exist_ok=True)
         return directory / f"call-{seq:08d}.body"
 
-    def finish(self, seq: int, *, status: int | None, content_type: str,
-               content_encoding: str, complete: bool, error: str | None = None) -> None:
+    def finish(
+        self,
+        seq: int,
+        *,
+        status: int | None,
+        content_type: str,
+        content_encoding: str,
+        complete: bool,
+        error: str | None = None,
+    ) -> None:
         with self._lock:
-            self.write({"type": "response", "request_seq": seq,
-                        "http_status": status, "content_type": content_type,
-                        "content_encoding": content_encoding, "complete": complete,
-                        "error": error, "response_path": f"responses/call-{seq:08d}.body"})
+            self.write(
+                {
+                    "type": "response",
+                    "request_seq": seq,
+                    "http_status": status,
+                    "content_type": content_type,
+                    "content_encoding": content_encoding,
+                    "complete": complete,
+                    "error": error,
+                    "response_path": f"responses/call-{seq:08d}.body",
+                }
+            )
             self.completed_seqs.add(seq)
 
     def open_response(self, seq: int) -> BinaryIO:
@@ -107,7 +147,9 @@ class CallRecorder:
                 except OSError as exc:
                     self.error = self.error or str(exc)
             if self.request_seqs - self.completed_seqs:
-                self.error = self.error or "HTTP responses still in flight at capture shutdown"
+                self.error = (
+                    self.error or "HTTP responses still in flight at capture shutdown"
+                )
 
 
 def validate_capture(sample: Path, metadata: dict[str, Any]) -> None:
@@ -143,30 +185,47 @@ def _validate_capture(sample: Path, metadata: dict[str, Any]) -> None:
     if len(calls) != manifest.get("call_count"):
         raise ValueError("capture call count mismatch")
     ids = [call.get("call_id") for call in calls]
-    if any(not isinstance(cid, str) or not cid for cid in ids) or len(set(ids)) != len(ids):
+    if any(not isinstance(cid, str) or not cid for cid in ids) or len(set(ids)) != len(
+        ids
+    ):
         raise ValueError("capture call IDs are missing or duplicated")
     layout = manifest.get("storage_layout")
     if layout not in {None, "compact/v1", "compact/v2"}:
         raise ValueError("unsupported capture storage layout")
     lean = layout == "compact/v2" and manifest.get("raw_retained") is False
     if layout == "compact/v2":
-        if manifest.get("debug_retention") not in {"off", "on-error", "full"} or not isinstance(manifest.get("raw_retained"), bool):
+        if manifest.get("debug_retention") not in {
+            "off",
+            "on-error",
+            "full",
+        } or not isinstance(manifest.get("raw_retained"), bool):
             raise ValueError("invalid capture retention policy")
         if lean and any(p.startswith("raw/") for p in inventory):
             raise ValueError("lean capture inventories raw files")
     if layout in {"compact/v1", "compact/v2"} and not lean:
         if "raw/events.jsonl" not in inventory:
             raise ValueError("compact capture lacks event inventory")
-        requests = [e for e in read_jsonl(path.parent / "raw/events.jsonl") if e.get("type") == "request"]
+        requests = [
+            e
+            for e in read_jsonl(path.parent / "raw/events.jsonl")
+            if e.get("type") == "request"
+        ]
         by_id = {c["call_id"]: c for c in calls}
         request_ids = [e.get("call_id") for e in requests]
         if len(request_ids) != len(calls) or set(request_ids) != set(ids):
             raise ValueError("compact request references do not match calls")
         for event in requests:
             cid = event["call_id"]
-            if "body" in event or event.get("body_ref") != {"path": "calls.jsonl", "call_id": cid, "field": "context"}:
+            if "body" in event or event.get("body_ref") != {
+                "path": "calls.jsonl",
+                "call_id": cid,
+                "field": "context",
+            }:
                 raise ValueError("invalid compact context reference")
-            if event.get("request_seq") != by_id[cid]["request_seq"] or event.get("path") != by_id[cid]["request_path"]:
+            if (
+                event.get("request_seq") != by_id[cid]["request_seq"]
+                or event.get("path") != by_id[cid]["request_path"]
+            ):
                 raise ValueError("compact request metadata does not match call")
     participants = manifest.get("participants", [])
     pids = {part["participant_id"] for part in participants}
@@ -177,7 +236,9 @@ def _validate_capture(sample: Path, metadata: dict[str, Any]) -> None:
     for part in participants:
         if any(p not in inventory for p in part.get("native_files", [])):
             raise ValueError("participant references unregistered capture files")
-        expected = [c for c in calls if c.get("participant_id") == part["participant_id"]]
+        expected = [
+            c for c in calls if c.get("participant_id") == part["participant_id"]
+        ]
         if layout not in {"compact/v1", "compact/v2"}:
             if part.get("calls_path") not in inventory:
                 raise ValueError("participant references unregistered capture files")
@@ -187,40 +248,69 @@ def _validate_capture(sample: Path, metadata: dict[str, Any]) -> None:
         if part.get("call_ids") != [c["call_id"] for c in expected]:
             raise ValueError("participant call IDs do not match capture calls")
     for call in calls:
-        if (call.get("execution_status") not in CallExecutionStatus.VALUES
-                or call.get("capture_status") not in CaptureStatus.VALUES
-                or call.get("response_capture_status") not in CaptureStatus.VALUES
-                or call.get("export_status") not in ExportStatus.VALUES
-                or call.get("identity_status") not in IdentityStatus.VALUES):
+        if (
+            call.get("execution_status") not in CallExecutionStatus.VALUES
+            or call.get("capture_status") not in CaptureStatus.VALUES
+            or call.get("response_capture_status") not in CaptureStatus.VALUES
+            or call.get("export_status") not in ExportStatus.VALUES
+            or call.get("identity_status") not in IdentityStatus.VALUES
+        ):
             raise ValueError("invalid capture call state")
-        if lean and (call.get("response_path") is not None or call.get("response_evidence_retained") is not False):
+        if lean and (
+            call.get("response_path") is not None
+            or call.get("response_evidence_retained") is not False
+        ):
             raise ValueError("lean call references raw response")
-        if call.get("schema_version") != "roller.call/v1" or not isinstance(call.get("context"), dict):
+        if call.get("schema_version") != "roller.call/v1" or not isinstance(
+            call.get("context"), dict
+        ):
             raise ValueError("invalid capture call schema")
-        if call.get("protocol") not in {"anthropic-messages", "openai-chat-completions", "openai-responses"}:
+        if call.get("protocol") not in {
+            "anthropic-messages",
+            "openai-chat-completions",
+            "openai-responses",
+        }:
             raise ValueError("unsupported capture call protocol")
-        if call.get("participant_id") is not None and call["participant_id"] not in pids:
+        if (
+            call.get("participant_id") is not None
+            and call["participant_id"] not in pids
+        ):
             raise ValueError("call participant is missing")
         if call.get("capture_status") == CaptureStatus.COMPLETE:
-            if (not lean and call.get("response_path") not in inventory) or not isinstance(call.get("output"), dict):
+            if (
+                not lean and call.get("response_path") not in inventory
+            ) or not isinstance(call.get("output"), dict):
                 raise ValueError("complete call lacks response evidence")
         if call.get("export_status") == ExportStatus.AVAILABLE and (
-            call.get("capture_status") != CaptureStatus.COMPLETE or call.get("identity_status") != IdentityStatus.OBSERVED
-            or call.get("response_capture_status") != CaptureStatus.COMPLETE or call.get("execution_status") != CallExecutionStatus.COMPLETED
-            or call.get("output_source") != "model" or call.get("participant_id") not in pids
-            or call.get("errors")):
+            call.get("capture_status") != CaptureStatus.COMPLETE
+            or call.get("identity_status") != IdentityStatus.OBSERVED
+            or call.get("response_capture_status") != CaptureStatus.COMPLETE
+            or call.get("execution_status") != CallExecutionStatus.COMPLETED
+            or call.get("output_source") != "model"
+            or call.get("participant_id") not in pids
+            or call.get("errors")
+        ):
             raise ValueError("available call lacks complete model/identity evidence")
     relations = read_jsonl(path.parent / "relations.jsonl")
     if len(relations) != manifest.get("relation_count"):
         raise ValueError("capture relation count mismatch")
     relation_ids = [r.get("relation_id") for r in relations]
-    if any(not isinstance(rid, str) or not rid for rid in relation_ids) or len(set(relation_ids)) != len(relation_ids):
+    if any(not isinstance(rid, str) or not rid for rid in relation_ids) or len(
+        set(relation_ids)
+    ) != len(relation_ids):
         raise ValueError("capture relation IDs are missing or duplicated")
     for relation in relations:
         if relation.get("schema_version") != "roller.relation/v1":
             raise ValueError("invalid capture relation schema")
-        if relation.get("type") not in {"spawn", "result_delivered", "child_completed", "child_failed",
-                                        "result_in_context", "launch_acknowledged", "launch_ack_in_context"}:
+        if relation.get("type") not in {
+            "spawn",
+            "result_delivered",
+            "child_completed",
+            "child_failed",
+            "result_in_context",
+            "launch_acknowledged",
+            "launch_ack_in_context",
+        }:
             raise ValueError("unsupported capture relation type")
         for key in ("parent_call_id", "call_id"):
             if relation.get(key) is not None and relation[key] not in ids:
@@ -230,25 +320,46 @@ def _validate_capture(sample: Path, metadata: dict[str, Any]) -> None:
                 raise ValueError("relation participant is missing")
         for evidence in relation.get("evidence", []):
             if lean:
-                if evidence.get("retained") is not False or "path" in evidence or not isinstance(evidence.get("source"), str):
+                if (
+                    evidence.get("retained") is not False
+                    or "path" in evidence
+                    or not isinstance(evidence.get("source"), str)
+                ):
                     raise ValueError("invalid released relation evidence")
             elif evidence.get("path") not in inventory:
                 raise ValueError("relation evidence file is missing")
     lifecycle = manifest.get("lifecycle")
     if lifecycle is not None:
-        if not isinstance(lifecycle, dict) or lifecycle.get("status") not in {"complete", "pending", "unsupported", "unknown"}:
+        if not isinstance(lifecycle, dict) or lifecycle.get("status") not in {
+            "complete",
+            "pending",
+            "unsupported",
+            "unknown",
+        }:
             raise ValueError("invalid capture lifecycle")
         pending = lifecycle.get("pending_participant_ids")
-        if not isinstance(pending, list) or any(not isinstance(pid, str) or pid not in pids for pid in pending) or len(set(pending)) != len(pending):
+        if (
+            not isinstance(pending, list)
+            or any(not isinstance(pid, str) or pid not in pids for pid in pending)
+            or len(set(pending)) != len(pending)
+        ):
             raise ValueError("invalid pending lifecycle participants")
         if lifecycle["status"] == "complete" and pending:
             raise ValueError("complete lifecycle contains pending participants")
-    lifecycle_incomplete = (lifecycle["status"] != "complete") if lifecycle is not None else manifest.get("background_detected")
+    lifecycle_incomplete = (
+        (lifecycle["status"] != "complete")
+        if lifecycle is not None
+        else manifest.get("background_detected")
+    )
     if manifest.get("capture_status") == "complete" and (
-        not calls or manifest.get("recorder_error") or manifest.get("native_errors") or lifecycle_incomplete
+        not calls
+        or manifest.get("recorder_error")
+        or manifest.get("native_errors")
+        or lifecycle_incomplete
         or any(c.get("capture_status") != "complete" for c in calls)
         or any(p.get("capture_status") != "complete" for p in participants)
-        or any(r.get("status") != "observed" for r in relations)):
+        or any(r.get("status") != "observed" for r in relations)
+    ):
         raise ValueError("complete manifest contains incomplete evidence")
 
 
@@ -273,8 +384,10 @@ def native_directory(directory: Path) -> Path:
 
 
 def _retention_paths(directory: Path) -> tuple[Path, Path]:
-    return (directory.with_name(f".{directory.name}.retention-stage"),
-            directory.with_name(f".{directory.name}.retention-backup"))
+    return (
+        directory.with_name(f".{directory.name}.retention-stage"),
+        directory.with_name(f".{directory.name}.retention-backup"),
+    )
 
 
 def _validated_manifest(directory: Path) -> dict[str, Any]:
@@ -282,7 +395,9 @@ def _validated_manifest(directory: Path) -> dict[str, Any]:
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
         status = manifest["capture_status"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise ValueError(f"capture retention recovery has no valid manifest in {directory}") from exc
+        raise ValueError(
+            f"capture retention recovery has no valid manifest in {directory}"
+        ) from exc
     validate_capture(directory, {"manifest": "manifest.json", "capture_status": status})
     return manifest
 
@@ -318,7 +433,9 @@ def recover_capture_retention(directory: Path, *, prefer_raw: bool = False) -> b
             stage.rename(directory)
             shutil.rmtree(backup)
         else:
-            raise ValueError(f"capture retention has no valid attempt to restore: {directory}")
+            raise ValueError(
+                f"capture retention has no valid attempt to restore: {directory}"
+            )
     elif not directory.exists() and stage.exists() and valid(stage):
         stage.rename(directory)
     elif not directory.exists():
@@ -330,18 +447,26 @@ def recover_capture_retention(directory: Path, *, prefer_raw: bool = False) -> b
     return True
 
 
-def apply_capture_retention(directory: Path, manifest: dict[str, Any], mode: str) -> dict[str, Any]:
+def apply_capture_retention(
+    directory: Path, manifest: dict[str, Any], mode: str
+) -> dict[str, Any]:
     """Check the full capture before publishing optional debug evidence."""
     from roller.storage import atomic_write_json, write_jsonl
 
     if mode not in {"off", "on-error", "full"}:
         raise ValueError("invalid capture debug retention")
-    validate_capture(directory, {"manifest": "manifest.json", "capture_status": manifest["capture_status"]})
+    validate_capture(
+        directory,
+        {"manifest": "manifest.json", "capture_status": manifest["capture_status"]},
+    )
     calls = read_jsonl(directory / "calls.jsonl")
     relations = read_jsonl(directory / "relations.jsonl")
-    failed = (manifest["capture_status"] != "complete" or manifest["execution_status"] != "ok"
-              or any(c["execution_status"] == "failed" for c in calls)
-              or any(r["type"] == "child_failed" for r in relations))
+    failed = (
+        manifest["capture_status"] != "complete"
+        or manifest["execution_status"] != "ok"
+        or any(c["execution_status"] == "failed" for c in calls)
+        or any(r["type"] == "child_failed" for r in relations)
+    )
     retain = mode == "full" or (mode == "on-error" and failed)
     manifest = deepcopy(manifest)
     if not retain:
@@ -361,17 +486,33 @@ def apply_capture_retention(directory: Path, manifest: dict[str, Any], mode: str
         write_jsonl(stage / "relations.jsonl", relations)
     else:
         stage = directory
-    manifest.update(storage_layout="compact/v2", debug_retention=mode, raw_retained=retain)
-    manifest["files"] = [{"path": p.relative_to(stage).as_posix(),
-                          "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
-                         for p in sorted(stage.rglob("*")) if p.is_file() and p.name != "manifest.json"]
+    manifest.update(
+        storage_layout="compact/v2", debug_retention=mode, raw_retained=retain
+    )
+    manifest["files"] = [
+        {
+            "path": p.relative_to(stage).as_posix(),
+            "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+        }
+        for p in sorted(stage.rglob("*"))
+        if p.is_file() and p.name != "manifest.json"
+    ]
     atomic_write_json(stage / "manifest.json", manifest)
-    validate_capture(stage, {"manifest": "manifest.json", "capture_status": manifest["capture_status"]})
+    validate_capture(
+        stage,
+        {"manifest": "manifest.json", "capture_status": manifest["capture_status"]},
+    )
     if not retain:
         directory.rename(backup)
         try:
             stage.rename(directory)
-            validate_capture(directory, {"manifest": "manifest.json", "capture_status": manifest["capture_status"]})
+            validate_capture(
+                directory,
+                {
+                    "manifest": "manifest.json",
+                    "capture_status": manifest["capture_status"],
+                },
+            )
         except Exception:
             recover_capture_retention(directory, prefer_raw=True)
             raise
@@ -381,5 +522,8 @@ def apply_capture_retention(directory: Path, manifest: dict[str, Any], mode: str
             # The newly published attempt is valid; stale backup cleanup can
             # safely be retried by recover_capture_retention on the next run.
             logger.warning("capture retention backup cleanup deferred: %s", exc)
-    validate_capture(directory, {"manifest": "manifest.json", "capture_status": manifest["capture_status"]})
+    validate_capture(
+        directory,
+        {"manifest": "manifest.json", "capture_status": manifest["capture_status"]},
+    )
     return manifest
