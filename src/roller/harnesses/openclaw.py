@@ -213,6 +213,7 @@ ROLLER_MANAGED_OPENCLAW_CONFIG: dict[str, str] = {
     "agents.defaults.imageModel": "use --set-image-model / --no-set-image-model",
     "tools.web.search.provider": "use --search-provider",
     "diagnostics.cacheTrace": "use --cache-trace / --no-cache-trace",
+    "logging.redactSensitive": "Roller keeps task text verbatim in session transcripts",
 }
 
 
