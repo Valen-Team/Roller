@@ -90,6 +90,14 @@ Arguments after the script are appended to `roller collect`, for example
 Code, Hermes, OpenCode, DeepSeek, or Pi option. OpenClaw and Codex currently
 have no common CLI option for that limit.
 
+The same run can be described in a YAML file and started with `roller bench run`; see
+[Benchmark run configuration](benchmark-standard.md):
+
+```bash
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/qwenclawbench.yaml
+```
+
 ## 3. Local Qwen
 
 The repository includes

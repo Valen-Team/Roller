@@ -8,7 +8,7 @@
 | --- | --- |
 | 验证模型服务、Harness 和轨迹采集能否正常运行 | [基础 Task 清单](#基础-task-清单)：4 条文本、文件、Context 和多轮任务 |
 | 检查不同输入形式和 Harness 组合的功能 | [Coverage 功能测试](#coverage-功能测试)：按场景选择任务，附离线校验和结果验收 |
-| 通过一条命令导出、运行并汇总 benchmark | [Benchmark 一键运行](#benchmark-一键运行)：QwenClawBench |
+| 通过一条命令导出、运行并汇总 benchmark | [Benchmark 一键运行](#benchmark-一键运行)：QwenClawBench 脚本与 YAML 运行配置 |
 
 以下命令均在 Roller 项目根目录下执行。
 
@@ -25,6 +25,9 @@ examples/
 │   ├── fixtures/                   已包含的输入小文件
 │   ├── negative/                   预期拒绝的输入
 │   └── suite.py                    列表、校验、分组运行与验收
+├── benchmarks/                     `roller bench run` 的 YAML 运行配置
+│   ├── base.yaml                   模型连接与执行设置
+│   └── <bench>.yaml                各 benchmark 的任务选择、评分环境和 Harness
 ├── env/
 │   └── api.env.example
 ├── config/
@@ -76,6 +79,18 @@ RUNS_PER_TASK=1 \
 
 完整的运行与评分约束见
 [QwenClawBench 文档](../docs/zh/benches/qwenclawbench.md)。
+
+### 用 YAML 配置运行
+
+`benchmarks/` 中的 YAML 文件描述同样的 benchmark 运行：`base.yaml` 包含模型连接和执行设置，
+其余文件各对应一个 benchmark。`roller bench run` 读取这些文件并启动运行：
+
+```bash
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/qwenclawbench.yaml --dry-run
+```
+
+字段和分层规则见 [Benchmark 运行配置](../docs/zh/benches/benchmark-standard.md)。
 
 ## Coverage 功能测试
 

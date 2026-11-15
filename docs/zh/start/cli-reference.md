@@ -24,9 +24,9 @@ roller view --help
 | 命令 | 用途 |
 | --- | --- |
 | `roller collect [OPTIONS]` | 读取 task，运行 Harness 并采集轨迹 |
-| `roller init [DIRECTORY]` | 将示例 task 和配置模板写入 `DIRECTORY/examples`（默认当前目录），已存在的文件保持不变 |
+| `roller init [DIRECTORY]` | 将示例 task、配置模板和 benchmark 运行配置写入 `DIRECTORY/examples`（默认当前目录），已存在的文件保持不变 |
 | `roller view RUN_DIR` | 在 Viewer 中浏览已有 run |
-| `roller bench ...` | 列出、导出或汇总 benchmark，采集参数见第 8 节 |
+| `roller bench ...` | 列出、运行、导出或汇总 benchmark，采集参数见第 8 节 |
 | `roller --version` | 查看当前安装的 Roller 版本 |
 
 最小的 collect 命令需要 task 清单。模型可通过 `--model` 指定，也可写在每条 task 的 `model` 字段中：
@@ -261,14 +261,16 @@ Bench 参数用于将外部 benchmark 转换为 Roller task、运行采集、执
 | --- | --- |
 | `roller bench list` | 查看当前可用的 benchmark adapter |
 | `roller collect --bench ...` | 转换、运行、评分并汇总 benchmark，推荐大多数用户使用 |
+| `roller bench run --config FILE` | 根据分层的 YAML 或 JSON 文件启动同一个 `collect --bench` 运行 |
 | `roller bench export ...` | 仅将 benchmark 转换为 task JSONL，不运行 task |
 | `roller bench report RUN_DIR` | 为已有 run 重新生成评分汇总 |
 
 常用命令形式如下：
 
 ```bash
-roller collect --bench NAME --bench-root ROOT [--bench-category CAT]... [--bench-task-id ID]... [--bench-variant NAME] [--bench-timeout-multiplier N] ...
-roller bench export NAME ROOT --output TASKS.jsonl [--category CAT]... [--task-id ID]... [--variant NAME] [--timeout-multiplier N]
+roller collect --bench NAME --bench-root ROOT [--bench-category CAT]... [--bench-task-id ID]... [--bench-variant NAME] [--bench-timeout-multiplier N] [--bench-runs-per-task N] ...
+roller bench run --config FILE [--extra-config FILE_OR_JSON]... [--dry-run]
+roller bench export NAME ROOT --output TASKS.jsonl [--category CAT]... [--task-id ID]... [--variant NAME] [--timeout-multiplier N] [--runs-per-task N]
 roller bench report RUN_DIR [--output REPORT.json]
 ```
 
@@ -282,10 +284,21 @@ roller bench report RUN_DIR [--output REPORT.json]
 | `--bench-task-id ID` / `--task-id ID` | 不限制 | 只选择指定 task，可重复，错误 ID 会直接报错 |
 | `--bench-variant NAME` / `--variant NAME` | adapter 默认值 | 选择 benchmark 条件，例如 SkillsBench 的 `with-skill` 或 `no-skill` |
 | `--bench-timeout-multiplier N` / `--timeout-multiplier N` | adapter 默认值 | 按有限正数倍数缩放每条 benchmark task 的超时 |
+| `--bench-runs-per-task N` / `--runs-per-task N` | `1` | 将每个选中的 task 复制 N 份，并在 bench metadata 中记录运行序号 |
 | `--output` / `-o` | export 时必填 | 设置 export 的 task JSONL 或 report 的报告 JSON |
 | `RUN_DIR` | report 时必填 | 指定已完成的 run，属于位置参数 |
 | `--rebuild-task-images` | 关闭 | 即使 task-specific benchmark 镜像已经存在也重新构建 |
 
 `collect --bench` 会自动使用每条 benchmark task 的 timeout。采用先 export 再 collect 的手动流程时，须为 collect 添加 `--task-timeouts`。两种流程均可使用 `--pass-env` 传入 grader 所需的环境变量。
+
+`bench run` 从文件而非命令行参数读取设置：
+
+| 参数 | 默认值 | 用途 |
+| --- | --- | --- |
+| `--config FILE` | 必填 | 指定 YAML 或 JSON 格式的基础运行配置 |
+| `--extra-config FILE_OR_JSON` | 无 | 追加一层配置，可为文件或内联 JSON 对象，可重复，后面的层覆盖前面的层 |
+| `--dry-run` | 关闭 | 校验合并后的配置并输出计划，不启动容器 |
+
+各字段及其对应的 `collect` 参数见 [Benchmark 运行配置](../benches/benchmark-standard.md)。
 
 字段语义、评分时序、`stage` 防泄漏规则和聚合口径见 [Bench 接入与评分](../benches/bench-format.md)。

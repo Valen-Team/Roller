@@ -54,6 +54,18 @@ For comparable runs, use the `v1.1` tag at commit
 `--bench-category` and `--bench-task-id` may be repeated. For a slow model,
 `--bench-timeout-multiplier 2` increases both the agent and verifier time limits.
 
+The same runs can be described in YAML files and started with `roller bench run`; see
+[Benchmark run configuration](benchmark-standard.md). The second layer selects the no-skill run:
+
+```bash
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/skillsbench.yaml
+
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/skillsbench.yaml \
+  --extra-config examples/benchmarks/skillsbench-no-skill.yaml
+```
+
 ## How Roller runs a task
 
 Roller first reads the ordered task set from

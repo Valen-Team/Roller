@@ -32,7 +32,7 @@ docker version
 roller init
 ```
 
-`roller init` 创建 `examples/tasks`、`examples/config` 和 `examples/env`，已存在的文件保持不变。
+`roller init` 创建 `examples/tasks`、`examples/config`、`examples/benchmarks` 和 `examples/env`，已存在的文件保持不变。
 
 如需使用最新改动或参与开发，请从源码安装。克隆的仓库已包含 `examples/`，无需执行 `roller init`：
 

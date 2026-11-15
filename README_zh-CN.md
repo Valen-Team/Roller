@@ -119,7 +119,7 @@ mkdir roller-quickstart && cd roller-quickstart
 roller init
 ```
 
-`roller init` 创建 `examples/tasks`、`examples/config` 和 `examples/env`，已存在的文件保持不变。
+`roller init` 创建 `examples/tasks`、`examples/config`、`examples/benchmarks` 和 `examples/env`，已存在的文件保持不变。
 
 如需使用最新改动或参与开发，请从源码安装。克隆的仓库已包含 `examples/`，无需执行 `roller init`：
 
@@ -292,6 +292,8 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
   --harness openclaw --openclaw-image wildclawbench-ubuntu:v1.3 \
   --parallel 4 --output runs --run-name wildclaw
 ```
+
+同一次运行也可以写成 YAML 文件，并通过 `roller bench run --config ...` 启动，见 [Benchmark 运行配置](docs/zh/benches/benchmark-standard.md)。
 
 各 bench 指南列出了须与上游保持一致的配置，以及评分程序所需的环境变量。仅当这些配置与上游一致时，分数才具有直接可比性。接入新的 bench 见 [Bench 接入与评分](docs/zh/benches/bench-format.md#6-加一个新-bench)。
 

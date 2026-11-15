@@ -87,6 +87,7 @@ Bench 层复用以下三个接口：
 | `workspace_path` | harness 默认 | grader 的工作目录（容器内绝对路径） |
 | `transcript_path` | 自动推导 | 仅在 harness 无法自行报告会话文件位置时需要显式指定 |
 | `score_key` | `overall_score` | grader 返回值中用作总分的键 |
+| `grade_on_agent_failure` | `false` | Agent 超时或报错退出后仍对存活的 workspace 评分；默认将此类样本记为未评分 |
 | `stage` | `[]` | 仅在评分前复制到容器的 host 路径，见 §4 |
 
 grader 的调用约定：
@@ -239,6 +240,9 @@ bench 的每个任务自带超时（WildClawBench 实测有 300/360/600/900/1200
 短任务会获得过多时间，长任务会被墙钟超时中断，而被中断的结果与模型无法完成任务的结果十分相似。
 单条命令 `collect --bench` 会自动启用逐题 timeout，并在 run 目录保存 `tasks.jsonl` 和
 `bench-report.json`，因此无需再传入 `--task-timeouts` 或单独执行 `bench report`。
+
+`roller bench run --config FILE` 根据 YAML 描述启动同一个 `collect --bench` 运行，见
+[Benchmark 运行配置](benchmark-standard.md)。
 
 grader 所需的环境变量须通过 `--pass-env` 透传（所需变量由 bench 的任务定义声明）。
 缺少变量时，Roller 发出警告并继续运行。正式采集前，请确认日志中没有

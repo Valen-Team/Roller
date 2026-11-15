@@ -97,6 +97,7 @@ standard task fields:
 | `workspace_path` | harness default | Grader working directory (absolute path inside the container) |
 | `transcript_path` | derived automatically | Set only when the harness cannot report the session file location itself |
 | `score_key` | `overall_score` | Key in the grader return value that is used as the total score |
+| `grade_on_agent_failure` | `false` | Grade the live workspace when the Agent timed out or exited with an error; by default such a sample is recorded as unscored |
 | `stage` | `[]` | Host paths copied into the container only before grading; see §4 |
 
 Grader calling convention:
@@ -275,6 +276,9 @@ closely resembles a task that the model cannot complete.
 One-command `collect --bench` enables per-task timeouts automatically and saves
 `tasks.jsonl` and `bench-report.json` in the run directory. It therefore requires neither
 `--task-timeouts` nor a separate `bench report` invocation.
+
+`roller bench run --config FILE` starts the same `collect --bench` run from a YAML description;
+see [Benchmark run configuration](benchmark-standard.md).
 
 Environment variables required by the grader must be passed with `--pass-env`; the
 bench's task definition declares which variables are required. When a variable is

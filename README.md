@@ -119,7 +119,7 @@ mkdir roller-quickstart && cd roller-quickstart
 roller init
 ```
 
-`roller init` creates `examples/tasks`, `examples/config` and `examples/env`, and leaves files that already exist untouched.
+`roller init` creates `examples/tasks`, `examples/config`, `examples/benchmarks` and `examples/env`, and leaves files that already exist untouched.
 
 Install Roller from source if you want the latest changes or plan to contribute. A clone already contains `examples/`, so `roller init` is not needed there:
 
@@ -292,6 +292,8 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
   --harness openclaw --openclaw-image wildclawbench-ubuntu:v1.3 \
   --parallel 4 --output runs --run-name wildclaw
 ```
+
+The same run can also be described in a YAML file and started with `roller bench run --config ...`; see [Benchmark run configuration](docs/en/benches/benchmark-standard.md).
 
 Each bench guide lists the settings that must match the upstream configuration and the environment variables required by its graders. Scores are directly comparable only when these settings match upstream. To add a bench, see [Bench integration and scoring](docs/en/benches/bench-format.md#6-adding-a-new-bench).
 
