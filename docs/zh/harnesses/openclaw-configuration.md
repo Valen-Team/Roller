@@ -213,6 +213,8 @@ roller collect --help
 
 默认情况下，Roller 还会尝试将 task model 设置为 OpenClaw 的 image model。旧版 OpenClaw 不支持该设置时仅记录 warning。如需关闭，请使用 `--no-set-image-model`。
 
+User message 中的原生 image block 会保留在 ACTF，并在 SFT 中转为按顺序对齐的 `<image>` 占位符和顶层 `images`。OpenClaw 的 `image` 工具通过独立的模型请求发送图片，session 中只记录文字答案。使用 `--wire-trace actf` 或 `full` 时，Roller 从 wire trace 读取该请求的图片输入，并补到对应的 tool result；`actf` 模式下每张图片只保存一次，不保留其他请求正文。使用 `--wire-trace off` 时，tool result 只保留文字答案。
+
 ## 6. Thinking 配置
 
 Thinking 是模型在给出最终答案前的推理过程。`--thinking` 设置 OpenClaw 请求的推理强度。该参数仅影响模型生成回答的方式，不会修改 task 的内容。

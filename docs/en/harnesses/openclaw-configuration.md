@@ -211,6 +211,8 @@ Images enter the task workspace through `files.inputs` and are then opened with 
 
 By default, Roller also attempts to set the task model as OpenClaw's image model. Older OpenClaw versions that do not support this setting only log a warning. To disable this behavior, use `--no-set-image-model`.
 
+Native image blocks on user messages are kept in ACTF and become ordered `<image>` placeholders plus top-level `images` entries in SFT. OpenClaw's `image` tool sends the image in a separate model request and writes only the text answer to the session. With `--wire-trace actf` or `full`, Roller reads the image inputs of that request from the wire trace and attaches them to the matching tool result; in `actf` mode each image is stored once and other request text is not kept. With `--wire-trace off`, the tool result keeps only the text answer.
+
 ## 6. Thinking configuration
 
 Thinking is the reasoning a model performs before producing its final answer. `--thinking` sets the reasoning effort requested by OpenClaw. It affects how the model generates a response and does not change the task content.
