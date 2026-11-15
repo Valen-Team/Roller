@@ -252,7 +252,9 @@ class BridgeSession(InteractiveSession):
         self.image_digest = self.checked(["image", "inspect", config.docker_image, "--format", "{{.Id}}"], f"{self.label} image inspection").stdout.strip()
         warn_if_image_changed(logger, config.docker_image, config.preflight_image_digest, self.image_digest)
         args = docker_run_args(self.harness.name, self.container, config, environment, self.request)
-        args += ["--entrypoint", "/bin/bash", config.docker_image, "-c", "tail -f /dev/null"]
+        # Run the image that was inspected, so a tag moved in between cannot
+        # make the recorded id differ from the image in use.
+        args += ["--entrypoint", "/bin/bash", self.image_digest, "-c", "tail -f /dev/null"]
         # Mark before run: a timed-out Docker client may already have created it.
         self.container_started = True
         self.checked(args, f"{self.label} container startup")

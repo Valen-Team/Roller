@@ -579,7 +579,9 @@ exec node --input-type=module -e "$1"
             environment["OPENROUTER_BASE_URL"] = os.environ["OPENROUTER_BASE_URL_OPENCLAW"]
         return environment
 
-    def _start_container(self, container: str, request: RunRequest) -> dict[str, str]:
+    def _start_container(
+        self, container: str, request: RunRequest, image: str | None = None
+    ) -> dict[str, str]:
         environment = self._environment(request)
         # Keep Roller independent of the image's default user/HOME. Official
         # OpenClaw images run as ``node`` while legacy benchmark images run as
@@ -588,7 +590,7 @@ exec node --input-type=module -e "$1"
             self.name, container, self.config, environment, request,
             extra_env={"OPENCLAW_STATE_DIR": OPENCLAW_STATE_CONTAINER_PATH},
         )
-        args.extend([self.config.docker_image, "/bin/bash", "-c", "tail -f /dev/null"])
+        args.extend([image or self.config.docker_image, "/bin/bash", "-c", "tail -f /dev/null"])
         self._checked(args, "container startup", timeout=60)
         return environment
 
@@ -1264,7 +1266,9 @@ class OpenClawSession(InteractiveSession):
         self.harness._start_wire_proxy(self.request, self.output_dir, self.attempt)
         # Mark before run: a timed-out Docker client may already have created it.
         self.container_started = True
-        self.environment = self.harness._start_container(self.container, self.request)
+        self.environment = self.harness._start_container(
+            self.container, self.request, self.image_digest
+        )
         self.harness._prepare_workspace(self.container, self.request)
         self.harness._prepare_context_and_setup(self.container, self.request)
         self.version = self.harness._configure(

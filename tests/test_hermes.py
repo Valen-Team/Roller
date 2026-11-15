@@ -411,6 +411,15 @@ class HermesSessionTests(unittest.TestCase):
         self.assertEqual(session.image_digest, "sha256:test")
         session.finish("error", "test cleanup")
 
+    def test_container_runs_the_inspected_image_id(self):
+        # A tag that moves after inspection cannot change the image in use.
+        session = self.session()
+        session.start()
+        run = next(call for call in session.harness.runtime.calls if call[:2] == ["run", "-d"])
+        self.assertIn("sha256:test", run)
+        self.assertNotIn(session.harness.config.docker_image, run)
+        session.finish("error", "test cleanup")
+
     def test_finish_sums_child_usage_before_capture_cleanup(self):
         session = self.session(capture_calls=True, api_base="http://localhost:1234/v1")
         session.container_started = True
