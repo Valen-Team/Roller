@@ -53,7 +53,7 @@ async function serve(config) {
   });
   modelRuntime.registerProvider("roller", {
     api: "openai-completions", baseUrl: process.env.PI_BASE_URL, apiKey: "$PI_API_KEY",
-    models: [{id: config.model, name: config.model, reasoning: true, input: ["text", "image"],
+    models: [{id: config.model, name: config.model, reasoning: true, input: config.input_modalities,
       thinkingLevelMap: {off: "none", xhigh: "xhigh", max: "max"},
       cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0},
       contextWindow: config.context_length, maxTokens: config.output_tokens,
@@ -76,7 +76,8 @@ async function serve(config) {
     if (steps >= config.max_steps) throw new Error(`Pi max steps exceeded (${config.max_steps})`);
     steps += 1;
     journal({type: "context", turn: currentTurn, context});
-    return nativeStream(model, context, {...options, maxTokens: config.output_tokens, maxRetries: 0});
+    return nativeStream(model, context, {...options, maxTokens: config.output_tokens, maxRetries: 0,
+      ...(config.capture_calls ? {headers: {...options?.headers, "x-roller-native-session-id": config.session_id}} : {})});
   };
   session.agent.onPayload = (body) => {
     journal({type: "request", turn: currentTurn, body});

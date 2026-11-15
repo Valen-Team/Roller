@@ -10,6 +10,10 @@ from roller.openclaw_delivery import OpenClawDeliveryTracker
 from roller.openclaw_usage import OpenClawUsage
 from roller.wire_trace import extract_wire_image_requests
 
+OPENCLAW_ANNOUNCEMENT_SFT_REASON = (
+    "OpenClaw announcement input lacks native response binding; use captured per-call contexts"
+)
+
 
 def _event_time(value: Any) -> datetime | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -273,9 +277,7 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
     return events
 
 
-def _cache_trace_system_prompts(
-    path: Path, session_key: str | None = None
-) -> list[str]:
+def _cache_trace_system_prompts(path: Path) -> list[str]:
     """Extract the assembled system prompt of every LLM call from an OpenClaw cache-trace file.
 
     Prefers per-call ``stream:context.system`` entries; falls back to the
@@ -292,8 +294,6 @@ def _cache_trace_system_prompts(
                 continue
             if not isinstance(row, dict):
                 continue
-            if session_key is not None and row.get("sessionKey") != session_key:
-                continue
             system = row.get("system")
             if not isinstance(system, str):
                 continue
@@ -305,12 +305,64 @@ def _cache_trace_system_prompts(
     return per_call if per_call else session_level
 
 
+def _provider_message_ids(message: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    content = message.get("content", [])
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict):
+            continue
+        signature = block.get("textSignature") or block.get("thinkingSignature")
+        if isinstance(signature, str):
+            try:
+                value = json.loads(signature)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(value, dict) and isinstance(value.get("id"), str):
+                ids.add(value["id"])
+    return ids
+
+
+def _announcement_inputs(rows: list[dict[str, Any]]) -> tuple[dict[str, str], bool]:
+    """Bind actual announcement input to the new native provider response IDs."""
+    runs: dict[str, list[dict[str, Any]]] = {}
+    unresolved = False
+    for row in rows:
+        run = row.get("runId", "")
+        if not isinstance(run, str) or not run.startswith("announce:v1:"):
+            continue
+        session_key = row.get("sessionKey", "")
+        if not isinstance(session_key, str):
+            unresolved = True
+            continue
+        if ":subagent:" not in session_key:
+            runs.setdefault(run, []).append(row)
+    inputs: dict[str, str] = {}
+    for events in runs.values():
+        context = next((e for e in events if e.get("stage") == "stream:context"), None)
+        after = next((e for e in reversed(events) if e.get("stage") == "session:after"), None)
+        if context is None or after is None:
+            unresolved = True
+            continue
+        before = context.get("messages", [])
+        old_ids = set().union(*(_provider_message_ids(m) for m in before if m.get("role") == "assistant"))
+        new = next((m for m in after.get("messages", []) if m.get("role") == "assistant" and _provider_message_ids(m) - old_ids), None)
+        last_assistant = max((i for i, m in enumerate(before) if m.get("role") == "assistant"), default=-1)
+        texts = [_text(m.get("content")) for m in before[last_assistant + 1:] if m.get("role") == "user"]
+        if new is None or not texts:
+            unresolved = True
+            continue
+        for mid in _provider_message_ids(new) - old_ids:
+            inputs[mid] = "\n\n".join(texts)
+    return inputs, unresolved
+
+
 def openclaw_events_to_actf(
     events: Iterable[dict[str, Any]],
     user_messages: Iterable[str] | None = None,
     system_prompts: Iterable[str] | None = None,
     tools: list[Any] | None = None,
     keep_thinking: bool = True,
+    notification_inputs: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Project raw OpenClaw session events into the ACTF_v1.0 step shape.
 
@@ -405,6 +457,11 @@ def openclaw_events_to_actf(
                 continue
             retry_after_empty_error = False
             finish_current(message_time)
+            notifications = {notification_inputs[mid] for mid in _provider_message_ids(message)
+                             if notification_inputs and mid in notification_inputs}
+            if len(notifications) == 1:
+                pending_user = notifications.pop()
+                pending_user_time = message_time
             # Malformed counters are sanitized by OpenClawUsage so they can
             # neither crash (NaN/Infinity int() conversion) nor contaminate
             # step metrics with negative values. skip_usage stays the only
@@ -482,25 +539,31 @@ def convert_openclaw_trace(
     *,
     user_messages: Iterable[str] | None = None,
     cache_trace: Path | None = None,
-    cache_session_key: str | None = None,
     wire_trace: Path | None = None,
     tools: list[Any] | None = None,
     keep_thinking: bool = True,
 ) -> dict[str, Any]:
-    system_prompts = (
-        _cache_trace_system_prompts(cache_trace, cache_session_key)
-        if cache_trace is not None
-        else []
-    )
-    events = _read_events(source)
-    _attach_wire_images(events, wire_trace)
+    system_prompts = _cache_trace_system_prompts(cache_trace) if cache_trace is not None else []
+    notification_inputs, unresolved = _announcement_inputs(_read_events(cache_trace)) if cache_trace is not None else ({}, False)
+    native_events = _read_events(source)
+    native_ids = set().union(*(
+        _provider_message_ids(message)
+        for event in native_events
+        if isinstance(message := event.get("message"), dict)
+    ))
+    matched_inputs = {text for mid, text in notification_inputs.items() if mid in native_ids}
+    unresolved = unresolved or bool(set(notification_inputs.values()) - matched_inputs)
+    _attach_wire_images(native_events, wire_trace)
     trajectory = openclaw_events_to_actf(
-        events,
+        native_events,
         user_messages=user_messages,
         system_prompts=system_prompts,
         tools=tools,
         keep_thinking=keep_thinking,
+        notification_inputs=notification_inputs,
     )
+    if unresolved:
+        trajectory["sft_unavailable_reason"] = OPENCLAW_ANNOUNCEMENT_SFT_REASON
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.tmp")
     temporary.write_text(
