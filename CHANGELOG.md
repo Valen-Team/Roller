@@ -4,6 +4,16 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-15
+
+Roller 0.3.0 adds the SWE-Bench Pro bench adapter, keeps images in the trajectories of all seven Harnesses, and lets a benchmark run be described in a YAML file. It also fixes defects found by running every Harness against a real model.
+
+```bash
+uv tool install roller-agent    # or: python -m pip install roller-agent
+```
+
+Four changes affect existing setups: `capture=full` Context is now stored in the run directory, an OpenClaw model must be declared in `--model-config`, WildClawBench scores samples whose agent timed out, and OpenClaw runs with heartbeat polls and transcript redaction turned off. Each is described under Changed.
+
 ### Added
 
 - SWE-Bench Pro bench adapter, scored by the hidden tests in the official instance images (#54).
