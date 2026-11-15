@@ -48,7 +48,7 @@ Subagent tools are available only when their calls are captured with `--capture-
 | OpenCode | `task` tool | Denied, including under `--opencode-native-tools` | Permitted. The Explore subagent is limited to `bash`, `read`, `glob`, and `grep` |
 | DeepSeek | Delegation tools of the `sdk` profile, such as `subagent` and `workflow` | Not offered to the model | Not offered to the model |
 
-`--capture-calls` requires an explicit API address, `--network host`, and wire tracing.
+`--capture-calls` requires an explicit API address, `--network host`, and wire tracing. The [Subagent capture protocol](../traces/subagent-capture-protocol.md) describes what it records.
 
 ## 6. Run configuration
 

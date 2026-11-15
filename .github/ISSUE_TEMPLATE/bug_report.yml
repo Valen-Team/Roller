@@ -1,0 +1,58 @@
+name: Bug report
+description: Something in Roller does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected and what you got. Remove API keys and other secrets from anything you paste.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The full `roller` command, with keys removed.
+      render: bash
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Roller version
+      description: Output of `roller --version`, or the commit if installed from source.
+    validations:
+      required: true
+  - type: dropdown
+    id: harness
+    attributes:
+      label: Harness
+      multiple: true
+      options:
+        - openclaw
+        - codex
+        - claude-code
+        - hermes
+        - opencode
+        - deepseek
+        - pi
+        - not Harness specific
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version, Docker version, and the Harness image tag.
+  - type: input
+    id: model
+    attributes:
+      label: Model and API protocol
+      description: For example `gpt-5.5` over Responses, or `deepseek-v4.1-flash` over Chat Completions through a gateway.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output
+      description: The error from the terminal and, for a failed sample, the `error` field of its `info.json`.
+      render: text

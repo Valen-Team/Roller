@@ -94,6 +94,8 @@ tasks/user-simulator
 
 traces/trajectory-outputs
 traces/sft-format
+traces/subagent-capture-protocol
+traces/thinking-verification-matrix
 traces/viewer
 ~~~
 

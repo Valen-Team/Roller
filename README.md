@@ -344,12 +344,15 @@ Report defects through [Issues](https://github.com/Valen-Team/Roller/issues). Ne
 | SFT export | `src/roller/sft.py`, `src/roller/compaction_sft.py` |
 | Viewer | `src/roller/viewer/` |
 
-Run the test suite before submitting a pull request:
+Run the checks before submitting a pull request:
 
 ```bash
-python -m pip install -e ".[test]"
+python -m pip install -e ".[test]" ruff
 python -m pytest
+ruff check
 ```
+
+[CONTRIBUTING.md](CONTRIBUTING.md) describes the conventions for tests, documentation and the run lock, and [CHANGELOG.md](CHANGELOG.md) lists the changes in each release. Report a vulnerability as described in [SECURITY.md](SECURITY.md).
 
 ### Contributors
 
