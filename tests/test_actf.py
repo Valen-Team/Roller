@@ -153,6 +153,36 @@ class ActfConversionTests(unittest.TestCase):
                 else:
                     self.assertIn("sft_unavailable_reason", trajectory)
 
+    def test_chat_completions_fragments_join_without_a_separator(self) -> None:
+        # Interleaved reasoning splits one content string into several blocks.
+        blocks = [
+            {"type": "thinking", "thinking": "Verify, then rep"},
+            {"type": "text", "text": "RO"},
+            {"type": "thinking", "thinking": "ly."},
+            {"type": "text", "text": "OT_DONE"},
+        ]
+
+        def convert(api: str) -> dict:
+            events = [
+                {"type": "message", "message": {"role": "user", "content": "go"}},
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "api": api,
+                        "stopReason": "stop",
+                        "content": blocks,
+                    },
+                },
+            ]
+            return openclaw_events_to_actf(events)["steps"][0]["assistant_content"]
+
+        fragments = convert("openai-completions")
+        self.assertEqual(fragments["content"], "ROOT_DONE")
+        self.assertEqual(fragments["reasoning_content"], "Verify, then reply.")
+        # Responses output items are separate messages and keep their line break.
+        self.assertEqual(convert("openai-responses")["content"], "RO\nOT_DONE")
+
     def test_groups_assistant_tool_results_and_multiple_user_turns(self) -> None:
         trajectory = openclaw_events_to_actf(
             _events(), user_messages=("clean first", "clean second")

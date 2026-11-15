@@ -23,6 +23,11 @@ def _same_source(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return all(left.get(key) == right.get(key) for key in ("provider", "model"))
 
 
+def _block_separator(message: dict[str, Any]) -> str:
+    """Chat Completions text blocks are fragments of one string; others are separate."""
+    return "" if message.get("api") == "openai-completions" else "\n"
+
+
 def _text(message: dict[str, Any], *, plain_only: bool) -> str | None:
     content = message.get("content")
     if isinstance(content, str):
@@ -48,7 +53,7 @@ def _text(message: dict[str, Any], *, plain_only: bool) -> str | None:
         else:
             # Never discard a CLI message carrying tools, media or new reasoning.
             return None
-    return "\n".join(parts).strip()
+    return _block_separator(message).join(parts).strip()
 
 
 def _visible_text(message: dict[str, Any]) -> str:
@@ -58,13 +63,17 @@ def _visible_text(message: dict[str, Any]) -> str:
         return content.strip()
     if not isinstance(content, list):
         return ""
-    return "\n".join(
-        block["text"]
-        for block in content
-        if isinstance(block, dict)
-        and block.get("type") == "text"
-        and isinstance(block.get("text"), str)
-    ).strip()
+    return (
+        _block_separator(message)
+        .join(
+            block["text"]
+            for block in content
+            if isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
+        )
+        .strip()
+    )
 
 
 @dataclass
