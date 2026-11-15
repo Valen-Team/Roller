@@ -94,6 +94,15 @@ class BenchRunConfigTests(unittest.TestCase):
             ),
             "claude-code": ({"capture_calls": True}, ["--claude-capture-calls"]),
             "pi": ({"input_modalities": "text"}, ["--pi-input-modalities", "text"]),
+            "hermes": ({"toolsets": ["native"]}, ["--hermes-toolset", "native"]),
+            "opencode": (
+                {"native_tools": True, "deny_tools": ["webfetch"]},
+                ["--opencode-native-tools", "--opencode-deny-tool", "webfetch"],
+            ),
+            "deepseek": (
+                {"profile": "sdk", "permission_mode": "workspace-write"},
+                ["--deepseek-profile", "sdk", "--deepseek-permission-mode", "workspace-write"],
+            ),
         }
         for harness, (extra, expected) in cases.items():
             with self.subTest(harness=harness), tempfile.TemporaryDirectory() as temporary:

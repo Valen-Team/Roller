@@ -452,6 +452,10 @@ process.stdout.write(JSON.stringify({ event_count: events.length }));
 """.strip()
 
     _OPENCLAW_NODE_EVAL_SCRIPT = """
+if [ -x /opt/roller-node/bin/node ] && [ -f /opt/roller-openclaw/openclaw.mjs ]; then
+    cd /opt/roller-openclaw
+    exec /opt/roller-node/bin/node --input-type=module -e "$1"
+fi
 runtime_dir=$(dirname "$(readlink -f "$(command -v openclaw)")")
 cd "$runtime_dir"
 exec node --input-type=module -e "$1"
@@ -1486,6 +1490,9 @@ class OpenClawSession(InteractiveSession):
                     user_messages=self.messages,
                     cache_trace=(
                         cache_trace_path if cache_trace_path.is_file() else None
+                    ),
+                    wire_trace=(
+                        wire_trace_path if wire_trace_path.is_file() else None
                     ),
                     tools=(
                         extract_wire_tools(wire_trace_path)

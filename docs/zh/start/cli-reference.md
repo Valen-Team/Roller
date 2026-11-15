@@ -217,6 +217,8 @@ Wire trace 用于决定是否记录模型服务的实际 HTTP 请求，常规采
 | DeepSeek | {ref}`DeepSeek Harness 指南 <deepseek-cli-flags>` |
 | Pi Agent | {ref}`Pi Agent Harness 指南 <pi-cli-flags>` |
 
+各 Harness 开放的工具及对应的选择参数见 [Harness 工具开放情况](../harnesses/tool-availability.md)。
+
 如需核对当前使用的 Roller 版本支持的完整参数列表，请运行：
 
 ```bash

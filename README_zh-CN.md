@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="#harnesses"><img src="https://img.shields.io/badge/Harnesses-7-00866F?style=flat&amp;labelColor=4B5563" alt="7 种 Harness"></a>
-  <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-4-00866F?style=flat&amp;labelColor=4B5563" alt="4 个 Benchmark 适配器"></a>
+  <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-5-00866F?style=flat&amp;labelColor=4B5563" alt="5 个 Benchmark 适配器"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-6B7280?style=flat&amp;labelColor=4B5563" alt="许可证：Apache 2.0"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.10%2B-6B7280?style=flat&amp;logo=python&amp;logoColor=FFD43B&amp;labelColor=4B5563" alt="Python 3.10+"></a>
 </p>
@@ -28,7 +28,7 @@
 
 ## 简介
 
-Roller 是一套服务于 Agent Runtime 的基础设施，提供 Agent 推理与评测服务。用户提供任务与自定义环境，Roller 在隔离的 Docker 容器中运行 Agent，采集完整的 Agent 轨迹，并对任务结果进行评测。目前 Roller 支持 OpenClaw、Codex、Claude Code 等 7 种主流 Harness，以及 WildClawBench、SkillsBench 等 4 个 Benchmark。
+Roller 是一套服务于 Agent Runtime 的基础设施，提供 Agent 推理与评测服务。用户提供任务与自定义环境，Roller 在隔离的 Docker 容器中运行 Agent，采集完整的 Agent 轨迹，并对任务结果进行评测。目前 Roller 支持 OpenClaw、Codex、Claude Code 等 7 种主流 Harness，以及 WildClawBench、SkillsBench 等 5 个 Benchmark。
 
 Roller 提供以下能力：
 
@@ -282,6 +282,7 @@ Bench 适配器将 Benchmark 任务转换为 Roller task，并在各 sample 的�
 | [SkillsBench](docs/zh/benches/skillsbench.md) | `opencode` | 每个任务构建独立环境；分 with-skill 与 no-skill 两组运行，由官方 verifier 评分 |
 | [PinchBench](docs/zh/benches/pinchbench.md) | `openclaw` | 自动评分、LLM judge、混合评分与多 session 任务 |
 | [QwenClawBench](docs/zh/benches/qwenclawbench.md) | `openclaw` | 8 个领域的 100 个任务，支持单题多次运行 |
+| [SWE-Bench Pro](docs/zh/benches/swebench-pro.md) | `openclaw` | 11 个仓库的 731 个软件工程任务，在官方实例镜像中用隐藏测试评分 |
 
 以下以 WildClawBench 为例。检出上游仓库并加载其 `.env` 后，执行以下命令即可完成任务转换、轨迹采集和逐个评分，并将 `tasks.jsonl` 与 `bench-report.json` 写入运行目录：
 
@@ -390,4 +391,4 @@ python -m pytest
 
 Roller 基于 [Apache License 2.0](LICENSE) 发布。
 
-Roller 调用以下第三方 Agent 运行时和 Benchmark：OpenClaw、Codex、Claude Code、Hermes Agent、OpenCode、DeepSeek Harness、Pi Agent、WildClawBench、SkillsBench、PinchBench 和 QwenClawBench。上述项目的镜像、代码和数据遵循其各自的许可证。感谢这些项目的作者。
+Roller 调用以下第三方 Agent 运行时和 Benchmark：OpenClaw、Codex、Claude Code、Hermes Agent、OpenCode、DeepSeek Harness、Pi Agent、WildClawBench、SkillsBench、PinchBench、QwenClawBench 和 SWE-Bench Pro。上述项目的镜像、代码和数据遵循其各自的许可证。感谢这些项目的作者。

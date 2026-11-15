@@ -256,13 +256,19 @@ def run_turn(config, state_dir):
         api_key=os.environ["OPENAI_API_KEY"],
         api_mode="chat_completions",
     )
+    if "toolsets" in config:
+        # --hermes-toolset: None leaves discovery to the native registry. The
+        # host withholds delegation unless child calls are being captured.
+        toolsets = {"enabled_toolsets": config["toolsets"], "disabled_toolsets": config["disabled_toolsets"] or None}
+    else:
+        toolsets = {"enabled_toolsets": ["terminal", "file", *(["vision"] if config.get("vision", True) else []),
+                                         *(["delegation"] if capture else [])]}
     try:
         agent = recorded(
             model=config["model"], provider=provider, api_mode="chat_completions",
             base_url=os.environ["OPENAI_BASE_URL"], api_key=os.environ["OPENAI_API_KEY"],
             max_iterations=config["max_iterations"],
-            enabled_toolsets=["terminal", "file", *(["vision"] if config.get("vision", True) else []),
-                             *(["delegation"] if capture else [])],
+            **toolsets,
             quiet_mode=True, save_trajectories=False, session_id=config["session_id"],
             ephemeral_system_prompt=config["system_prompt"],
             skip_context_files=True, load_soul_identity=False, skip_memory=True,

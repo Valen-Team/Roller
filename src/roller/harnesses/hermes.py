@@ -15,6 +15,7 @@ DEFAULT_HERMES_IMAGE = "roller-hermes:d15ed4445207"
 RUNNER_PATH = Path(__file__).resolve().parents[1] / "assets" / "hermes" / "runner.py"
 STATE = "/roller/hermes-state"
 RUNNER = "/roller/hermes_runner.py"
+NATIVE_TOOLSETS = "native"
 
 
 def hermes_effort(value: str | None) -> str | None:
@@ -37,6 +38,7 @@ class HermesConfig:
     max_iterations: int = 12
     context_length: int | None = None
     vision: bool = True
+    toolsets: tuple[str, ...] | None = None
     capture_calls: bool = False
     capture_debug: str = "on-error"
     wire_trace_mode: str = "actf"
@@ -45,9 +47,32 @@ class HermesConfig:
     docker_binary: str = "docker"
     preflight_image_digest: str | None = None
 
+    @property
+    def enabled_toolsets(self) -> list[str] | None:
+        """Toolsets passed to Hermes; ``None`` leaves discovery to the native registry."""
+
+        if self.toolsets is None:
+            return ["terminal", "file", *(["delegation"] if self.capture_calls else []), *(["vision"] if self.vision else [])]
+        return None if self.toolsets == (NATIVE_TOOLSETS,) else list(self.toolsets)
+
+    @property
+    def disabled_toolsets(self) -> list[str]:
+        """Toolsets withheld from an explicit selection; sub-agents run only under call capture."""
+
+        if self.toolsets is None:
+            return []
+        return [*([] if self.capture_calls else ["delegation"]), *([] if self.vision else ["vision"])]
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "reasoning_effort", hermes_effort(self.reasoning_effort))
         validate_bridge_config(self, "Hermes")
+        if self.toolsets is not None:
+            if not self.toolsets or any(not isinstance(name, str) or not name.strip() for name in self.toolsets):
+                raise ValueError("Hermes toolsets must contain non-empty names")
+            if NATIVE_TOOLSETS in self.toolsets and len(self.toolsets) > 1:
+                raise ValueError("Hermes toolset 'native' cannot be combined with named toolsets")
+            if "delegation" in self.toolsets and not self.capture_calls:
+                raise ValueError("Hermes delegation toolset requires --capture-calls")
         if not positive_int(self.max_iterations):
             raise ValueError("Hermes max iterations must be a positive integer")
         if self.context_length is not None and not (positive_int(self.context_length) and self.context_length >= 64000):
@@ -76,7 +101,10 @@ class HermesSession(BridgeSession):
         # Context is present as regular workspace files for every role; Hermes'
         # implicit host/profile discovery is disabled in the bridge.
         config = self.harness.config
-        return {"max_iterations": config.max_iterations, "context_length": config.context_length, "vision": config.vision}
+        return {
+            "max_iterations": config.max_iterations, "context_length": config.context_length, "vision": config.vision,
+            **({"toolsets": config.enabled_toolsets, "disabled_toolsets": config.disabled_toolsets} if config.toolsets is not None else {}),
+        }
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:
         return convert_hermes_trace(trace, destination, keep_thinking=self.harness.config.keep_thinking)
@@ -89,8 +117,11 @@ class HermesSession(BridgeSession):
 
     def settings(self) -> dict[str, Any]:
         config = self.harness.config
-        toolsets = ["terminal", "file", *(["delegation"] if config.capture_calls else []), *(["vision"] if config.vision else [])]
-        return {"max_iterations": config.max_iterations, "context_length": config.context_length, "vision": config.vision, "toolsets": toolsets}
+        return {
+            "max_iterations": config.max_iterations, "context_length": config.context_length, "vision": config.vision,
+            "toolsets": config.enabled_toolsets,
+            **({"disabled_toolsets": config.disabled_toolsets} if config.toolsets is not None else {}),
+        }
 
     def collect_native_evidence(self, usage: dict[str, int | float]) -> None:
         assert self.capture is not None

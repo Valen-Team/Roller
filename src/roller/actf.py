@@ -8,6 +8,7 @@ from typing import Any, Iterable
 
 from roller.openclaw_delivery import OpenClawDeliveryTracker
 from roller.openclaw_usage import OpenClawUsage
+from roller.wire_trace import extract_wire_image_requests, wire_text_digest
 
 OPENCLAW_ANNOUNCEMENT_SFT_REASON = (
     "OpenClaw announcement input lacks native response binding; use captured per-call contexts"
@@ -53,6 +54,181 @@ def _text(value: Any) -> str:
     if isinstance(value, dict) and isinstance(value.get("text"), str):
         return value["text"]
     return "" if value is None else str(value)
+
+
+def _user_content(value: Any, expected: str | None = None) -> str | list[Any]:
+    """Keep native user media while replacing transport-decorated prompt text."""
+
+    if not isinstance(value, list):
+        return expected if expected is not None else _text(value)
+    blocks: list[Any] = []
+    has_non_text = False
+    inserted_expected = False
+    for item in value:
+        if isinstance(item, str):
+            if expected is not None:
+                if not inserted_expected:
+                    blocks.append({"type": "text", "text": expected})
+                    inserted_expected = True
+            else:
+                blocks.append({"type": "text", "text": item})
+            continue
+        if not isinstance(item, dict):
+            blocks.append(deepcopy(item))
+            has_non_text = True
+            continue
+        if item.get("type") == "text" and isinstance(item.get("text"), str):
+            if expected is not None:
+                if not inserted_expected:
+                    blocks.append({"type": "text", "text": expected})
+                    inserted_expected = True
+            else:
+                blocks.append(deepcopy(item))
+            continue
+        blocks.append(deepcopy(item))
+        has_non_text = True
+    if expected is not None and not inserted_expected:
+        blocks.insert(0, {"type": "text", "text": expected})
+    if not has_non_text:
+        return expected if expected is not None else _text(value)
+    return blocks
+
+
+def _append_user_content(
+    current: str | list[Any], value: str | list[Any]
+) -> str | list[Any]:
+    if not current:
+        return deepcopy(value)
+    if not value:
+        return current
+    if isinstance(current, str) and isinstance(value, str):
+        return f"{current}\n\n{value}"
+
+    def blocks(item: str | list[Any]) -> list[Any]:
+        if isinstance(item, list):
+            return deepcopy(item)
+        return [{"type": "text", "text": item}]
+
+    head, tail = blocks(current), blocks(value)
+    last, first = head[-1], tail[0]
+    if (
+        isinstance(last, dict)
+        and isinstance(first, dict)
+        and last.get("type") == first.get("type") == "text"
+    ):
+        # Adjacent prompts keep the paragraph break that plain strings get.
+        last["text"] = f"{last['text']}\n\n{first['text']}"
+        tail = tail[1:]
+    return [*head, *tail]
+
+
+def _attach_wire_images(
+    events: list[dict[str, Any]], wire_trace: Path | None
+) -> None:
+    """Attach OpenClaw image-tool model inputs to their native tool results.
+
+    The image tool sends its prompt and images in a separate request without
+    tools. A request belongs to a call when it falls inside the call's time
+    window; calls issued in parallel share one window, so they are told apart
+    by prompt. Parallel calls that stay indistinguishable are only paired when
+    their requests carry the same images.
+    """
+
+    if wire_trace is None:
+        return
+    requests = [
+        request
+        for request in extract_wire_image_requests(wire_trace)
+        if not request["tool_count"]
+    ]
+    if not requests:
+        return
+    # call id -> (start, prompt digest, parallel calls, parallel calls with this prompt)
+    calls: dict[str, tuple[datetime | None, str, int, int]] = {}
+    used_requests: set[int] = set()
+    for row in events:
+        message = _message_event(row)
+        if message is None:
+            continue
+        event_time = _event_time(row.get("timestamp") or message.get("timestamp"))
+        if message.get("role") == "assistant":
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            prompts = {
+                block["id"]: wire_text_digest(
+                    _text(_tool_call(block)["arguments"].get("prompt"))
+                )
+                for block in content
+                if isinstance(block, dict)
+                and block.get("type") in {"toolCall", "tool_call"}
+                and isinstance(block.get("id"), str)
+                and block.get("name") == "image"
+            }
+            for call_id, prompt in prompts.items():
+                calls[call_id] = (
+                    event_time,
+                    prompt,
+                    len(prompts),
+                    list(prompts.values()).count(prompt),
+                )
+            continue
+        if message.get("role") != "toolResult":
+            continue
+        call_id = message.get("toolCallId")
+        call = calls.get(call_id) if isinstance(call_id, str) else None
+        if call is None:
+            continue
+        content = message.get("content")
+        if isinstance(content, list) and any(
+            isinstance(block, dict) and block.get("type") == "image"
+            for block in content
+        ):
+            continue
+        start, prompt, parallel, same_prompt = call
+        candidates: list[int] = []
+        for index, request in enumerate(requests):
+            if index in used_requests:
+                continue
+            request_time = _event_time(request.get("ts"))
+            # Wire timestamps have one-second precision while native session
+            # events include milliseconds. Allow that truncation at either
+            # edge of the tool-call interval.
+            if (
+                start is not None
+                and request_time is not None
+                and (start - request_time).total_seconds() >= 1
+            ):
+                continue
+            if (
+                event_time is not None
+                and request_time is not None
+                and (request_time - event_time).total_seconds() >= 1
+            ):
+                continue
+            candidates.append(index)
+        matches = [
+            index for index in candidates if prompt in requests[index]["text_digests"]
+        ]
+        # The requests of indistinguishable parallel calls are the next ones
+        # in wire order; their order among themselves is not recorded.
+        group = matches[:same_prompt] if matches else candidates[:parallel]
+        if not group or any(
+            requests[index]["images"] != requests[group[0]]["images"]
+            for index in group
+        ):
+            continue
+        selected = group[0]
+        used_requests.add(selected)
+        images = requests[selected]["images"]
+        if isinstance(content, list):
+            content.extend(deepcopy(images))
+        else:
+            text = _text(content)
+            message["content"] = [
+                *([{"type": "text", "text": text}] if text else []),
+                *deepcopy(images),
+            ]
 
 
 def _tool_call(block: dict[str, Any]) -> dict[str, Any]:
@@ -242,7 +418,7 @@ def openclaw_events_to_actf(
         (_timestamp(row.get("timestamp")) for row in rows if _timestamp(row.get("timestamp"))),
         None,
     )
-    pending_user = ""
+    pending_user: str | list[Any] = ""
     pending_user_time: str | None = None
     expected_users = tuple(user_messages) if user_messages is not None else ()
     user_index = 0
@@ -271,11 +447,12 @@ def openclaw_events_to_actf(
         role = message.get("role")
         message_time = _timestamp(row.get("timestamp") or message.get("timestamp"))
         if role == "user":
-            value = (
+            expected = (
                 expected_users[user_index]
                 if user_index < len(expected_users)
-                else _text(message.get("content"))
+                else None
             )
+            value = _user_content(message.get("content"), expected)
             if retry_after_empty_error and pending_user and value == pending_user:
                 # OpenClaw records its internal provider retry as the same user
                 # message again. Keep that transport detail in the raw trace,
@@ -285,7 +462,7 @@ def openclaw_events_to_actf(
             retry_after_empty_error = False
             finish_current(message_time)
             user_index += 1
-            pending_user = f"{pending_user}\n\n{value}" if pending_user and value else value
+            pending_user = _append_user_content(pending_user, value)
             pending_user_time = pending_user_time or message_time
             continue
         if role == "assistant":
@@ -352,7 +529,7 @@ def openclaw_events_to_actf(
                     "env_action_ms": None,
                     "stop_reason": stop_reason,
                 },
-                "user_content": pending_user,
+                "user_content": deepcopy(pending_user),
                 "tools": deepcopy(tool_calls),
                 "observation": [],
                 "started_at": started_at or "",
@@ -399,6 +576,7 @@ def convert_openclaw_trace(
     *,
     user_messages: Iterable[str] | None = None,
     cache_trace: Path | None = None,
+    wire_trace: Path | None = None,
     tools: list[Any] | None = None,
     keep_thinking: bool = True,
 ) -> dict[str, Any]:
@@ -412,6 +590,7 @@ def convert_openclaw_trace(
     ))
     matched_inputs = {text for mid, text in notification_inputs.items() if mid in native_ids}
     unresolved = unresolved or bool(set(notification_inputs.values()) - matched_inputs)
+    _attach_wire_images(native_events, wire_trace)
     trajectory = openclaw_events_to_actf(
         native_events,
         user_messages=user_messages,

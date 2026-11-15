@@ -12,6 +12,8 @@ OpenAI-compatible HTTP layer, it works for harness versions that honour
 
 from __future__ import annotations
 
+from copy import deepcopy
+import hashlib
 import io
 import json
 import threading
@@ -194,6 +196,140 @@ def redact_jsonl_file(path: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _wire_image_block(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    block_type = value.get("type")
+    if block_type in {"image_url", "input_image"}:
+        image_url = value.get("image_url", value.get("url"))
+        if isinstance(image_url, Mapping):
+            image_url = image_url.get("url")
+        if isinstance(image_url, str) and image_url:
+            return {"type": "image", "data": image_url}
+        return None
+    if block_type != "image":
+        return None
+    source = value.get("source")
+    if isinstance(source, Mapping):
+        return {"type": "image", "source": deepcopy(dict(source))}
+    data = value.get("data")
+    if not isinstance(data, str) or not data:
+        return None
+    block: dict[str, Any] = {"type": "image", "data": data}
+    mime_type = value.get("mimeType", value.get("mime_type"))
+    if isinstance(mime_type, str) and mime_type:
+        block["mimeType"] = mime_type
+    return block
+
+
+def _request_image_inputs(body: Any) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return a request's image blocks and the text sent in the same messages."""
+
+    if not isinstance(body, Mapping):
+        return [], []
+    messages = body.get("messages", body.get("input"))
+    if not isinstance(messages, list):
+        return [], []
+    images: list[dict[str, Any]] = []
+    texts: list[str] = []
+    for message in messages:
+        if not isinstance(message, Mapping):
+            continue
+        direct = _wire_image_block(message)
+        if direct is not None:
+            images.append(direct)
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        found = [
+            image
+            for block in content
+            if (image := _wire_image_block(block)) is not None
+        ]
+        if found:
+            images.extend(found)
+            texts.extend(
+                block["text"]
+                for block in content
+                if isinstance(block, Mapping) and isinstance(block.get("text"), str)
+            )
+    return images, texts
+
+
+def _image_digest(image: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(image, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def wire_text_digest(text: str) -> str:
+    return hashlib.sha256(text.strip().encode()).hexdigest()
+
+
+def extract_wire_image_requests(path: Path) -> list[dict[str, Any]]:
+    """Return image-bearing model requests in wire order.
+
+    Full traces expose the original request body. Compact ACTF-mode traces keep
+    ``image_inputs`` (each distinct image's bytes once, later occurrences as a
+    ``sha256`` reference) and digests of the accompanying text, so image bytes
+    survive long enough to enrich ACTF without retaining prompt text.
+    """
+
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
+    except OSError:
+        return []
+    entries: list[Mapping[str, Any]] = []
+    stored: dict[str, dict[str, Any]] = {}
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, Mapping):
+            continue
+        entries.append(entry)
+        compact = entry.get("image_inputs")
+        if isinstance(compact, list):
+            for item in compact:
+                if isinstance(item, Mapping) and "sha256" not in item:
+                    stored[_image_digest(item)] = dict(item)
+    requests: list[dict[str, Any]] = []
+    for entry in entries:
+        compact = entry.get("image_inputs")
+        body = entry.get("body")
+        if isinstance(compact, list):
+            images = [
+                deepcopy(stored[digest])
+                for item in compact
+                if isinstance(item, Mapping)
+                and (digest := item.get("sha256") or _image_digest(item)) in stored
+            ]
+            text_digests = entry.get("image_text_digests")
+            if not isinstance(text_digests, list):
+                text_digests = []
+        else:
+            images, texts = _request_image_inputs(body)
+            text_digests = [wire_text_digest(text) for text in texts]
+        if images:
+            body_tools = body.get("tools") if isinstance(body, Mapping) else None
+            tool_count = (
+                len(body_tools)
+                if isinstance(body_tools, list)
+                else entry.get("n_tools")
+            )
+            requests.append(
+                {
+                    "seq": entry.get("seq"),
+                    "ts": entry.get("ts"),
+                    "tool_count": tool_count,
+                    "images": images,
+                    "text_digests": text_digests,
+                }
+            )
+    return requests
+
+
 def extract_wire_tools(path: Path) -> list[Any] | None:
     """Merge every tools schema recorded across wire-trace requests."""
     try:
@@ -279,6 +415,18 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             else:
                 params = {k: v for k, v in parsed.items() if k not in BODY_KEYS}
                 entry["params"] = params
+                image_inputs, image_texts = _request_image_inputs(parsed)
+                if image_inputs:
+                    # Later requests resend the whole history; keep each
+                    # image's bytes once and reference repeats by digest.
+                    entry["image_inputs"] = proxy.image_refs(image_inputs)
+                    entry["image_text_digests"] = [
+                        wire_text_digest(text) for text in image_texts
+                    ]
+                    raw_tools = parsed.get("tools")
+                    entry["n_tools"] = (
+                        len(raw_tools) if isinstance(raw_tools, list) else 0
+                    )
                 messages = parsed.get("messages")
                 if isinstance(messages, list):
                     entry["n_messages"] = len(messages)
@@ -461,7 +609,15 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             return line
         return b"data: " + normalized + newline
 
-    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _handle
+    def _dispatch(self) -> None:
+        try:
+            self._handle()
+        except (BrokenPipeError, ConnectionResetError):
+            # The agent closed the connection, typically when its turn timed
+            # out; _handle has already recorded the incomplete response.
+            self.close_connection = True
+
+    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _dispatch
 
 
 class WireTraceProxy:
@@ -518,6 +674,7 @@ class WireTraceProxy:
         self._seq = 0
         self.responses_request_count = 0
         self.tool_schema_fingerprints: set[str] = set()
+        self.image_input_digests: set[str] = set()
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._host = host
@@ -626,6 +783,18 @@ class WireTraceProxy:
         assert self.responses_tools_path is not None
         with self._lock, self.responses_tools_path.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def image_refs(self, images: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        refs: list[dict[str, Any]] = []
+        with self._lock:
+            for image in images:
+                digest = _image_digest(image)
+                if digest in self.image_input_digests:
+                    refs.append({"type": "image", "sha256": digest})
+                else:
+                    self.image_input_digests.add(digest)
+                    refs.append(dict(image))
+        return refs
 
     def write(self, entry: Mapping[str, Any]) -> None:
         line = json.dumps(entry, ensure_ascii=False)

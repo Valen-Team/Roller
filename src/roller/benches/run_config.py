@@ -200,17 +200,22 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "max_iterations": ("--hermes-max-iterations", "value"),
         "context_length": ("--hermes-context-length", "value"),
         "vision": ("--hermes-vision", "bool"),
+        "toolsets": ("--hermes-toolset", "repeat"),
     },
     "opencode": {
         "max_steps": ("--opencode-max-steps", "value"),
         "context_length": ("--opencode-context-length", "value"),
         "output_tokens": ("--opencode-output-tokens", "value"),
         "vision": ("--opencode-vision", "bool"),
+        "native_tools": ("--opencode-native-tools", "switch"),
+        "deny_tools": ("--opencode-deny-tool", "repeat"),
     },
     "deepseek": {
         "max_steps": ("--deepseek-max-steps", "value"),
         "context_length": ("--deepseek-context-length", "value"),
         "output_tokens": ("--deepseek-output-tokens", "value"),
+        "profile": ("--deepseek-profile", "value"),
+        "permission_mode": ("--deepseek-permission-mode", "value"),
     },
     "pi": {
         "max_steps": ("--pi-max-steps", "value"),

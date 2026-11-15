@@ -76,6 +76,7 @@ harnesses/hermes-configuration
 harnesses/opencode-configuration
 harnesses/deepseek-configuration
 harnesses/pi-configuration
+harnesses/tool-availability
 ~~~
 
 ~~~{toctree}
@@ -106,4 +107,5 @@ benches/wildclawbench
 benches/skillsbench
 benches/pinchbench
 benches/qwenclawbench
+benches/swebench-pro
 ~~~

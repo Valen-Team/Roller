@@ -152,9 +152,9 @@ benchmark:
 | OpenClaw | `model_config`、`gateway_port`、`gateway_port_step`、`gateway_startup_timeout`、`model_request_timeout`、`max_tokens`、`session_id`、`search_provider`、`collect_paths`、`set_image_model`、`cache_trace`、`config_set` |
 | Codex | `config`、`config_set`、`reasoning_summary`、`web_search`、`websockets` |
 | Claude Code | `settings`、`max_turns`、`max_thinking_tokens`、`permission_mode`、`capture_calls` |
-| Hermes | `max_iterations`、`context_length`、`vision` |
-| OpenCode | `max_steps`、`context_length`、`output_tokens`、`vision` |
-| DeepSeek | `max_steps`、`context_length`、`output_tokens` |
+| Hermes | `max_iterations`、`context_length`、`vision`、`toolsets` |
+| OpenCode | `max_steps`、`context_length`、`output_tokens`、`vision`、`native_tools`、`deny_tools` |
+| DeepSeek | `max_steps`、`context_length`、`output_tokens`、`profile`、`permission_mode` |
 | Pi | `max_steps`、`context_length`、`output_tokens`、`input_modalities` |
 
 `config_set` 是 `KEY=VALUE` 字符串列表，每项对应一次 `--openclaw-config-set` 或

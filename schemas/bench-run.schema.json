@@ -103,6 +103,10 @@
             "config_set": {"$ref": "#/$defs/stringList"},
             "capture_calls": {"type": "boolean"},
             "input_modalities": {"enum": ["text", "text,image"]},
+            "toolsets": {"$ref": "#/$defs/stringList"},
+            "native_tools": {"type": "boolean"},
+            "deny_tools": {"$ref": "#/$defs/stringList"},
+            "profile": {"$ref": "#/$defs/nonEmptyString"},
             "config": {"$ref": "#/$defs/nonEmptyString"},
             "reasoning_summary": {"enum": ["auto", "concise", "detailed", "none"]},
             "web_search": {"enum": ["disabled", "cached", "live"]},
@@ -117,7 +121,10 @@
                 "plan",
                 "auto",
                 "dontAsk",
-                "bypassPermissions"
+                "bypassPermissions",
+                "read-only",
+                "workspace-write",
+                "danger-full-access"
               ]
             },
             "max_iterations": {"$ref": "#/$defs/positiveIntegerOrEnv"},
