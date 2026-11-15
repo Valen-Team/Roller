@@ -221,6 +221,8 @@ Flags that belong to one Harness are documented in that Harness guide. Each guid
 | DeepSeek | {ref}`DeepSeek Harness guide <deepseek-cli-flags>` |
 | Pi Agent | {ref}`Pi Agent Harness guide <pi-cli-flags>` |
 
+For the tools each Harness exposes and the flags that select them, see [Harness tool availability](../harnesses/tool-availability.md).
+
 To inspect the complete flag set supported by the Roller version currently in use, run:
 
 ```bash
@@ -291,14 +293,3 @@ Prefer `collect --bench`. It converts tasks, runs containers, grades results, an
 `collect --bench` automatically uses each benchmark task's timeout. For a manual export followed by collect, add `--task-timeouts` to collect. Both workflows can use `--pass-env` for environment variables required by the grader.
 
 See [Bench integration and scoring](../benches/bench-format.md) for field semantics, scoring order, `stage` leak prevention, and aggregation rules.
-
-## Native tool selection
-
-| Option | Default | Behavior |
-| --- | --- | --- |
-| `--hermes-toolset NAME` | Native discovery | Repeat to select native toolsets |
-| `--opencode-deny-tool NAME` | None | Repeat to deny native tools/permissions |
-| `--deepseek-profile NAME` | `sdk` | Native SDK profile; `sdk-minimal` selects shell-only |
-| `--deepseek-permission-mode MODE` | `danger-full-access` | Container-only permissions; also accepts `read-only` / `workspace-write` |
-
-See [tool availability](../harnesses/tool-availability.md) for runtime prerequisites and isolation boundaries.

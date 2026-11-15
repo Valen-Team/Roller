@@ -76,6 +76,7 @@ harnesses/hermes-configuration
 harnesses/opencode-configuration
 harnesses/deepseek-configuration
 harnesses/pi-configuration
+harnesses/tool-availability
 ~~~
 
 ~~~{toctree}
