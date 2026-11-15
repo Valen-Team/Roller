@@ -183,13 +183,6 @@ def pi_events_to_actf(
                 raise ValueError("Pi assistant response is empty")
             awaiting_reply = False
             assistant_count += 1
-            tokens = message.get("usage") or {}
-            message["usage"] = {
-                **tokens,
-                "input": sum(
-                    tokens.get(key, 0) for key in ("input", "cacheRead", "cacheWrite")
-                ),
-            }
         else:
             call_id = message.get("toolCallId")
             if (

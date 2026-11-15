@@ -362,10 +362,10 @@ def opencode_events_to_actf(
             "role": role,
             "content": content,
             "usage": {
-                "input": (tokens.get("input") or 0)
-                + (cache.get("read") or 0)
-                + (cache.get("write") or 0),
+                "input": tokens.get("input") or 0,
                 "output": tokens.get("output") or 0,
+                "cacheRead": cache.get("read") or 0,
+                "cacheWrite": cache.get("write") or 0,
             },
             "stopReason": info.get("finish", ""),
         }

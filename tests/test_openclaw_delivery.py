@@ -75,7 +75,15 @@ class OpenClawDeliveryTests(unittest.TestCase):
         actf, sft, usage = self._project([_user(), _reply("cli")])
         self.assertEqual(len(actf["steps"]), 1)
         self.assertEqual(sft["messages"][-1]["content"], "done")
-        self.assertEqual(actf["steps"][0]["metric"]["prompt_tokens_len"], 10)
+        metric = actf["steps"][0]["metric"]
+        self.assertEqual(
+            (
+                metric["prompt_tokens_len"],
+                metric["cache_read_tokens"],
+                metric["cache_write_tokens"],
+            ),
+            (14, 3, 1),
+        )
         self.assertEqual(
             usage,
             {
@@ -146,7 +154,7 @@ class OpenClawDeliveryTests(unittest.TestCase):
                 self.assertEqual(usage["cost_usd"], 0.10)
                 self.assertEqual(
                     sum(step["metric"]["prompt_tokens_len"] for step in actf["steps"]),
-                    20,
+                    28,
                 )
 
     def test_gap_fill_after_tool_use_preserves_the_only_final_answer(self) -> None:
@@ -231,7 +239,7 @@ class OpenClawDeliveryTests(unittest.TestCase):
                             step["metric"]["prompt_tokens_len"]
                             for step in actf["steps"]
                         ),
-                        30,
+                        42,
                     )
                     self.assertEqual(
                         sum(
@@ -435,7 +443,7 @@ class OpenClawDeliveryTests(unittest.TestCase):
         self.assertEqual(len(actf["steps"]), 2)
         self.assertEqual(usage["request_count"], 1)
         self.assertEqual(usage["total_tokens"], 16)
-        self.assertEqual(actf["steps"][-1]["metric"]["prompt_tokens_len"], 10)
+        self.assertEqual(actf["steps"][-1]["metric"]["prompt_tokens_len"], 14)
 
     def test_changed_cache_counts_are_not_a_usage_match(self) -> None:
         actf, _, usage = self._project(

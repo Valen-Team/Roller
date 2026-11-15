@@ -14,6 +14,10 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 - The project status is Beta, in the package classifiers and the documentation.
 - The handbook moved to [valen-team.github.io/roller](https://valen-team.github.io/roller/) and is maintained in the website repository. `docs/` and the Sphinx build are removed from this repository.
 
+### Fixed
+
+- ACTF `metric.prompt_tokens_len` of an OpenClaw step counts the whole prompt, including cache reads and writes, as it does on the other six Harnesses. It left the cached tokens out before. OpenClaw, Hermes, OpenCode, DeepSeek and Pi steps also record `cache_read_tokens` and `cache_write_tokens`. Trajectories of existing runs keep the values they were written with.
+
 ## 0.3.0 - 2026-11-15
 
 Roller 0.3.0 adds the SWE-Bench Pro bench adapter, keeps images in the trajectories of all seven Harnesses, and lets a benchmark run be described in a YAML file. It also fixes defects found by running every Harness against a real model.

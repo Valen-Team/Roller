@@ -227,6 +227,33 @@ class ActfConversionTests(unittest.TestCase):
         self.assertEqual(second["assistant_content"]["content"], "done")
         self.assertEqual(second["metric"]["stop_reason"], "stop")
 
+    def test_prompt_tokens_cover_cache_reads_and_writes(self) -> None:
+        events = _events()
+        events[2]["message"]["usage"] = {
+            "input": 10,
+            "output": 3,
+            "cacheRead": 6,
+            "cacheWrite": 2,
+            "totalTokens": 21,
+        }
+
+        first, second = openclaw_events_to_actf(events)["steps"]
+
+        self.assertEqual(
+            first["metric"],
+            {
+                "prompt_tokens_len": 18,
+                "completion_tokens_len": 3,
+                "llm_infer_ms": None,
+                "env_action_ms": None,
+                "stop_reason": "toolUse",
+                "cache_read_tokens": 6,
+                "cache_write_tokens": 2,
+            },
+        )
+        self.assertEqual(second["metric"]["cache_read_tokens"], 0)
+        self.assertEqual(second["metric"]["cache_write_tokens"], 0)
+
     def test_system_prompt_and_tools_stored_once_at_top_level(self) -> None:
         trajectory = openclaw_events_to_actf(
             _events(),
