@@ -70,11 +70,13 @@ roller collect \
 | `--opencode-context-length` | 模型上下文窗口，默认 128000，至少 1024，按服务实际能力设置 |
 | `--opencode-output-tokens` | SkillsBench 默认为 32768，其他任务默认为 8192，必须小于上下文窗口 |
 | `--opencode-vision` / `--no-opencode-vision` | 是否向 OpenCode 声明模型支持图片输入。默认开启，纯文本模型可显式关闭 |
+| `--opencode-native-tools` | 默认关闭。开启后允许 OpenCode 原生注册表中的全部工具，不再限于固定的 `bash/read/write/edit/apply_patch/glob/grep/skill`。`task` 工具仅在开启 `--capture-calls` 时允许 |
+| `--opencode-deny-tool NAME` | 在 `--opencode-native-tools` 下禁用一个原生工具或权限，可重复指定 |
 | `--thinking` / `runtime.thinking` | 支持 `off/minimal/low/medium/high/xhigh`。传给兼容服务的 reasoning effort，`off` 映射为 `none`，仍需服务支持 |
 | `--wire-trace` | 默认 `actf`。各模式均通过插件保留原生请求和工具定义。`full` 额外保存 HTTP 记录，要求显式 API 地址和 `--network host` |
 | `--no-keep-thinking` | 仅移除 ACTF/SFT 中的 reasoning。原生日志和续聊历史保持完整 |
 
-OpenCode 作为 Task Agent 或 User Simulator 时均使用这些参数。修改镜像、API 地址、上下文窗口或步骤上限后，建议使用新的 `--run-name`，以免与原有运行配置冲突。
+OpenCode 作为 Task Agent 或 User Simulator 时均使用这些参数。修改镜像、API 地址、上下文窗口、步骤上限或工具选择后，建议使用新的 `--run-name`，以免与原有运行配置冲突。
 
 ## 5. 多模态能力
 
@@ -89,6 +91,8 @@ OpenCode 可使用 `bash`、`read`、`write`、`edit`、`apply_patch`、`glob` �
 同一参与者的多轮消息恢复同一个 OpenCode session，因此对话历史和工作区文件仍可使用。每一轮均启动新的 CLI 进程，因此后台进程句柄不会保留。
 
 采集时不会自动分享 session、更新 OpenCode，也不启用 MCP、子 Agent 和联网工具。Context 和 skill 文件仍可按路径读取。
+
+`--opencode-native-tools` 允许原生注册表中的其余工具，包括联网工具。子 Agent 仍只随 `--capture-calls` 开启，Explore 子 Agent 保持 `bash/read/glob/grep` 工具配置。详见 [Harness 工具开放情况](tool-availability.md)。
 
 ## 7. 轨迹与请求记录
 

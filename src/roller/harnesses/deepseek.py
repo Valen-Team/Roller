@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 from roller.deepseek_actf import convert_deepseek_trace, extract_deepseek_usage
@@ -16,6 +17,7 @@ STATE = "/roller/deepseek-state"
 RUNNER = "/roller/deepseek_runner.py"
 PLUGIN = "/roller/deepseek_journal.mjs"
 DEEPSEEK_TOOLS = ("bash",)
+DEEPSEEK_PERMISSION_MODES = ("read-only", "workspace-write", "danger-full-access")
 
 
 def deepseek_effort(value: str | None) -> str | None:
@@ -35,6 +37,8 @@ class DeepSeekConfig:
     api_key_env: str = "DEEPSEEK_API_KEY"
     pass_env: tuple[str, ...] = COMMON_ENV_NAMES
     reasoning_effort: str | None = None
+    profile: str = "sdk-minimal"
+    permission_mode: str | None = None
     max_steps: int = 12
     context_length: int = 128000
     output_tokens: int = 8192
@@ -46,9 +50,19 @@ class DeepSeekConfig:
     docker_binary: str = "docker"
     preflight_image_digest: str | None = None
 
+    @property
+    def tools(self) -> list[str] | None:
+        """The fixed tool list of ``sdk-minimal``; other profiles discover tools natively."""
+
+        return list(DEEPSEEK_TOOLS) if self.profile == "sdk-minimal" else None
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "reasoning_effort", deepseek_effort(self.reasoning_effort))
         validate_bridge_config(self, "DeepSeek")
+        if not isinstance(self.profile, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.profile):
+            raise ValueError("DeepSeek profile must be a native profile name")
+        if self.permission_mode is not None and self.permission_mode not in DEEPSEEK_PERMISSION_MODES:
+            raise ValueError("DeepSeek permission mode must be read-only|workspace-write|danger-full-access")
         validate_step_limits(self, "DeepSeek")
 
 
@@ -70,16 +84,19 @@ class DeepSeekSession(BridgeSession):
         return deepseek_effort(resolve_thinking(self.request.task.thinking, self.harness.config.reasoning_effort))
 
     def harness_environment(self, api_base: str) -> dict[str, str]:
+        config = self.harness.config
         return dict(
             DEEPSEEK_BASE_URL=api_base, HOME=self.home, DSH_HOME=self.home,
             DSH_RUNTIME_MODE="exe", ROLLER_DEEPSEEK_JOURNAL=STATE + "/trace.jsonl",
+            **({"DSH_PERMISSION_MODE": config.permission_mode} if config.permission_mode else {}),
         )
 
     def turn_options(self, timeout: float) -> dict[str, Any]:
-        # The minimal profile uses explicit context files and an isolated DSH_HOME.
+        # Context is present as explicit workspace files; the selected profile
+        # owns tool discovery inside the isolated DSH_HOME.
         config = self.harness.config
         return {
-            "turn": self.turns, "max_steps": config.max_steps,
+            "turn": self.turns, "profile": config.profile, "max_steps": config.max_steps,
             "context_length": config.context_length, "output_tokens": config.output_tokens,
             "tool_env_names": sorted(set((*config.pass_env, *self.request.task.env_names))),
         }
@@ -91,15 +108,19 @@ class DeepSeekSession(BridgeSession):
         return extract_deepseek_usage(trace)
 
     def version_fields(self) -> dict[str, Any]:
-        return {"deepseek_version": self.version, "profile": "sdk-minimal"}
+        config = self.harness.config
+        return {
+            "deepseek_version": self.version, "profile": config.profile,
+            **({"permission_mode": config.permission_mode} if config.permission_mode else {}),
+        }
 
     def settings(self) -> dict[str, Any]:
         config = self.harness.config
-        return {"max_steps": config.max_steps, "context_length": config.context_length, "output_tokens": config.output_tokens, "tools": list(DEEPSEEK_TOOLS)}
+        return {"max_steps": config.max_steps, "context_length": config.context_length, "output_tokens": config.output_tokens, "tools": config.tools}
 
 
 class DeepSeekHarness(BridgeHarness):
-    """Run the official DeepSeek SDK minimal profile in a task Docker container."""
+    """Run an official DeepSeek SDK profile in a task Docker container."""
 
     name = "deepseek"
     session_class = DeepSeekSession

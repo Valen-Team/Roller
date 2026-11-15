@@ -9,7 +9,7 @@
 | `en/` | 英文手册（网站默认语言） |
 | `zh/` | 中文手册 |
 | `en/start/` · `zh/start/` | 快速上手、CLI 参数 |
-| `en/harnesses/` · `zh/harnesses/` | OpenClaw、Codex、Claude Code、Hermes、OpenCode、DeepSeek、Pi Agent |
+| `en/harnesses/` · `zh/harnesses/` | OpenClaw、Codex、Claude Code、Hermes、OpenCode、DeepSeek、Pi Agent、工具开放情况 |
 | `en/tasks/` · `zh/tasks/` | Task 格式、Bundle 与存储、User Simulator |
 | `en/traces/` · `zh/traces/` | 轨迹产物、SFT、Viewer |
 | `en/benches/` · `zh/benches/` | Bench 接入与各 bench 说明 |

@@ -221,6 +221,8 @@ Flags that belong to one Harness are documented in that Harness guide. Each guid
 | DeepSeek | {ref}`DeepSeek Harness guide <deepseek-cli-flags>` |
 | Pi Agent | {ref}`Pi Agent Harness guide <pi-cli-flags>` |
 
+For the tools each Harness exposes and the flags that select them, see [Harness tool availability](../harnesses/tool-availability.md).
+
 To inspect the complete flag set supported by the Roller version currently in use, run:
 
 ```bash

@@ -71,11 +71,12 @@ This table lists Hermes-specific runtime flags only. See section 3 for API addre
 | `--hermes-context-length` | Optional context window override, at least 64000 tokens |
 | `--hermes-max-iterations` | `12` model iterations per user turn. The total task timeout also applies |
 | `--hermes-vision` / `--no-hermes-vision` | Enables `vision_analyze` and declares that the selected model accepts image input. Enabled by default |
+| `--hermes-toolset NAME` | Replaces the default `terminal`, `file`, and optional `vision` toolsets with the named Hermes toolsets. Repeat it to select several. `native` leaves the selection to Hermes' own toolset discovery. The `delegation` toolset is available only with `--capture-calls` |
 | `--thinking` / `runtime.thinking` | Optional native reasoning hint: `off/minimal/low/medium/high/xhigh`. Actual support and normalization depend on Hermes and the provider/model |
 | `--wire-trace` | Native request records always preserve tool definitions and assembled prompts. `full` also records HTTP traffic and requires an explicit API address with `--network host` |
 | `--no-keep-thinking` | Removes reasoning from ACTF/SFT export. The native history remains available |
 
-The same settings apply when Hermes is the Task Agent or User Simulator. After changing the image, API address, or iteration limit, use a new `--run-name` to avoid a conflict with the previous run configuration.
+The same settings apply when Hermes is the Task Agent or User Simulator. After changing the image, API address, iteration limit, or toolsets, use a new `--run-name` to avoid a conflict with the previous run configuration.
 
 ## 5. Multimodal capabilities
 
@@ -90,6 +91,8 @@ Each Agent or Simulator runs in an isolated disposable container. Inputs are rea
 Conversation history and workspace files persist across turns for the same participant. Each turn starts a new Python agent process, so in-memory state such as background process handles does not persist. Store information that a later turn needs in workspace files.
 
 Persistent Hermes memory and automatic skill learning are disabled during collection. Tasks can still read Context and skill files by path.
+
+Toolsets selected with `--hermes-toolset` run inside the same container. Toolsets that call external services need their dependencies in the image and their credentials passed through `--pass-env` or the task's `runtime.env`. See [Harness tool availability](tool-availability.md).
 
 ## 7. Trajectories and request recording
 

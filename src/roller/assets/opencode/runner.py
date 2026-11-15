@@ -10,6 +10,34 @@ import time
 
 VERSION = "1.18.30"
 TOOLS = ("bash", "read", "write", "edit", "apply_patch", "glob", "grep", "skill")
+EXPLORE_TOOLS = ("bash", "read", "glob", "grep")
+
+
+def tool_permissions(config):
+    """Root permission rules; OpenCode applies the last matching rule."""
+    capture = bool(config.get("capture_calls"))
+    if not config.get("native_tools"):
+        return {"*": "deny", **{name: "allow" for name in TOOLS}, "external_directory": "allow",
+                **({"task": "allow"} if capture else {})}
+    # Batch execution cannot answer approval prompts, so the native registry is
+    # allowed as a whole. Sub-agents still run only when their calls are captured.
+    return {"*": "allow", **({} if capture else {"task": "deny"}),
+            **{name: "deny" for name in config["deny_tools"]}}
+
+
+def agent_profiles(config):
+    agents = {"build": {"steps": config["max_steps"]}, "title": {"disable": True}, "summary": {"disable": True}}
+    if config.get("capture_calls"):
+        # Global task permissions otherwise override Explore's native tool
+        # restrictions. Retain a distinct child tool profile when delegating.
+        if config.get("native_tools"):
+            explore = {"*": "deny", **{name: "allow" for name in EXPLORE_TOOLS}, "external_directory": "allow",
+                       **{name: "deny" for name in config["deny_tools"]}}
+        else:
+            explore = {"write": "deny", "edit": "deny", "apply_patch": "deny", "task": "deny", "skill": "deny"}
+        agents["general"] = {"steps": config["max_steps"]}
+        agents["explore"] = {"steps": config["max_steps"], "permission": explore}
+    return agents
 
 
 def atomic_json(path, value):
@@ -89,18 +117,9 @@ def run_turn(config, state):
         "share": "disabled", "autoupdate": False, "snapshot": False,
         "compaction": {"auto": False, "prune": False},
         "lsp": False, "formatter": False,
-        "permission": {"*": "deny", **{name: "allow" for name in TOOLS}, "external_directory": "allow",
-                       **({"task": "allow"} if config.get("capture_calls") else {})},
-        "agent": {"build": {"steps": config["max_steps"]}, "title": {"disable": True}, "summary": {"disable": True}},
+        "permission": tool_permissions(config),
+        "agent": agent_profiles(config),
     }
-    if config.get("capture_calls"):
-        # Global task permissions otherwise override Explore's native tool
-        # restrictions. Retain a distinct child tool profile when delegating.
-        native_config["agent"]["general"] = {"steps": config["max_steps"]}
-        native_config["agent"]["explore"] = {"steps": config["max_steps"], "permission": {
-            "write": "deny", "edit": "deny", "apply_patch": "deny",
-            "task": "deny", "skill": "deny",
-        }}
     atomic_json(state / "opencode.json", native_config)
     session_file = state / "session.json"
     session = json.loads(session_file.read_text()) if session_file.exists() else {}

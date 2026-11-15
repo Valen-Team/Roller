@@ -47,6 +47,60 @@ def write_events(path, events=None):
     path.write_text("".join(json.dumps(e)+"\n" for e in (sample_events() if events is None else events)))
 
 
+def locked_configuration(*flags):
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        tasks = root / "tasks.json"
+        tasks.write_text(json.dumps([{"harness": "deepseek", "model": "model", "prompt": "OK"}]))
+        command = ["collect", "--tasks", str(tasks), "--output", str(root / "runs"), "--run-name", "case", "--api-base", "https://deepseek.example/v1", "--api-key-env", "LOCAL_TEST_KEY", *flags]
+        with patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}), patch("roller.cli._docker_preflight", return_value="sha256:test"), patch("roller.cli.Collector") as collector, contextlib.redirect_stdout(io.StringIO()):
+            collector.return_value.collect.return_value = []
+            assert _collect(_build_parser().parse_args(command)) == 0
+        return json.loads((root / "runs/case/lock.json").read_text())["execution"]["deepseek"]
+
+
+class DeepSeekProfileTests(unittest.TestCase):
+    def session(self, **kwargs):
+        harness = DeepSeekHarness(DeepSeekConfig(**kwargs), 0, Mock())
+        session = harness.create_session(RunRequest(0, Task("test", ("one",), 0), "model", 60), Path("unused"), 1)
+        session.version = "0.1.5rc1"
+        return session
+
+    def test_default_lock_settings_and_environment_are_unchanged(self):
+        self.assertEqual(locked_configuration(), {
+            "docker_image": "roller-deepseek:0.1.5rc1", "container_user": "0", "network": "host",
+            "api_base": "https://deepseek.example/v1", "api_key_env": "LOCAL_TEST_KEY", "reasoning_effort": None,
+            "max_steps": 12, "deepseek_version": "0.1.5rc1", "context_length": 128000, "output_tokens": 8192,
+            "tools": ["bash"], "api_mode": "chat_completions", "wire_trace": "actf", "keep_thinking": True,
+            "pass_env_names": ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"],
+            "profile": "sdk-minimal", "retry_count": 0, "docker_image_digest": "sha256:test",
+        })
+        session = self.session()
+        self.assertEqual(session.settings(), {"max_steps": 12, "context_length": 128000, "output_tokens": 8192, "tools": ["bash"]})
+        self.assertEqual(session.version_fields(), {"deepseek_version": "0.1.5rc1", "profile": "sdk-minimal"})
+        self.assertEqual(session.turn_options(60)["profile"], "sdk-minimal")
+        self.assertEqual(session.harness_environment("https://deepseek.example/v1"), {
+            "DEEPSEEK_BASE_URL": "https://deepseek.example/v1", "HOME": "/roller/deepseek-home",
+            "DSH_HOME": "/roller/deepseek-home", "DSH_RUNTIME_MODE": "exe",
+            "ROLLER_DEEPSEEK_JOURNAL": "/roller/deepseek-state/trace.jsonl",
+        })
+
+    def test_selected_profile_and_permission_mode_are_threaded(self):
+        locked = locked_configuration("--deepseek-profile", "sdk", "--deepseek-permission-mode", "danger-full-access")
+        self.assertIsNone(locked["tools"])
+        self.assertEqual((locked["profile"], locked["permission_mode"]), ("sdk", "danger-full-access"))
+        session = self.session(profile="sdk", permission_mode="danger-full-access")
+        self.assertIsNone(session.settings()["tools"])
+        self.assertEqual(session.version_fields(), {"deepseek_version": "0.1.5rc1", "profile": "sdk", "permission_mode": "danger-full-access"})
+        self.assertEqual(session.turn_options(60)["profile"], "sdk")
+        self.assertEqual(session.harness_environment("https://deepseek.example/v1")["DSH_PERMISSION_MODE"], "danger-full-access")
+
+    def test_invalid_profile_and_permission_mode(self):
+        for settings in ({"profile": ""}, {"profile": "../sdk"}, {"profile": "sdk\n"}, {"profile": None}, {"permission_mode": "full"}):
+            with self.subTest(settings=settings), self.assertRaises(ValueError):
+                DeepSeekConfig(**settings)
+
+
 class DeepSeekTraceTests(unittest.TestCase):
     def test_native_tools_reasoning_and_usage(self):
         events = sample_events()

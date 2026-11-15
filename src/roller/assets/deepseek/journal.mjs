@@ -10,14 +10,21 @@ export function apply(ctx) {
   // dsh scrubs credential-shaped ambient names. Restore only environment
   // entries the Roller task or --pass-env explicitly requested, using the
   // native subprocess service's deliberate env override seam.
+  // sdk-minimal runs tools in its terminal; other profiles also spawn plain
+  // subprocesses.
   const service = ctx.subprocess;
-  const spawnTerminal = service.spawnTerminal;
-  service.spawnTerminal = function (spec) {
-    const config = JSON.parse(readFileSync('/roller/deepseek-state/turn.json', 'utf8'));
-    const env = Object.fromEntries(config.tool_env_names.filter(n => process.env[n] !== undefined)
-      .map(n => [n, process.env[n]]));
-    return spawnTerminal.call(service, {...spec, env: {...env, ...spec.env}});
-  };
+  const {profile} = JSON.parse(readFileSync('/roller/deepseek-state/turn.json', 'utf8'));
+  const originals = new Map();
+  for (const method of profile === 'sdk-minimal' ? ['spawnTerminal'] : ['spawn', 'spawnTerminal']) {
+    const original = service[method];
+    originals.set(method, original);
+    service[method] = function (spec) {
+      const config = JSON.parse(readFileSync('/roller/deepseek-state/turn.json', 'utf8'));
+      const env = Object.fromEntries(config.tool_env_names.filter(n => process.env[n] !== undefined)
+        .map(n => [n, process.env[n]]));
+      return original.call(service, {...spec, env: {...env, ...spec.env}});
+    };
+  }
   globalThis.fetch = async function (input, init) {
     const url = typeof input === 'string' ? input : input.url ?? String(input);
     if (new URL(url).pathname.endsWith('/chat/completions')) {
@@ -40,5 +47,5 @@ export function apply(ctx) {
     }
     return original.call(globalThis, input, init);
   };
-  ctx.on('dispose', () => { globalThis.fetch = original; service.spawnTerminal = spawnTerminal; });
+  ctx.on('dispose', () => { globalThis.fetch = original; for (const [method, original] of originals) service[method] = original; });
 }
