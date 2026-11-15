@@ -70,14 +70,28 @@ def _join_target(target: str, relative_path: str) -> str:
 
 
 class TaskBundleStore:
-    """Build immutable task snapshots and reusable content-addressed trees."""
+    """Build immutable task snapshots and reusable content-addressed trees.
 
-    def __init__(self, run_dir: Path, policy: BundlePolicy | None = None) -> None:
+    With ``materialize=False`` the store runs every path, collision, size and
+    digest check and returns the same digests, but writes no file; the bundle
+    roots it reports do not exist.
+    """
+
+    def __init__(
+        self,
+        run_dir: Path,
+        policy: BundlePolicy | None = None,
+        *,
+        materialize: bool = True,
+    ) -> None:
         self.run_dir = run_dir.expanduser().resolve()
         self.policy = policy or BundlePolicy()
+        self.materialize = materialize
         self.trees_root = self.run_dir / "trees" / "sha256"
         self.runtime_root = self.run_dir / ".runtime"
         self._scan_cache: dict[Path, _ScannedSource] = {}
+        if not materialize:
+            return
         for path in (self.trees_root, self.runtime_root):
             path.mkdir(parents=True, exist_ok=True)
         try:
@@ -335,7 +349,7 @@ class TaskBundleStore:
             {"directories": sorted(directories), "files": file_records}
         )
         tree_root = self.trees_root / tree_digest
-        if not tree_root.exists():
+        if self.materialize and not tree_root.exists():
             temporary_root = Path(
                 tempfile.mkdtemp(prefix=f".{tree_digest}.", dir=self.trees_root)
             )
@@ -371,9 +385,10 @@ class TaskBundleStore:
 
     def _prepare_context(self, task: Task, task_key: str) -> tuple[Path, dict[str, Any]]:
         context_root = self.runtime_root / "context" / task_key
-        if context_root.exists():
-            shutil.rmtree(context_root)
-        context_root.mkdir(parents=True, exist_ok=True)
+        if self.materialize:
+            if context_root.exists():
+                shutil.rmtree(context_root)
+            context_root.mkdir(parents=True, exist_ok=True)
         occupied_files: set[str] = set()
         occupied_directories: set[str] = set()
         declarations: list[dict[str, Any]] = []
@@ -421,7 +436,8 @@ class TaskBundleStore:
                         occupied_directories,
                         f"task {task.id} context",
                     )
-                    (context_root / target_directory).mkdir(parents=True, exist_ok=True)
+                    if self.materialize:
+                        (context_root / target_directory).mkdir(parents=True, exist_ok=True)
                     declaration["directories"].append(target_directory)
             if spec.source.is_dir() and spec.target != ".":
                 self._add_directory(
@@ -430,7 +446,8 @@ class TaskBundleStore:
                     occupied_directories,
                     f"task {task.id} context",
                 )
-                (context_root / spec.target).mkdir(parents=True, exist_ok=True)
+                if self.materialize:
+                    (context_root / spec.target).mkdir(parents=True, exist_ok=True)
                 declaration["directories"].append(spec.target)
             for item in scanned.files:
                 target = spec.target if item.relative_path == "." else _join_target(
@@ -446,9 +463,10 @@ class TaskBundleStore:
                     occupied_directories,
                     f"task {task.id} context",
                 )
-                destination = context_root / target
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                self._copy_snapshot(item, destination, "context")
+                if self.materialize:
+                    destination = context_root / target
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    self._copy_snapshot(item, destination, "context")
                 file_record: dict[str, Any] = {
                     "logical_path": target,
                     "size": item.size,
@@ -520,8 +538,9 @@ class TaskBundleStore:
             "legacy_workspace": task.legacy_workspace,
             "resume_safe": context_manifest["resume_safe"],
         }
+        input_files = {record["logical_path"] for record in input_manifest["files"]}
         for path in task.attach_images:
-            if not (inputs_root / path).is_file():
+            if path not in input_files:
                 raise BundleError(
                     f"task {task.id} files.attach_images is not an input file: {path}"
                 )

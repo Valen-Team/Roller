@@ -70,8 +70,12 @@ class AttachImagesTaskTests(unittest.TestCase):
         self.assertEqual(store.prepare(replace(plain, attach_images=())).manifest_digest, digests[0])
 
         missing = self.load(self.files(attach_images=["photos/dog.png"]))
-        with self.assertRaisesRegex(BundleError, "not an input file: photos/dog.png"):
-            store.prepare(missing)
+        for materialize in (True, False):
+            checker = TaskBundleStore(self.root / "checked", materialize=materialize)
+            with self.subTest(materialize=materialize):
+                with self.assertRaisesRegex(BundleError, "not an input file: photos/dog.png"):
+                    checker.prepare(missing)
+                self.assertEqual(checker.prepare(selected).manifest_digest, digests[1])
 
     def test_messages_carry_images_on_the_first_message_only(self) -> None:
         task = self.load(self.files(attach_images=["inputs/chart.png", "photos/cat.JPG"]))

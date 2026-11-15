@@ -13,7 +13,7 @@ import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from roller.collector import CollectionConfig, Collector, check_retired_cot_samples
 from roller.benches import (
@@ -25,6 +25,7 @@ from roller.benches import (
 )
 from roller.benches.grading import GradedHarness
 from roller.bundles import BundlePolicy, TaskBundleStore
+from roller.models import TaskBundle
 from roller.conversation import ConversationManager
 from roller.image_build import prepare_task_images
 from roller.harnesses.claude_code import (
@@ -684,7 +685,9 @@ def _run_name(harness: str, value: str | None) -> str:
     return f"{harness}_{timestamp}"
 
 
-def _dry_run_payload(args: argparse.Namespace, requests: list) -> dict:
+def _dry_run_payload(
+    args: argparse.Namespace, requests: list, bundles: Mapping[str, TaskBundle]
+) -> dict:
     cli_harness = args._cli_harness if hasattr(args, "_cli_harness") else args.harness
     agent_harnesses = {
         cli_harness or getattr(request.task, "harness", "openclaw")
@@ -745,6 +748,10 @@ def _dry_run_payload(args: argparse.Namespace, requests: list) -> dict:
                 "workspace_container_path": request.task.workspace_container_path,
                 "output_collection": "all",
                 "legacy_workspace": request.task.legacy_workspace,
+                # The digests a real run records and compares on Resume.
+                "task_bundle_digest": bundles[request.task.id].manifest_digest,
+                "input_tree_digest": bundles[request.task.id].input_tree_digest,
+                "context_manifest_digest": bundles[request.task.id].context_manifest_digest,
             }
             for request in requests
         ],
@@ -1270,10 +1277,11 @@ def _collect(args: argparse.Namespace) -> int:
             )
 
     if args.dry_run:
-        # Exercise all path, hash, collision and size checks without leaving a run directory.
-        with tempfile.TemporaryDirectory(prefix="roller-dry-run-") as temporary:
-            TaskBundleStore(Path(temporary), bundle_policy).prepare_all(tasks)
-        payload = _dry_run_payload(args, requests)
+        # Run every path, hash, collision and size check without writing a file.
+        bundles = TaskBundleStore(
+            Path(args.output), bundle_policy, materialize=False
+        ).prepare_all(tasks)
+        payload = _dry_run_payload(args, requests, bundles)
         if bench_context is not None:
             payload["bench"] = bench_context
         print(json.dumps(payload, ensure_ascii=False, indent=2))

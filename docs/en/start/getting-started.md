@@ -112,7 +112,7 @@ roller collect \
   --dry-run
 ```
 
-Before real collection, a dry-run checks that Roller can read the tasks and options, then previews the rollouts it would run. A dry-run does not start containers, call the model API, or create run results. Proceed to real collection after the dry-run completes without errors.
+Before real collection, a dry-run checks that Roller can read the tasks and options, then previews the rollouts it would run. A dry-run does not start containers, call the model API, or write any file; it reads each input once to validate it and lists the bundle digests a real run would record. Proceed to real collection after the dry-run completes without errors.
 
 ## 6. Real collection
 
