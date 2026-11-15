@@ -49,6 +49,7 @@ Roller provides the following capabilities:
 
 ## News
 
+- **2026-11-15**: Roller is on PyPI as [`roller-agent`](https://pypi.org/project/roller-agent/). `roller init` writes the example tasks and configuration templates into the working directory.
 - **2026-11-11**: SFT export for compacted context. When the Task Agent compacts its context, each verified context window is exported as a separate SFT record under `sft_segments/`.
 - **2026-11-08**: QwenClawBench adapter: 100 tasks in 8 domains, with automated grading, hybrid grading and repeated runs per task.
 - **2026-11-05**: One-command evaluation for SkillsBench and PinchBench. SFT records support images.
@@ -100,16 +101,34 @@ The following procedure collects a first batch of trajectories with OpenClaw, th
 Requirements: Python 3.10 or later and a running Docker daemon.
 
 ```bash
-git clone https://github.com/Valen-Team/Roller.git
-cd Roller
-conda create -n roller python=3.11 -y
-conda activate roller
-python -m pip install -e .
+# uv
+uv tool install roller-agent
+
+# pip
+python -m pip install roller-agent
 
 docker pull ghcr.io/openclaw/openclaw:2026.7.1-2
 ```
 
 With Docker Desktop on macOS, enable **Enable host networking** under **Settings → Resources → Network** and restart Docker Desktop. To install the image offline from a `docker save` archive, run `docker load -i <archive>` instead of `docker pull`.
+
+Create a working directory and write the example tasks and configuration templates into it. The remaining steps run from this directory:
+
+```bash
+mkdir roller-quickstart && cd roller-quickstart
+roller init
+```
+
+`roller init` creates `examples/tasks`, `examples/config` and `examples/env`, and leaves files that already exist untouched.
+
+Install Roller from source if you want the latest changes or plan to contribute. A clone already contains `examples/`, so `roller init` is not needed there:
+
+```bash
+git clone https://github.com/Valen-Team/Roller.git
+cd Roller
+uv venv && source .venv/bin/activate
+uv pip install -e ".[test]"
+```
 
 ### 2. Model configuration
 

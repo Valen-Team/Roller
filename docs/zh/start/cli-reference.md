@@ -24,6 +24,7 @@ roller view --help
 | 命令 | 用途 |
 | --- | --- |
 | `roller collect [OPTIONS]` | 读取 task，运行 Harness 并采集轨迹 |
+| `roller init [DIRECTORY]` | 将示例 task 和配置模板写入 `DIRECTORY/examples`（默认当前目录），已存在的文件保持不变 |
 | `roller view RUN_DIR` | 在 Viewer 中浏览已有 run |
 | `roller bench ...` | 列出、导出或汇总 benchmark，采集参数见第 8 节 |
 | `roller --version` | 查看当前安装的 Roller 版本 |
