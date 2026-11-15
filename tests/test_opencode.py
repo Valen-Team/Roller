@@ -46,6 +46,31 @@ def write_events(path, events=None):
 
 
 class OpenCodeTraceTests(unittest.TestCase):
+    def test_user_image_file_parts_reach_actf_and_sft(self):
+        events = sample_events()
+        parts = events[-1]["data"]["messages"][0]["parts"]
+        parts.append({"id": "p1a", "messageID": "m1", "type": "file", "mime": "image/PNG",
+                      "filename": "chart.png", "url": "data:image/png;base64,AA=="})
+        actf = opencode_events_to_actf(events)
+        self.assertEqual(actf["steps"][0]["user_content"], [
+            {"type": "text", "text": "Read token"},
+            {"type": "image", "data": "data:image/png;base64,AA==", "mimeType": "image/png"},
+        ])
+        record = actf_to_sft(actf)
+        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+        self.assertEqual(record["messages"][1]["content"], "Read token\n<image>")
+
+        # A path-only reference stays in ACTF; SFT export never reads files.
+        parts[-1]["url"] = "file:///roller/workspace/chart.png"
+        actf = opencode_events_to_actf(events)
+        self.assertEqual(actf["steps"][0]["user_content"][1]["data"], "file:///roller/workspace/chart.png")
+        with self.assertRaises(SFTConversionError):
+            actf_to_sft(actf)
+
+        parts[-1].update(mime="application/pdf", url="data:application/pdf;base64,AA==")
+        with self.assertRaisesRegex(ValueError, "lose data"):
+            opencode_events_to_actf(events)
+
     def test_native_tools_reasoning_and_usage(self):
         events = sample_events()
         actf = opencode_events_to_actf(events)

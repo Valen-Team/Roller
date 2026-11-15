@@ -155,6 +155,51 @@ def _events() -> list[dict]:
 
 
 class CodexActfTests(unittest.TestCase):
+    def test_user_images_survive_prompt_cleanup(self) -> None:
+        events = _events()
+        events[2]["payload"]["content"] = [
+            {"type": "input_text", "text": "<image name=[Image #1]>"},
+            {"type": "input_image", "image_url": "data:image/png;base64,AA=="},
+            {"type": "input_text", "text": "</image>"},
+            {"type": "input_text", "text": "Describe this image."},
+        ]
+        image = {"type": "image", "data": "data:image/png;base64,AA=="}
+
+        trajectory = codex_events_to_actf(
+            events, user_messages=["Describe this image."], tools=_TOOLS
+        )
+        self.assertEqual(
+            trajectory["steps"][0]["user_content"],
+            [{"type": "text", "text": "Describe this image."}, image],
+        )
+        record = actf_to_sft(trajectory)
+        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+        self.assertEqual(record["messages"][1]["content"], "Describe this image.\n<image>")
+
+        # Without the task prompts there is nothing to clean: keep native order.
+        trajectory = codex_events_to_actf(events, tools=_TOOLS)
+        self.assertEqual(
+            trajectory["steps"][0]["user_content"],
+            [
+                {"type": "text", "text": "<image name=[Image #1]>"}, image,
+                {"type": "text", "text": "</image>"},
+                {"type": "text", "text": "Describe this image."},
+            ],
+        )
+        self.assertEqual(actf_to_sft(trajectory)["images"], ["data:image/png;base64,AA=="])
+
+    def test_user_message_with_only_an_image_is_not_task_input(self) -> None:
+        events = _events()
+        events.insert(3, {
+            "timestamp": "2026-08-22T01:00:02.500Z", "type": "response_item",
+            "payload": {"type": "message", "role": "user", "content": [
+                {"type": "input_image", "image_url": "data:image/png;base64,AA=="}]},
+        })
+        for user_messages in (None, ["wrapped prompt"]):
+            with self.subTest(user_messages=user_messages):
+                trajectory = codex_events_to_actf(events, user_messages=user_messages, tools=_TOOLS)
+                self.assertEqual(trajectory["steps"][0]["user_content"], "wrapped prompt")
+
     def test_deep_think_name_has_no_special_schema_or_reasoning_projection(self) -> None:
         events = _events()
         events[4]["payload"]["name"] = "deep_think"

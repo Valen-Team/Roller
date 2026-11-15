@@ -49,6 +49,19 @@ def write_events(path, events=None):
 
 
 class PiTraceTests(unittest.TestCase):
+    def test_user_image_blocks_reach_actf_and_sft(self):
+        events = sample_events()
+        image = {"type": "image", "data": "AA==", "mimeType": "image/png"}
+        events[1] = native({"role": "user", "content": [{"type": "text", "text": "Read token"}, image]})
+        actf = pi_events_to_actf(events)
+        self.assertEqual(actf["steps"][0]["user_content"], [{"type": "text", "text": "Read token"}, image])
+        record = actf_to_sft(actf)
+        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+        self.assertEqual(record["messages"][1]["content"], "Read token\n<image>")
+        events[1] = native({"role": "user", "content": [{"type": "image", "path": "/tmp/a.png"}]})
+        with self.assertRaisesRegex(ValueError, "lose data"):
+            pi_events_to_actf(events)
+
     def test_native_tools_reasoning_and_cache_usage(self):
         actf = pi_events_to_actf(sample_events())
         self.assertEqual(actf["tools"], [TOOL])

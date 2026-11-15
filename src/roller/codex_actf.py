@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from roller.actf import append_user_content, user_content
 from roller.codex_tools import read_tool_capture
 from roller.storage import atomic_write_json
 
@@ -238,6 +239,21 @@ def _output_content(
     return _output_content_blocks(output), metadata
 
 
+def _user_image_blocks(value: Any) -> list[dict[str, Any]] | None:
+    """Text and image blocks of a user message that carries an image, else None."""
+
+    if not isinstance(value, list):
+        return None
+    kinds = [_output_block_kind(item) for item in value]
+    if "image" not in kinds:
+        return None
+    return [
+        _normalize_output_block(item)
+        for item, kind in zip(value, kinds)
+        if kind in {"text", "image"}
+    ]
+
+
 def _usage_number(value: Any) -> int:
     return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
@@ -262,7 +278,7 @@ def codex_events_to_actf(
     rows = list(events)
     expected_users = tuple(user_messages or ())
     user_index = 0
-    pending_user = ""
+    pending_user: str | list[Any] = ""
     pending_user_time: str | None = None
     pending_reasoning: list[str] = []
     system_parts: list[str] = []
@@ -400,6 +416,8 @@ def codex_events_to_actf(
             if role in {"developer", "system"}:
                 add_system(content)
             elif role == "user":
+                value: str | list[Any]
+                expected = None
                 if user_index < len(expected_users):
                     expected = expected_users[user_index]
                     normalized_content = content.strip()
@@ -417,9 +435,10 @@ def codex_events_to_actf(
                 else:
                     value = content
                 if value:
-                    pending_user = (
-                        f"{pending_user}\n\n{value}" if pending_user else value
-                    )
+                    image_blocks = _user_image_blocks(payload.get("content"))
+                    if image_blocks is not None:
+                        value = user_content(image_blocks, expected)
+                    pending_user = append_user_content(pending_user, value)
                     pending_user_time = pending_user_time or timestamp
             elif role == "assistant":
                 target = group(timestamp)
