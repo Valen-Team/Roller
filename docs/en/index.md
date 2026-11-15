@@ -29,7 +29,7 @@ Common uses include:
 - preparing normalized traces or SFT JSONL.
 - resuming interrupted collection and inspecting results in the built-in Viewer.
 
-Roller requires Python 3.10+. The project currently uses Task schema <code>roller.task/v1</code>. It is in Alpha and licensed under Apache 2.0. Source: [GitHub](https://github.com/Valen-Team/Roller).
+Roller requires Python 3.10+. The project currently uses Task schema <code>roller.task/v1</code>. It is in Beta and licensed under Apache 2.0. Source: [GitHub](https://github.com/Valen-Team/Roller).
 
 ## Choose a Harness
 
