@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import threading
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -274,9 +273,9 @@ class BenchAdapter(ABC):
         harness: Any,
         binding: BenchBinding,
         *,
-        grading_semaphore: threading.Semaphore | None = None,
+        grading_semaphore: Any = None,
     ) -> Any:
-        """Attach grading, optionally adapting execution for this Bench."""
+        """Attach this bench's live-container grader to a harness."""
 
         if binding.grade is None:
             return harness

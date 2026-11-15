@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+IGNORED_OUTPUT_DIRECTORIES = frozenset({"node_modules"})
+
 
 @dataclass(frozen=True)
 class ArtifactCollectionResult:
@@ -29,12 +31,16 @@ class ArtifactCollectionResult:
         }
 
 
-def _sha256(path: Path) -> str:
+def _copy_with_sha256(source: Path, destination: Path) -> tuple[str, int]:
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(1024 * 1024):
+    size = 0
+    with source.open("rb") as input_stream, destination.open("wb") as output_stream:
+        while chunk := input_stream.read(1024 * 1024):
+            output_stream.write(chunk)
             digest.update(chunk)
-    return digest.hexdigest()
+            size += len(chunk)
+    shutil.copystat(source, destination, follow_symlinks=False)
+    return digest.hexdigest(), size
 
 
 def _walk_outputs(
@@ -49,6 +55,8 @@ def _walk_outputs(
         current_path = Path(current)
         retained_dirs: list[str] = []
         for name in sorted(dir_names):
+            if name in IGNORED_OUTPUT_DIRECTORIES:
+                continue
             directory = current_path / name
             relative = directory.relative_to(root).as_posix()
             if directory.is_symlink():
@@ -99,13 +107,13 @@ def collect_output_directory(
     for relative, source in sorted(known_files.items()):
         destination = results_root / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        sha256, size = _copy_with_sha256(source, destination)
         mime_type, _ = mimetypes.guess_type(relative)
         file_rows.append(
             {
                 "path": relative,
-                "sha256": _sha256(source),
-                "size": source.stat().st_size,
+                "sha256": sha256,
+                "size": size,
                 "mime_type": mime_type or "application/octet-stream",
             }
         )

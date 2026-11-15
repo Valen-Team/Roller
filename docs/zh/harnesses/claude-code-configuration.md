@@ -1,35 +1,27 @@
 # Claude Code Harness 指南
 
-本页介绍 Claude Code 专属的镜像、Anthropic Messages API、thinking、native session 和排错。Task 字段见 [Task 格式参考](../tasks/task-format.md)，各 Harness 的产物说明见 [轨迹产出文件指南](../traces/trajectory-outputs.md)。
+Claude Code Harness 用于通过 Claude Code 执行需要终端、文件或图片工具的 task。该 Harness 连接 Anthropic Messages 兼容服务。本页按照镜像、API、专属参数、session 和轨迹的顺序介绍首次使用所需内容。
 
-> 快速定位：支持范围（第 1 节）· 镜像（第 2 节）· API（第 3 节）· thinking（第 4–5 节）· native/ACTF/SFT/wire（第 8–9 节）· 排错（第 10 节）
+Roller 当前固定使用 Claude Code 2.1.222。Task 字段见 [Task 格式参考](../tasks/task-format.md)，通用产物见 [轨迹产出文件指南](../traces/trajectory-outputs.md)。
 
-## 1. 当前支持范围
+首次使用时，请先完成第 1 至第 3 节并运行示例命令。后续章节介绍专属参数、Thinking 和轨迹，可在需要相应功能时查阅。
 
-Claude Code Harness 支持：
+## 1. 适用范围
 
-- 单轮 `prompt`；
-- 预定义多轮 `messages`，后续消息使用 `claude --continue` 延续同一 session；
-- Task Bundle、只读 inputs、Context、`runtime.setup` 和完整 `output_dir` 回收；
-- 并行、retry、run lock 和 Resume 完整性检查；
-- Claude Code 主 session 及 subagent sidechain native JSONL；
-- 明文 `thinking/reasoning/analysis`、文本、多个 `tool_use`、`tool_result` 和 usage 转换；
-- `ACTF_v1.0`、单条 SFT、run 级 `sft.jsonl` 和 Viewer；
-- `--wire-trace actf|full|off`；
-- 动态 User Simulator 和 Task Agent；两者可使用不同 model，Simulator 通过
-  `user_simulator.harness` 独立选择 Harness；
-- Claude Code `settings.json`、`--max-turns`、`MAX_THINKING_TOKENS` 和 permission mode；
+Claude Code Harness 适合以下场景：
 
-当前不支持：
+- 使用实现 Anthropic `/v1/messages` 的模型服务。
+- 让 Agent 运行命令、读写文件或通过 `Read` 工具查看图片。
+- 运行单轮、多轮、Task Agent 或 User Simulator task。
+- 需要保留 Claude Code 原生 session，并导出 ACTF、SFT 和 token 使用量。
 
-- 只有 OpenAI Chat Completions/Responses、没有 Anthropic `/v1/messages` 的 API；
-- 从 `redacted_thinking` 或 `thinking.signature` 恢复明文。密文保留在 raw，不写入 ACTF/SFT reasoning；不发起额外恢复请求。
+仅支持 OpenAI Chat Completions 或 Responses 的服务无法直接用于本 Harness。Task 消息目前也不能直接包含图片内容块。Roller 只能保存 API 实际返回的可见 thinking 或 summary，无法恢复隐藏的推理内容。
 
-## 2. 构建固定版本镜像
+## 2. 镜像准备
 
 Roller 使用 [`docker/claude-code/Dockerfile`](../../../docker/claude-code/Dockerfile)，基础镜像为
 `node:22-bookworm-slim`，默认固定安装 `@anthropic-ai/claude-code@2.1.222`。Codex 已使用的
-Node 22 离线归档可以直接复用，不需要重新下载基础镜像。
+Node 22 离线归档可直接复用，无需重新下载基础镜像。
 
 在线基础镜像：
 
@@ -46,7 +38,7 @@ docker build \
 离线基础镜像：
 
 ```bash
-docker load -i /path/to/node-22-bookworm-slim-linux-amd64.tar.gz
+docker load -i node-22-bookworm-slim-linux-amd64.tar.gz
 docker build \
   --platform linux/amd64 \
   --build-arg CLAUDE_CODE_VERSION=2.1.222 \
@@ -55,9 +47,9 @@ docker build \
   .
 ```
 
-Debian 镜像参数 `DEBIAN_MIRROR`、`DEBIAN_SECURITY_MIRROR` 的用法见 [Docker 构建与镜像源](../start/docker-builds.md)。npm 下载可通过 `NPM_REGISTRY` 指定镜像；未设置时沿用 npm 原有配置。
+Debian 软件源参数 `DEBIAN_MIRROR`、`DEBIAN_SECURITY_MIRROR` 的用法见 [Docker 构建与镜像源](../start/docker-builds.md)。npm 下载可通过 `NPM_REGISTRY` 指定软件源；未设置时沿用 npm 原有配置。
 
-默认 Debian 软件源不可达时可以传入镜像源：
+默认 Debian 软件源不可达时，可传入软件源地址：
 
 ```bash
 docker build \
@@ -77,29 +69,20 @@ docker run --rm roller-claude-code:2.1.222 claude --version
 export ROLLER_CLAUDE_CODE_IMAGE=roller-claude-code:2.1.222
 ```
 
-正式数据集应固定 Claude Code 版本。Native session 字段、permission mode 和 effort 列表会随
-CLI 演进；Roller 会把实际 `claude_code_version`、镜像 tag 和镜像 ID 写入 run/sample 信息。
+正式数据集应固定 Claude Code 版本。原生 session 字段、permission mode 和 effort 列表会随
+CLI 版本变化。Roller 将实际的 `claude_code_version`、镜像 tag 和镜像 ID 写入 run/sample 信息。
 
-(claude-code-cli-flags)=
-## 3. CLI 专属参数、Anthropic API 与 Key
+## 3. 环境变量与 API
 
-下表集中列出 Claude Code 专属入口。单一 Claude Code 运行可以使用通用形式，混合 Harness 运行应使用 Claude Code 专属形式。
+Claude Code Harness 需要实现 Anthropic Messages API 的模型服务。首次运行需要准备 API 地址、API Key 和模型 ID。
 
-| 参数 | 默认值 | 用途 |
+| 配置项 | 默认读取 | CLI 覆盖 |
 | --- | --- | --- |
-| `--docker-image` / `--claude-code-image` | `ROLLER_CLAUDE_CODE_IMAGE` 或 `roller-claude-code:2.1.222` | 覆盖 Claude Code 镜像 |
-| `--api-base` / `--anthropic-base-url` / `--claude-api-base` | `ANTHROPIC_BASE_URL` | Anthropic API 地址或完整 `/v1/messages` endpoint |
-| `--api-key-env` / `--claude-api-key-env` | `ANTHROPIC_API_KEY` | 存放 API Key 的宿主机变量名 |
-| `--claude-settings` | 无 | 注入隔离容器的原生 `settings.json` |
-| `--claude-max-turns` | 无 | 每条预定义 user message 的 agent turn 上限 |
-| `--claude-max-thinking-tokens` | 无 | 传给 Claude Code 的 `MAX_THINKING_TOKENS` |
-| `--claude-permission-mode` | `bypassPermissions` | Claude Code permission mode |
+| API 地址 | `ANTHROPIC_BASE_URL` | `--claude-api-base`，单一 Harness 运行也可用 `--api-base` |
+| API Key | `ANTHROPIC_API_KEY` | `--claude-api-key-env`，单一 Harness 运行也可用 `--api-key-env` |
+| 模型 ID | task 的 `model` 或 `--model` | 原样交给 Claude Code |
 
-旧的 `--claude-signature-recovery*` 参数已移除。旧命令应直接删除这些参数。
-
-
-Claude Code 使用 Anthropic Messages API。推荐把 Key 放在自定义宿主机环境变量中，再由
-`--api-key-env` 映射为一次性容器内的 `ANTHROPIC_API_KEY`：
+建议将 Key 保存在宿主机环境变量中，并将变量名传给 Roller：
 
 ```bash
 export ROLLER_ANTHROPIC_KEY='...'
@@ -107,228 +90,177 @@ export ROLLER_ANTHROPIC_KEY='...'
 roller collect \
   --harness claude-code \
   --tasks examples/tasks/tasks.jsonl \
-  --model claude-sonnet-4-6-thinking \
-  --api-base http://your-api.example/v1/messages \
+  --model model-id \
+  --api-base https://api.example.com/v1/messages \
   --api-key-env ROLLER_ANTHROPIC_KEY \
   --docker-image roller-claude-code:2.1.222 \
-  --thinking high \
+  --limit 1 \
   --output runs \
   --run-name claude-code-demo
 ```
 
-`--api-base`、`--anthropic-base-url` 是同一个参数的两个名称，接受以下形式：
+`--api-key-env` 接收环境变量名，而不是 Key 本身。API 地址可以是服务域名、`/v1` 或完整的 `/v1/messages` 路径，Roller 会规范化地址，避免重复追加 `/v1/messages`。
 
-```text
-http://host:port
-http://host:port/v1
-http://host:port/v1/messages
-```
+若模型出现在列表中但运行仍然失败，可向 `/v1/messages` 发送一个最小请求，确认当前账号能够调用该模型。只有 `/v1/messages` 请求成功，才能确认该服务可供 Claude Code 使用。
 
-Roller 会将末尾 `/v1` 或 `/v1/messages` 去掉，再写入 `ANTHROPIC_BASE_URL`；Claude Code
-随后请求唯一的 `/v1/messages`，避免出现 `/v1/v1/messages`。Claude Code 2.1.222
-还会在 SDK 请求上追加 `?beta=true` 和 `anthropic-beta` header；使用 Roller
-wire 代理时，这两个 transport-only 标记会在转发给兼容服务前移除，其他 query
-参数和 header 保留。如果不传该参数，则读取宿主机
-`ANTHROPIC_BASE_URL`。Key 参数默认读取 `ANTHROPIC_API_KEY`。
+(claude-code-cli-flags)=
+## 4. Claude Code 专属参数
 
-Key 值不会写入 run、lock、raw 或 provenance；只记录 Key 的环境变量名。API base 会删除
-query 和 URL 凭据后再写入元数据。完整 endpoint 可以用以下最小请求预检：
+下表仅列出 Claude Code 专属运行参数。API 地址和 Key 的配置方式见第 3 节。所有 Harness 共用的参数见 [CLI 参数参考](../start/cli-reference.md)。
 
-```bash
-curl -sS -X POST 'http://host:port/v1/messages' \
-  -H 'Content-Type: application/json' \
-  -H 'anthropic-version: 2023-06-01' \
-  -H "x-api-key: $ROLLER_ANTHROPIC_KEY" \
-  -d '{
-    "model":"claude-sonnet-4-6-thinking",
-    "max_tokens":128,
-    "messages":[{"role":"user","content":"Reply OK"}]
-  }'
-```
-
-模型出现在 `/v1/models` 不保证当前账号存在可用 channel，应以实际 `/v1/messages` 请求为准。
-
-## 4. Thinking 与 effort
-
-`--thinking LEVEL` 由 Claude Code Harness 映射到 `claude --effort LEVEL`：
-
-| Roller 输入 | Claude Code 2.1.222 参数 | 说明 |
+| 参数 | 默认值 | 用途 |
 | --- | --- | --- |
-| 省略 | 不传 `--effort` | 使用 CLI/model 默认行为 |
-| `low` | `low` | 低 effort |
-| `medium` | `medium` | 中 effort |
-| `high` | `high` | 高 effort |
-| `xhigh` | `xhigh` | 依赖模型支持 |
-| `max` | `max` | 依赖模型支持 |
-| `ultra` | `ultracode` | Roller 逻辑名到固定 CLI 的名称映射 |
+| `--docker-image` / `--claude-code-image` | `ROLLER_CLAUDE_CODE_IMAGE` 或 `roller-claude-code:2.1.222` | 覆盖 Claude Code 镜像 |
+| `--claude-settings` | 无 | 向隔离容器注入原生 `settings.json`。运行锁保存其 SHA-256，含旧 BLAKE2b 指纹的 lock 仍可 Resume |
+| `--claude-max-turns` | 无 | 每条预定义用户消息的 Agent 执行轮数上限 |
+| `--claude-max-thinking-tokens` | 无 | 设置传给 Claude Code 的 `MAX_THINKING_TOKENS` |
+| `--claude-permission-mode` | `bypassPermissions` | 选择 Claude Code permission mode |
 
-`off/none`、`minimal` 和 `adaptive` 没有对应的 Claude Code CLI 档位，因此会在容器启动
-前拒绝，不会静默降级。Task 的 `runtime.thinking` 优先于命令行默认值。
+单一 Claude Code 运行可使用通用参数形式。混合 Harness 运行应使用 `--claude-code-image`、`--claude-api-base` 和 `--claude-api-key-env` 等专属形式，以免设置作用于其他参与者。
 
-还可以设置显式 thinking token 上限：
+## 5. 多模态能力
+
+Claude Code Harness 同时支持纯文本模型和具备视觉能力的模型。图片通过 `files.inputs` 进入工作区，Claude Code 可使用原生 `Read` 工具打开本地图片。图片工具结果保留在原始轨迹、ACTF 和多模态 SFT 中，其中 SFT 使用 `<image>` 占位符和顶层 `images` 字段保存图片。
+
+视觉任务还要求所选模型和 Anthropic-compatible API 服务支持图片内容块。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。纯文本模型仍可处理文本和普通文件，但无法完成需要理解图片内容的任务。
+
+## 6. Thinking 配置
+
+`--thinking` 用于设置 Claude Code 的推理强度。省略时使用 Claude Code 和模型的默认值。
+
+| Roller 输入 | Claude Code 参数 | 说明 |
+| --- | --- | --- |
+| 省略 | 不传 `--effort` | 使用默认行为 |
+| `low` | `low` | 较低推理强度 |
+| `medium` | `medium` | 中等推理强度 |
+| `high` | `high` | 较高推理强度 |
+| `xhigh` | `xhigh` | 仅在模型支持时使用 |
+| `max` | `max` | 仅在模型支持时使用 |
+| `ultra` | `ultracode` | Roller 名称到 Claude Code 名称的映射 |
+
+`off`、`none`、`minimal` 和 `adaptive` 没有对应的 Claude Code 档位，因此会在启动前报错。首次使用某个模型时，建议省略 `--thinking` 或先选择服务明确支持的档位。
+
+如需限制 thinking token 数，可额外使用：
 
 ```text
 --claude-max-thinking-tokens 4096
 ```
 
-它通过 `MAX_THINKING_TOKENS` 传给 Claude Code。不同模型可能使用 budget thinking 或 adaptive
-thinking；模型/provider 不支持该组合时，应省略此参数并只使用 `--thinking`。
+不同模型对 token 上限的支持方式不同。若服务拒绝该设置，应移除此参数，仅保留 `--thinking`。
 
-Claude Code native session 中实际存在的 `thinking`、`reasoning` 或 `analysis` block 会进入
-ACTF/SFT 的 `reasoning_content`。以下情况不会产生可训练明文：
+Claude Code 返回的可见 thinking、reasoning 或 analysis 写入 ACTF/SFT 的 `reasoning_content`。服务只返回 token 数或加密内容时，该字段可能为空。`--no-keep-thinking` 只清除 ACTF/SFT 中的推理文本，不修改原生 session。
 
-- 服务只返回 thinking token 数而把 thinking 文本留空；
-- Anthropic 返回不可解密的 `redacted_thinking`；
-- 模型只在最终 `text` 中展示计算过程，而没有 reasoning block。
+## 7. Claude settings 与权限
 
-Roller 不根据 token 数、最终文本或签名推测隐藏 reasoning。`--no-keep-thinking` 会清空 ACTF/SFT
-中的 reasoning，但不修改 raw session，也不修改后续 `--continue` 使用的 Claude Code context。
-
-## 5. Reasoning 的保存边界
-
-Roller 只保存服务实际返回的可见 thinking/summary，不还原签名、不补写 CoT，也不在任务结束后追加模型调用。`--keep-thinking` 默认保留这些文本；`--no-keep-thinking` 只清空 ACTF/SFT reasoning，raw 不变。
-
-## 6. Claude settings 与权限
-
-可以把已有 settings JSON 注入每个一次性容器：
+如需使用 Claude Code 原生设置，可提供 settings 文件：
 
 ```bash
 roller collect ... \
   --claude-settings examples/config/claude-code/settings.json.example
 ```
 
-文件复制到隔离的 `$CLAUDE_CONFIG_DIR/settings.json`，并通过 `--settings` 显式加载。为避免把
-可能含环境变量或 hook 的 settings 内容复制进 run，运行锁只保存一个短 BLAKE2b 内容指纹；
-文件改变时 Resume 会拒绝混用旧 sample。仓库示例不包含 Key、hook 或权限放宽，只关闭 commit
-co-author 标记；按需复制后再增加自己的 Claude Code 设置。
+Roller 将该文件复制到当前容器并显式加载。修改 settings 后，不应复用旧的 run 目录。示例文件不包含 API Key、hook 或额外权限，可按需复制后修改。
 
-自动化采集默认使用：
+自动化采集默认使用 `bypassPermissions`，以免执行在交互确认界面阻塞。也可通过 `--claude-permission-mode` 选择所固定的 Claude Code 版本支持的其他模式。`--claude-max-turns` 限制每条用户消息内的 Agent 执行轮数，而非 task 的消息数量。
 
-```text
---claude-permission-mode bypassPermissions
-IS_SANDBOX=1
-```
+## 8. Session 与工作区
 
-也可以按固定镜像支持的值选择其他 permission mode。`--claude-max-turns` 限制每次预定义
-user message 内 Claude Code 的 agent turns；它不等于 task 的 `messages` 数量。
+每个 Agent 或 Simulator 均在独立的一次性容器中运行，不读取宿主机的 Claude 登录信息、settings 或历史 session。
 
-## 7. Context、工作区与多轮
+- 输入文件只读，并保持 Task Bundle 中的相对路径。
+- Context 文件复制到 task 声明的位置。如需 Claude Code 自动读取项目说明，可将目标文件命名为 `CLAUDE.md`。
+- `runtime.setup` 在第一轮开始前执行。
+- 输出目录保持可写，结束后回收至 sample 的 `results/`。
 
-Claude Code 容器工作目录是 `/roller/workspace`：
+预定义多轮消息沿用同一个 Claude Code session，因此对话历史和工作区文件在后续轮次中仍可使用。
 
-- inputs 保持 Task Bundle 中的相对路径并以只读方式挂载；
-- Context 文件复制到 workspace；需要 Claude Code 自动加载的项目指令应把 target 设置为
-  `CLAUDE.md`，例如 `{"role":"system","source":"context/CLAUDE.md","target":"CLAUDE.md"}`；
-- `role=skill` 的 `skills/` 内容还会复制到隔离的 `$CLAUDE_CONFIG_DIR/skills/`；
-- `runtime.setup` 在首轮前于 workspace 中执行；
-- `files.output_dir` 保持可写并在结束时安全回收到 sample 的 `results/`。
+## 9. 轨迹与请求记录
 
-预定义 `messages` 的第一条启动新 session，后续消息使用 `--continue`。每个 rollout 有独立
-Docker 容器和 `$CLAUDE_CONFIG_DIR`，不会读取宿主机的 Claude 登录信息、settings 或 session。
+一次运行生成以下主要文件：
 
-## 8. 轨迹产物
+| 文件 | 用途 |
+| --- | --- |
+| `trace.jsonl` | 合并 Claude Code 主 session 和 subagent 的原生事件，主要用于排错 |
+| `trace_ACTF.json` | 将文本、thinking、工具调用和结果整理成统一结构 |
+| `trace_SFT.json` | 将一条成功轨迹转换为训练数据格式 |
+| `sft.jsonl` | 汇总当前 run 中可用于训练的成功 sample |
 
-默认 sample 结构与其他 Harness 一致：
+### 9.1 `trace.jsonl`
 
-```text
-<sample>/
-├── trace.jsonl
-├── trace_ACTF.json
-├── trace_SFT.json
-├── info.json
-└── results/                 # 有输出时
-```
+该文件保留 Claude Code 原生 session 事件，包括可见 thinking、工具信息和 token 使用量。该文件既不是终端输出，也不是模型服务收到的完整 HTTP 请求，其格式可能随 Claude Code 版本变化。
 
-### `trace.jsonl`
+### 9.2 `trace_ACTF.json`
 
-Roller 从 `$CLAUDE_CONFIG_DIR/projects/**/<session-id>.jsonl` 选择本 rollout 的最新主 session，
-同时读取 `<session-id>/subagents/*.jsonl`。事件按 timestamp 合并，并按原生 `uuid` 去重后保存为
-`trace.jsonl`。事件对象本身不做训练清洗；`info.json.trajectory.raw_schema` 标记为
-`claude-code-session-jsonl`。
+ACTF 将同一次回复中的文本、推理和多个工具调用归为一组，并将每个工具结果与对应调用配对。主 session 和 subagent 事件按时间顺序保存，usage 会去除流式更新造成的重复计数。
 
-这是 Claude Code native session 的合并导出，不是：
+### 9.3 `trace_SFT.json` 与 `sft.jsonl`
 
-- CLI `--output-format=stream-json` 的终端展示流；
-- provider 的 HTTP 请求或响应；
-- 多个源 JSONL 的逐字节拼接副本。
+SFT 使用统一的 `messages` 和 `tools` 结构。Claude 原生工具调用转换为可训练的 function call，图片 sample 额外包含 `images` 字段。
 
-Raw 保留 plaintext thinking、加密 thinking envelope、tool metadata、usage 和 sidechain 私有
-字段，结构不保证跨 Claude Code 版本稳定。
+### 9.4 Wire trace
 
-### `trace_ACTF.json`
-
-转换器按 Claude `message.id` 把一次推理的 text、reasoning 和多个 `tool_use` 合并为一个
-ACTF step，再按 `tool_use_id` 关联后续 `tool_result`。主 session 和 subagent sidechain 都按
-时间顺序进入轨迹；sidechain step 在 `extra.is_sidechain` 标记。
-
-Usage 使用同一 `message.id` 的最后一个值，避免 stream 更新重复累计：
-
-- `input_tokens`
-- `cache_read_input_tokens`
-- `cache_creation_input_tokens`
-- `output_tokens`
-
-CLI stream 中每次成功 result 的 `total_cost_usd` 会累计到 sample usage。
-
-### `trace_SFT.json` 与 `sft.jsonl`
-
-Collector 从 ACTF 生成仅含 `messages` 和 `tools` 的训练记录。Assistant 消息格式如下：
-
-```json
-{
-  "role": "assistant",
-  "reasoning_content": "visible thinking",
-  "content": "visible answer",
-  "tool_calls": []
-}
-```
-
-Claude 原生 `tool_use` 转为 OpenAI-compatible function call，`tool_result` 转为对应 `role=tool`
-消息。如果 wire 捕获了完整 Anthropic tool schema，会把 `input_schema` 标准化为
-`function.parameters`；否则根据实际调用参数生成 permissive schema。
-
-## 9. Wire trace
-
-使用自定义 `--api-base` 时，Claude Code 默认的 `--wire-trace actf` 会启动 rollout-local
-反向代理，临时捕获首个 system prompt、完整 tools schema 和非消息请求参数。生成 ACTF/SFT
-后删除中间 `wire_trace.jsonl`，减少 sample 的存储占用。
-
-需要核对模型每次真实收到的 JSON context 时使用：
+默认 `--wire-trace actf` 只为 ACTF/SFT 捕获 system prompt 和工具定义，不保留完整请求。如需核对模型实际收到的内容，可临时使用：
 
 ```text
 --wire-trace full
 ```
 
-此时 sample 额外保留 `wire_trace.jsonl`，包含每次 Anthropic `/v1/messages` 请求的 system、
-messages、tools、thinking/output config 和 sampling 参数。它记录的是转发给服务的请求 body，
-不是 provider 响应。多轮请求会重复历史，因此不应直接作为 SFT 数据。
-若发生兼容改写，`path` 保留 Claude Code 原始请求目标，`upstream_path`
-记录实际转发目标，`dropped_request_headers` 只记录被移除的 header 名，不记录值。
+此时 sample 会额外保留 `wire_trace.jsonl`。该文件可能包含完整消息、工具参数和 thinking 配置，仅适用于排错或审计。`--wire-trace off` 不记录这些请求信息，但仍保留 Claude Code 原生 session。
 
-`--wire-trace off` 不启动代理。此时 native session 仍能生成 raw/ACTF/SFT，但顶层
-`system_prompt` 为空，tools schema 只能根据实际调用推导。Wire 代理需要容器使用默认
-`--network host`。
+## 10. 首次运行检查
 
-## 10. 已验证行为与排错
+首次运行建议只使用一个简单 task。完成后依次检查：
 
-实现阶段已用 Anthropic endpoint 和 Claude Code 2.1.207 做过以下协议探测，正式镜像固定为
-2.1.222：
+1. run 目录的 `info.json` 中 `state` 为 `finished`。
+2. sample 的 `info.json` 中 `status` 为 `ok`。
+3. sample 中存在 `trace.jsonl`、`trace_ACTF.json` 和 `trace_SFT.json`。
+4. 多轮 task 的轨迹中保留了全部用户消息和对应回复。
+5. task 要求生成文件时，`results/` 中存在对应文件。
 
-- `/v1/messages` 鉴权和普通文本响应正常；
-- `claude-sonnet-4-6-thinking` + `--effort high` 的 native session 保存明文 thinking；
-- Bash、Read 工具调用及结果进入 native session；
-- 第二条 CLI 调用使用 `--continue` 后复用同一 session；
-- 合并后的 ACTF/SFT 保留两条 user message、thinking、三个工具动作和最终回复。
+## 11. 常见问题
 
-常见错误：
+**(1) `Invalid token`**
 
-- `Invalid token`：检查 `--api-key-env` 指向的宿主机变量；
-- `No available channel for model`：模型虽然出现在列表中，但当前账号/分组没有可用路由；
-- URL 出现 `/v1/v1/messages`：不要手工把 `ANTHROPIC_BASE_URL` 传入容器，改用 Roller
-  `--api-base` 让它规范化；
-- `invalid beta flag`：使用显式 `--api-base` 和默认 `--wire-trace actf/full`，
-  Roller 会仅在 upstream 转发时移除 Claude SDK 的 `beta=true` query 和
-  `anthropic-beta` header；
-- model 拒绝 `budget_tokens` 或要求 adaptive thinking：移除
-  `--claude-max-thinking-tokens`，只使用该模型支持的 `--thinking` effort；
-- ACTF 有 thinking token 但 `reasoning_content` 为空：服务没有返回明文，不是转换器丢失；
+检查 `--api-key-env` 指向的宿主机变量。
+
+**(2) `No available channel for model`**
+
+模型虽然出现在列表中，但当前账号或分组没有可用路由。
+
+**(3) URL 出现 `/v1/v1/messages`**
+
+请勿手动将 `ANTHROPIC_BASE_URL` 传入容器。请改用 Roller 的 `--api-base`，由 Roller 规范化地址。
+
+**(4) `invalid beta flag`**
+
+使用显式 `--api-base`，并保留默认的 `--wire-trace actf`。Roller 会在转发请求时移除不兼容的 beta 参数。
+
+**(5) 模型拒绝 `budget_tokens` 或要求 adaptive thinking**
+
+移除 `--claude-max-thinking-tokens`，只使用该模型支持的 `--thinking` effort。
+
+**(6) ACTF 有 thinking token 但 `reasoning_content` 为空**
+
+服务未返回明文，该字段为空并非由转换器造成。
+
+**(7) 生成长工具参数时请求被中断或反复重试**
+
+部分服务不以流式方式返回工具调用参数。模型生成较长参数时，连接可能连续数分钟没有数据。Claude Code 的流空闲超时由 `CLAUDE_STREAM_IDLE_TIMEOUT_MS` 控制（默认 300000 毫秒，小于默认值的设置不生效），请求超时由 `API_TIMEOUT_MS` 控制（默认 600000 毫秒）。两者均为 Claude Code 直接读取的环境变量，可写入 `--claude-settings` 文件的 `env` 块：
+
+```json
+{
+  "env": {
+    "CLAUDE_STREAM_IDLE_TIMEOUT_MS": "1800000",
+    "API_TIMEOUT_MS": "3000000"
+  }
+}
+```
+
+也可在宿主机上设置后，通过 `--pass-env` 传入：
+
+```bash
+export CLAUDE_STREAM_IDLE_TIMEOUT_MS=1800000 API_TIMEOUT_MS=3000000
+roller collect ... \
+  --pass-env CLAUDE_STREAM_IDLE_TIMEOUT_MS \
+  --pass-env API_TIMEOUT_MS
+```

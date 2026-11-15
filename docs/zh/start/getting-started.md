@@ -1,43 +1,71 @@
 # 快速上手：从安装到第一条轨迹
 
-本页以 **OpenClaw** 为例，带你把一条示例 Task 从安装运行到生成轨迹。其他 Harness 也可以沿用准备配置、dry-run、正式采集、验收结果和打开 Viewer 这条主流程。各 Harness 的镜像、API 配置和专属参数并不完全相同，实际使用时请同时参考后面的对应 Harness 指南。
+本页以 OpenClaw 为例，介绍一条示例 Task 从安装到生成轨迹的完整流程。其他 Harness 可沿用相同的主流程：准备配置、dry-run、正式采集、验收结果和打开 Viewer。各 Harness 的镜像、API 配置和专属参数不完全相同，实际使用时请同时参考对应的 Harness 指南。
 
-完成后，你会执行一次 dry-run 和正式采集，找到输出文件，并在 Viewer 中打开结果。如果还不熟悉 Task、Harness、rollout、run 或 trace，可以先阅读 [Roller 简介](introduction.md)。
+本页依次完成 dry-run、正式采集、输出文件定位和 Viewer 查看。若不熟悉 Task、Harness、rollout、run 或 trace 等术语，可先阅读 [Roller 简介](introduction.md)。
 
 ## 1. 准备运行环境
 
-需要：
+环境要求：
 
 - Python 3.10+。
-- Docker CLI。
-- CLI 能连接的 Docker daemon。
+- Docker（需自行安装）。
 - OpenClaw 镜像。
 - 支持 OpenAI Responses 或 Chat Completions 的模型 API。
 
-在仓库根目录安装 Roller：
+建议使用独立的 Python 环境。以下以 [uv](https://docs.astral.sh/uv/) 和 Python 3.11 为例：
 
 ```bash
-python3 -m pip install -e .
+uv venv --python 3.11
+source .venv/bin/activate
+
+uv pip install roller-agent
 roller --version
 docker version
 ```
 
-`docker version` 必须同时返回 Client 和 Server 信息。只有 Docker CLI、没有可连接的 daemon 时，Roller 无法启动 rollout。
+使用 pip 时，先创建并激活虚拟环境，再执行 `python -m pip install roller-agent`。
+
+将示例 task 和配置模板写入工作目录，本指南后续步骤均在该目录下执行：
+
+```bash
+roller init
+```
+
+`roller init` 创建 `examples/tasks`、`examples/config` 和 `examples/env`，已存在的文件保持不变。
+
+如需使用最新改动或参与开发，请从源码安装。克隆的仓库已包含 `examples/`，无需执行 `roller init`：
+
+```bash
+git clone https://github.com/Valen-Team/Roller.git
+cd Roller
+uv venv && source .venv/bin/activate
+uv pip install -e ".[test]"
+```
+
+安装并启动 Docker 后，`docker version` 会显示 Client 和 Server 信息。
+
+在 macOS 上使用 Docker Desktop 时，还需在 **Settings → Resources → Network** 中启用 **Enable host networking**，然后重启 Docker Desktop。Roller 默认通过 host network 使 OpenClaw 能够访问本地请求代理。
 
 ## 2. 准备 OpenClaw 镜像
 
-OpenClaw 同时支持 OpenAI Responses 和 Chat Completions。你可以在线拉取固定版本镜像，也可以加载已有归档：
+OpenClaw 同时支持 OpenAI Responses 和 Chat Completions。
+
+在线拉取固定版本镜像：
 
 ```bash
-docker pull --platform linux/amd64 ghcr.io/openclaw/openclaw:2026.7.1-2
+docker pull ghcr.io/openclaw/openclaw:2026.7.1-2
+```
 
-# 或
+也可加载已有归档：
+
+```bash
 docker load -i /path/to/openclaw-2026.7.1-2-linux-amd64.tar.gz
 ```
 
-如果使用自定义镜像 tag，可以通过 `--docker-image` 传入，或者设置 `ROLLER_OPENCLAW_IMAGE`。
+如需使用自定义镜像 tag，请通过 `--docker-image` 传入，或设置 `ROLLER_OPENCLAW_IMAGE`。
 
-第一次运行可以保留默认 reasoning 配置。Roller 会保存模型服务返回的可见 reasoning 文本。如果服务只返回 reasoning token 数，就没有可以保存的 reasoning 文本。
+首次运行可保留默认 reasoning 配置。Roller 保存模型服务返回的可见 reasoning 文本。若服务仅返回 reasoning token 数，则没有可保存的 reasoning 文本。
 
 ## 3. 准备 OpenClaw API 配置
 
@@ -47,7 +75,9 @@ docker load -i /path/to/openclaw-2026.7.1-2-linux-amd64.tar.gz
 cp examples/env/api.env.example examples/env/api.env
 ```
 
-编辑后加载到当前 shell：
+在 `examples/env/api.env` 中，将 `MY_PROXY_BASE_URL` 和 `MY_PROXY_API_KEY` 设置为实际模型服务的地址和 Key。本页不使用其他 Harness 或 Web Search，其余变量保持为空。
+
+保存后，将变量加载到当前 shell：
 
 ```bash
 set -a
@@ -55,35 +85,12 @@ source examples/env/api.env
 set +a
 ```
 
-`examples/env/*.env` 已被 Git 忽略。真实 Key 不应写入 shell 历史、task、模型 JSON 或文档。
 
-OpenClaw 通过 `--model-config` 读取 provider 与 model：
+打开仓库提供的 [`examples/config/openclaw/models.json`](../../../examples/config/openclaw/models.json)，将其中的 model `id` 设置为实际使用的模型名。后续命令中 provider 之后的 model ID 必须与该 `id` 完全一致。例如，若将 `id` 设置为 `qwen3.8-flash`，后续命令须使用 `--model my-openai-proxy/qwen3.8-flash`。
 
-```json
-{
-  "mode": "merge",
-  "providers": {
-    "my-openai-proxy": {
-      "baseUrl": "${MY_PROXY_BASE_URL}",
-      "apiKey": "${MY_PROXY_API_KEY}",
-      "api": "openai-responses",
-      "models": [{"id": "my-model", "name": "My model"}]
-    }
-  }
-}
-```
+## 4. 示例 Task
 
-- `mode: "merge"` 表示把这里声明的 provider 合并进 OpenClaw 现有模型配置，而不是用这份文件替换整个配置集合。
-- `--model` 使用 `provider/model-id`，上例对应 `my-openai-proxy/my-model`。
-- `${ENV_NAME}` 由 Roller 在宿主机展开，缺失或空值会在 rollout 前报错。
-- Responses 服务使用 `openai-responses`。只有 `/v1/chat/completions` 的服务使用 `openai-completions`。
-- `baseUrl` 通常写到 `/v1`，不要把 `/chat/completions` 当作 base URL。
-
-仓库模板位于 [`examples/config/openclaw/models.json`](../../../examples/config/openclaw/models.json)。
-
-## 4. 认识示例 Task
-
-[`examples/tasks/tasks.jsonl`](../../../examples/tasks/tasks.jsonl) 包含四条由简到繁的 task：
+[`examples/tasks/tasks.jsonl`](../../../examples/tasks/tasks.jsonl) 包含四条由简到繁排列的 task：
 
 | ID | 展示内容 |
 | --- | --- |
@@ -91,14 +98,6 @@ OpenClaw 通过 `--model-config` 读取 provider 与 model：
 | `02_local_markdown` | 读取输入文件并写入 `outputs/` |
 | `03_user_memory_context` | 注入 `USER.md` 与 `MEMORY.md` |
 | `04_multi_turn` | 两条预定义 user message 共用一个 session |
-
-最小 task 只有三个字段：
-
-```json
-{"schema_version":"roller.task/v1","id":"01_text_only","prompt":"计算 2+3，只回复数字。"}
-```
-
-`--model` 可以在命令行统一指定。若未传，则每条 task 必须有自己的 `model` 字段。详细 schema 见 [Task 格式参考](../tasks/task-format.md)。
 
 ## 5. Dry-run
 
@@ -113,15 +112,7 @@ roller collect \
   --dry-run
 ```
 
-Dry-run 会：
-
-- 读取并规范化 JSON/JSONL task。
-- 检查重复 ID、对话模式和 Harness 限制。
-- 解析 input、Context 与 output 路径。
-- 执行路径冲突、符号链接、文件大小和内容摘要检查。
-- 打印 task × model 展开的 rollout 计划。
-
-它不会检查 Docker daemon、镜像是否存在或模型 API 是否可用，也不会创建 run 目录。
+Dry-run 在正式采集前检查 Roller 能否正确读取 task 和参数，并预览即将执行的 rollout。Dry-run 不启动容器、不调用模型 API，也不生成 run 结果。确认无报错后，再执行正式采集。
 
 ## 6. 正式采集
 
@@ -141,17 +132,17 @@ roller collect \
 
 | 参数 | 含义 |
 | --- | --- |
-| `--parallel 4` | 同时运行最多 4 个 rollout |
+| `--parallel 4` | 最多同时运行 4 个 rollout |
 | `--retries 1` | 首次失败后最多再尝试 1 次 |
 | `--timeout 600` | 每个 rollout 的总超时为 600 秒 |
 | `--output runs` | 所有 run 的宿主机根目录 |
 | `--run-name quickstart` | 本次 run 保存为 `runs/quickstart` |
 
-同名目录已存在时，Roller 默认拒绝覆盖。原配置继续运行应增加 `--resume`。新实验应改用新的 `--run-name`。
+同名目录已存在时，Roller 默认拒绝覆盖。如需按原配置继续运行，请添加 `--resume`。如需开始新实验，请使用新的 `--run-name`。
 
 ## 7. 验收结果
 
-成功后先检查 run 根目录：
+采集成功后，首先检查 run 根目录：
 
 ```text
 runs/quickstart/
@@ -163,26 +154,31 @@ runs/quickstart/
         └── <index>_<task-id>/
 ```
 
-每个成功 sample 至少应有：
+多数成功的 sample 至少包含以下文件：
 
 ```text
 trace.jsonl
 trace_ACTF.json
-trace_SFT.json
 info.json
 ```
 
-验收顺序：
+线性 sample 还包含 `trace_SFT.json`。主 Agent 发生上下文压缩时，`info.json` 的
+`trajectory.sft_segments` 列出 `sft_segments/0001.json`、`0002.json` 等分段记录。
+无法安全表示上下文的 sample 会将 SFT 标记为不可用。
 
-1. run `info.json.status` 是否为 `completed`，成功/失败数量是否符合预期。
-2. sample `info.json.status` 是否为 `ok`，`usage` 和版本字段是否存在。
-3. `trace_ACTF.json` 中 reasoning、工具调用与结果是否正确配对。
-4. `trace_SFT.json` 顶层是否只有 `messages` 和 `tools`（含图片的样本会额外带
-   `images`，且 `<image>` 占位符数量与之一致）。
-5. 需要文件交付的 task，其 sample `results/` 是否包含预期文件。
-6. run `sft.jsonl` 行数是否等于可纳入训练的成功 sample 数。
+按以下顺序验收：
 
-各文件何时生成、失败时会保留哪些内容，见 [轨迹产出文件指南](../traces/trajectory-outputs.md)。
+1. 本次运行目录下的 `info.json` 中，`state` 是否为 `finished`，`summary.failed` 是否为 `0`，`summary.completed` 是否等于预期执行数量。
+2. 每个 sample `info.json` 中的 `status` 是否为 `ok`，`usage.request_count` 是否大于 `0`。
+3. `trace_ACTF.json` 是否包含完整的用户输入和模型输出。若存在工具调用，调用与结果是否正确配对。
+4. 每条可用 SFT 是否包含 `messages` 和 `tools`；图片记录还包含 `images`，
+   压缩分段还包含 `target_start_index`。
+5. 需要文件交付的 task，其 sample `results/` 中是否包含预期文件。
+6. run `sft.jsonl` 中是否每条符合条件的线性 sample 各占一行。压缩 sample 保留在
+   `sft_segments/`，仅供支持 `target_start_index` 的训练读取器显式使用，
+   不进入原有的 run 级训练集。
+
+各文件的生成时机及失败时保留的内容见[轨迹产出文件指南](../traces/trajectory-outputs.md)。
 
 ## 8. 打开 Viewer
 
@@ -190,30 +186,41 @@ info.json
 roller view runs/quickstart
 ```
 
-默认监听 `127.0.0.1:8765`。远程运行时保持本地回环地址，并从本机建立 SSH 端口转发：
+Viewer 默认监听 `127.0.0.1:17865`，该端口被占用时自动改用空闲端口。命令启动后，在浏览器中打开终端输出的 URL。
 
-```bash
-ssh -L 8765:127.0.0.1:8765 your-host
-```
-
-Viewer 会展示 ACTF 时间线。Inspector 用于查看 system prompt、tools schema、运行信息和原始内容。详见 [Viewer 指南](../traces/viewer.md)。
+Viewer 展示 ACTF 时间线。Inspector 用于查看 system prompt、tools schema、运行信息和原始内容。详见 [Viewer 指南](../traces/viewer.md)。
 
 ## 9. 下一步
 
-- 写自己的数据：[Task 格式参考](../tasks/task-format.md)
-- 配置 reasoning：[OpenClaw Harness 指南](../harnesses/openclaw-configuration.md#5-thinkingsystem-prompt-与-wire-trace)
+- 编写自定义 task 数据：[Task 格式参考](../tasks/task-format.md)
+- 配置 reasoning：[OpenClaw Harness 指南](../harnesses/openclaw-configuration.md#6-thinking-配置)
 - 理解训练格式：[SFT 数据格式](../traces/sft-format.md)
-- 查全部命令行选项：[CLI 参数参考](cli-reference.md)
+- 查询全部命令行选项：[CLI 参数参考](cli-reference.md)
 
-## 常见的首次运行问题
+## 10. 常见问题
 
-| 现象 | 检查项 |
-| --- | --- |
-| Docker preflight 失败 | `docker version` 是否能连接 Server。镜像是否已 pull/load |
-| OpenClaw 找不到模型 | `--model` 是否与 JSON 的 `provider/models[].id` 完全对应 |
-| 配置提示环境变量缺失 | 是否 `source examples/env/api.env`。占位符名称是否一致 |
-| `/responses` 返回 404 | 服务只支持 Chat Completions。把 OpenClaw provider 的 `api` 改为 `openai-completions` |
-| 同名 run 已存在 | 原实验使用 `--resume`，新实验更换 `--run-name` |
-| Viewer 没有新 task | 确认传入的是 run 根目录，刷新页面并检查 run `info.json` |
+**(1) Docker preflight 失败**
 
-OpenClaw Harness 指南还列有更多 OpenClaw 相关错误。
+检查 `docker version` 是否能连接 Server，以及镜像是否已拉取或加载。
+
+**(2) OpenClaw 找不到模型**
+
+检查 `--model` 是否与 JSON 的 `provider/models[].id` 完全对应。
+
+**(3) 配置提示环境变量缺失**
+
+检查是否已执行 `source examples/env/api.env`，以及占位符名称是否一致。
+
+**(4) `/responses` 返回 404**
+
+服务可能只支持 Chat Completions。将 OpenClaw provider 的 `api` 设置为 `openai-completions`。
+
+**(5) 同名 run 已存在**
+
+继续原实验时使用 `--resume`；开始新实验时更换 `--run-name`。
+
+**(6) Viewer 未显示新 task**
+
+确认传入的是 run 根目录，然后刷新页面并检查 run 的 `info.json`。
+
+OpenClaw Harness 指南列出了更多 OpenClaw 相关错误。

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import contextlib
+import hashlib
 import io
 import tempfile
 import unittest
@@ -15,6 +16,8 @@ from roller.conversation import ConversationManager
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
 from roller.harness_registry import HARNESS_NAMES as HARNESSES
 from roller.models import HarnessResult, RunRequest, Task, UserSimulatorSpec
+
+from test_gateway_ports import isolate_gateway_ports
 
 
 class RecordingSession(InteractiveSession):
@@ -86,6 +89,7 @@ class CliResumeCompatibilityTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        isolate_gateway_ports(self)
         self.calls = []
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
@@ -161,10 +165,106 @@ class CliResumeCompatibilityTests(unittest.TestCase):
             with self.subTest(harness=harness):
                 self.assert_disabled_legacy_run_resumes(*self.seed(harness, harness))
 
+    def test_legacy_claude_sidechain_resume_stops_before_changing_run(self):
+        args, run = self.seed("legacy-sidechain", "claude-code")
+        sample = next(run.glob("samples/*/*"))
+        actf_path = sample / "trace_ACTF.json"
+        actf = json.loads(actf_path.read_text())
+        child = json.loads(json.dumps(actf["steps"][0]))
+        child["step_id"] = len(actf["steps"]) + 1
+        child["extra"] = {"is_sidechain": True}
+        actf["steps"].append(child)
+        actf_path.write_text(json.dumps(actf))
+        before = self.snapshot(run)
+        before_calls = list(self.calls)
+
+        with self.assertRaisesRegex(ValueError, "legacy Claude Code sidechain"):
+            self.invoke(args, resume=True)
+
+        self.assertEqual(self.snapshot(run), before)
+        self.assertEqual(self.calls, before_calls)
+
+    def test_claude_truncated_native_tail_still_resumes(self):
+        args, run = self.seed("truncated-tail", "claude-code")
+        sample = next(run.glob("samples/*/*"))
+        with (sample / "trace.jsonl").open("a") as stream:
+            stream.write('{"type":')
+        before_calls = list(self.calls)
+
+        self.assertEqual(self.invoke(args, resume=True), 0)
+        self.assertEqual(self.calls, before_calls)
+        self.assertEqual(json.loads((run / "info.json").read_text())["summary"]["skipped"], 1)
+
     def test_cli_resumes_disabled_legacy_lock_for_mixed_agent_and_simulator(self):
         for agent, simulator in (("codex", "claude-code"), ("claude-code", "codex")):
             with self.subTest(agent=agent, simulator=simulator):
                 self.assert_disabled_legacy_run_resumes(*self.seed(agent, agent, simulator))
+
+    def test_cli_resumes_legacy_claude_settings_fingerprint_lock(self):
+        settings = self.root / "settings.json"
+        settings.write_text('{"model":"one"}\n', encoding="utf-8")
+        tasks = self.root / "claude-settings.jsonl"
+        tasks.write_text(
+            json.dumps(
+                {
+                    "id": "task",
+                    "harness": "claude-code",
+                    "model": "provider/model",
+                    "prompt": "say done",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        args = [
+            "collect",
+            "--tasks",
+            str(tasks),
+            "--claude-settings",
+            str(settings),
+            "--api-base",
+            "http://example.test/v1",
+            "--api-key-env",
+            "TEST_KEY",
+            "--output",
+            str(self.root / "runs"),
+            "--run-name",
+            "claude-settings",
+        ]
+        with patch(
+            "roller.cli.hashlib.blake2b",
+            side_effect=AssertionError("new runs must use only SHA-256"),
+        ):
+            self.assertEqual(self.invoke(args), 0)
+        run = self.root / "runs" / "claude-settings"
+        lock_path = run / "lock.json"
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        claude = lock["execution"]["claude-code"]
+        content = settings.read_bytes()
+        self.assertEqual(
+            claude["config_sha256"], hashlib.sha256(content).hexdigest()
+        )
+        self.assertNotIn("settings_fingerprint", claude)
+
+        claude["settings_fingerprint"] = hashlib.blake2b(
+            content, digest_size=16
+        ).hexdigest()
+        del claude["config_sha256"]
+        lock_path.write_text(json.dumps(lock), encoding="utf-8")
+        historical_lock = lock_path.read_bytes(), lock_path.stat().st_mtime_ns
+        calls_before_resume = list(self.calls)
+
+        self.assertEqual(self.invoke(args, resume=True), 0)
+
+        self.assertEqual(self.calls, calls_before_resume)
+        self.assertEqual(
+            (lock_path.read_bytes(), lock_path.stat().st_mtime_ns),
+            historical_lock,
+        )
+
+        settings.write_text('{"model":"two"}\n', encoding="utf-8")
+        with self.assertRaisesRegex(FileExistsError, "lock mismatch"):
+            self.invoke(args, resume=True)
 
     def test_cli_still_recaptures_and_adopts_an_unlocked_native_run(self):
         args, run = self.seed("unlocked-native", "codex")
