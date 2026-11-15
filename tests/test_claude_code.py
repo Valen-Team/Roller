@@ -1,20 +1,23 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from roller.harnesses.claude_code import (
+    CLAUDE_INPUT_CONTAINER_PATH,
     ClaudeCodeConfig,
     ClaudeCodeHarness,
     claude_effort,
     normalize_anthropic_base_url,
     redact_anthropic_base_url,
 )
-from roller.models import RunRequest, Task
+from roller.models import InputFile, RunRequest, Task
 
 
 class ClaudeCodeHarnessTests(unittest.TestCase):
@@ -105,6 +108,50 @@ class ClaudeCodeHarnessTests(unittest.TestCase):
         self.assertEqual(environment["ANTHROPIC_MODEL"], "claude-opus-5")
         self.assertNotIn("ANTHROPIC_DEFAULT_SONNET_MODEL", environment)
         self.assertEqual(command[command.index("--model") + 1], "claude-opus-5")
+
+    def test_attached_images_are_sent_as_a_stream_json_first_message(self) -> None:
+        harness = ClaudeCodeHarness(ClaudeCodeConfig(wire_trace_mode="off"), 0)
+        harness.runtime = MagicMock()
+        harness.runtime.popen.return_value.wait.return_value = 0
+        copied: list[dict] = []
+
+        def run(args, timeout=None):
+            if args[0] == "cp":
+                copied.append(json.loads(Path(args[1]).read_text(encoding="utf-8")))
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        harness.runtime.run.side_effect = run
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "chart.png").write_bytes(b"png-bytes")
+            request = RunRequest(
+                0,
+                Task("task", ("hello", "next"), 0, inputs=(InputFile(root / "chart.png", "inputs/chart.png"),),
+                     attach_images=("inputs/chart.png",)),
+                "anthropic/claude-opus-5", 30,
+            )
+            log_path = root / "rollout" / "claude.log"
+            harness._run_turn("container", request, "hello", resume=False, timeout_seconds=30, log_path=log_path)
+            harness._run_turn("container", request, "next", resume=True, timeout_seconds=30, log_path=log_path)
+            self.assertEqual(list(log_path.parent.iterdir()), [])
+
+        first, resumed = (call.args[0] for call in harness.runtime.popen.call_args_list)
+        shell = first.index("/bin/sh")
+        self.assertEqual(
+            first[shell:shell + 5],
+            ["/bin/sh", "-c", 'exec "$@" < "$0"', CLAUDE_INPUT_CONTAINER_PATH, "claude"],
+        )
+        self.assertEqual(first[-2:], ["--print", "--input-format=stream-json"])
+        self.assertIn("--output-format=stream-json", first)
+        self.assertNotIn("hello", first)
+        self.assertEqual(resumed[-3:], ["--continue", "--print", "next"])
+        self.assertNotIn("/bin/sh", resumed)
+        self.assertEqual(len(copied), 1)
+        self.assertEqual(copied[0]["message"]["content"], [
+            {"type": "text", "text": "hello"},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                         "data": base64.b64encode(b"png-bytes").decode()}},
+        ])
 
     def test_builds_print_and_resume_commands(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

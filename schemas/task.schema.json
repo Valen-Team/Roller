@@ -114,6 +114,12 @@
             ]
           }
         },
+        "attach_images": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/relativePath"},
+          "uniqueItems": true,
+          "description": "Input image paths (png, jpg, jpeg, webp, gif) sent to the model with the first user message"
+        },
         "context": {
           "type": "array",
           "items": {

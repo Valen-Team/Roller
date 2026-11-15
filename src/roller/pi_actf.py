@@ -105,7 +105,7 @@ def pi_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: bool =
             block_type = block.get("type")
             if block_type == "text" and isinstance(block.get("text"), str):
                 continue
-            if (role == "toolResult" and block_type == "image"
+            if (role in {"user", "toolResult"} and block_type == "image"
                     and isinstance(block.get("data"), str)
                     and isinstance(block.get("mimeType", block.get("mime_type")), str)):
                 continue

@@ -73,6 +73,23 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertIn("disable_response_storage=true", command)
         self.assertEqual(command[-2:], ["--", "hello"])
 
+    def test_attached_images_join_the_first_prompt_only(self) -> None:
+        harness = CodexHarness(CodexConfig(workspace_container_path="/work"), 0)
+        request = RunRequest(
+            0, Task("task", ("hello",), 0, attach_images=("inputs/a.png", "inputs/b.jpg")),
+            "gpt-5.6-sol", 30,
+        )
+        first = harness._codex_command("container", request, "hello", resume=False)
+        self.assertEqual(
+            first[-6:],
+            ["--image", "/work/inputs/a.png", "--image", "/work/inputs/b.jpg", "--", "hello"],
+        )
+        resumed = harness._codex_command("container", request, "next", resume=True)
+        self.assertNotIn("--image", resumed)
+        self.assertNotIn(
+            "--image", harness._codex_command("container", self._request(), "hello", resume=False)
+        )
+
     def test_config_set_follows_roller_overrides_on_every_turn(self) -> None:
         harness = CodexHarness(
             CodexConfig(

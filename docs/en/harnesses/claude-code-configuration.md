@@ -115,6 +115,7 @@ This table lists Claude Code-specific runtime flags only. See section 3 for API 
 | `--claude-max-turns` | None | Limit agent turns for each predefined user message |
 | `--claude-max-thinking-tokens` | None | Set `MAX_THINKING_TOKENS` for Claude Code |
 | `--claude-permission-mode` | `bypassPermissions` | Select the Claude Code permission mode |
+| `--claude-unique-tool-ids` | Off | Replace tool-call IDs that the API service issues more than once before Claude Code receives them, see section 9.5 |
 
 A single Claude Code run can use the shared flag forms. In a mixed-Harness run, use dedicated forms such as `--claude-code-image`, `--claude-api-base`, and `--claude-api-key-env` so that the settings apply only to the intended participant.
 
@@ -122,7 +123,7 @@ A single Claude Code run can use the shared flag forms. In a mixed-Harness run, 
 
 The Claude Code Harness supports both text-only and vision-capable models. Images enter the workspace through `files.inputs`, and Claude Code can open local images with its native `Read` tool. Image tool results are preserved in the native trace, ACTF, and multimodal SFT, where SFT uses `<image>` placeholders and the top-level `images` field.
 
-Vision tasks also require the selected model and Anthropic-compatible API service to support image content blocks. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. Text-only models can still process text and ordinary files, but they cannot complete tasks that require understanding image content.
+Vision tasks also require the selected model and Anthropic-compatible API service to support image content blocks. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. To send an input image with the first user message, list it in [`files.attach_images`](../tasks/task-format.md). Text-only models can still process text and ordinary files, but they cannot complete tasks that require understanding image content.
 
 ## 6. Thinking configuration
 
@@ -206,6 +207,24 @@ The default `--wire-trace actf` captures system prompts and tool definitions for
 ```
 
 The sample then also contains `wire_trace.jsonl`. This file can contain complete messages, tool arguments, and thinking settings; use it only for troubleshooting or auditing. `--wire-trace off` keeps the native Claude Code session but records no request details.
+
+### 9.5 Repeated tool-call IDs
+
+Some Anthropic-compatible services issue the same `tool_use` ID in more than one response, for example `call_0` in every response. Claude Code then holds two calls with one ID, and a later request can be rejected or paired with the wrong result.
+
+ACTF conversion keeps such calls apart when the earlier call already has its result: the later call becomes `<id>__occurrence_<n>`, its result follows it, and the call records the native ID as `original_tool_call_id`. When an ID is reused before the earlier result arrives, the pairing is ambiguous and conversion fails.
+
+To repair the IDs during the run, add `--claude-unique-tool-ids`:
+
+```bash
+roller collect ... --harness claude-code --api-base https://example.test --claude-unique-tool-ids
+```
+
+- The request recording proxy replaces a repeated ID with a new `toolu_roller_...` ID in streamed and non-streamed Messages responses. Claude Code, `trace.jsonl`, ACTF, and the recorded requests all use the delivered ID.
+- Each replacement is written to `tool_id_mappings.jsonl` in the sample directory, with `native_id` and `delivered_id`.
+- The proxy asks the service for uncompressed responses while the flag is set, because a compressed response cannot be rewritten.
+- The flag requires the proxy: `--api-base` and `--wire-trace actf` or `full`.
+- The flag is recorded in `lock.json` and `info.json` when it is set. Use a new `--run-name` after changing it.
 
 ## 10. First-run check
 

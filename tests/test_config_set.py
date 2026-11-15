@@ -107,7 +107,7 @@ class CliConfigSetTests(unittest.TestCase):
         patches.enter_context(
             patch("roller.cli._docker_preflight", return_value="test-image-id")
         )
-        for constructor in ("OpenClawHarness", "CodexHarness"):
+        for constructor in ("OpenClawHarness", "CodexHarness", "ClaudeCodeHarness"):
             patches.enter_context(
                 patch(
                     f"roller.cli.{constructor}",
@@ -184,6 +184,46 @@ class CliConfigSetTests(unittest.TestCase):
             self.invoke(
                 "--codex-config-set", "model_verbosity=\"high\"", harness="codex", resume=True
             )
+
+    def test_codex_image_detail_is_locked_only_when_set(self) -> None:
+        self.invoke(harness="codex")
+        self.assertNotIn("responses_image_detail", self.lock()["execution"]["codex"])
+        self.assertIsNone(self.configs[0].responses_image_detail)
+        self.invoke(harness="codex", resume=True)
+        with self.assertRaisesRegex(FileExistsError, "lock mismatch"):
+            self.invoke(
+                "--codex-image-detail", "high", "--api-base", "http://example.test/v1",
+                harness="codex", resume=True,
+            )
+
+    def test_codex_image_detail_reaches_the_harness_and_the_lock(self) -> None:
+        self.invoke(
+            "--codex-image-detail", "high", "--api-base", "http://example.test/v1",
+            harness="codex",
+        )
+        self.assertEqual(self.configs[0].responses_image_detail, "high")
+        self.assertEqual(self.lock()["execution"]["codex"]["responses_image_detail"], "high")
+        info = json.loads((self.root / "runs" / "run" / "info.json").read_text())
+        self.assertEqual(info["configuration"]["codex"]["responses_image_detail"], "high")
+
+    def test_claude_unique_tool_ids_is_locked_only_when_set(self) -> None:
+        self.invoke(harness="claude-code")
+        self.assertNotIn("unique_tool_ids", self.lock()["execution"]["claude-code"])
+        self.assertFalse(self.configs[0].unique_tool_ids)
+        self.invoke(harness="claude-code", resume=True)
+        with self.assertRaisesRegex(FileExistsError, "lock mismatch"):
+            self.invoke(
+                "--claude-unique-tool-ids", "--api-base", "http://example.test",
+                harness="claude-code", resume=True,
+            )
+
+    def test_claude_unique_tool_ids_reaches_the_harness_and_the_lock(self) -> None:
+        self.invoke(
+            "--claude-unique-tool-ids", "--api-base", "http://example.test",
+            harness="claude-code",
+        )
+        self.assertTrue(self.configs[0].unique_tool_ids)
+        self.assertIs(self.lock()["execution"]["claude-code"]["unique_tool_ids"], True)
 
     def test_setting_for_an_unselected_harness_is_an_error(self) -> None:
         with self.assertRaisesRegex(ValueError, "--codex-config-set is only valid"):

@@ -144,20 +144,27 @@ def _attachment_placeholder(attachments: list[Any]) -> str:
     ) + "]"
 
 
+def _image_block(file: dict[str, Any]) -> dict[str, Any] | None:
+    """ACTF image block for an OpenCode file reference, None for other media."""
+
+    mime = file.get("mime")
+    if not isinstance(mime, str) or not mime.lower().startswith("image/"):
+        return None
+    image_url = file.get("url")
+    if not isinstance(image_url, str) or not image_url:
+        raise ValueError("OpenCode image attachment must contain a URL")
+    return {"type": "image", "data": image_url, "mimeType": mime.lower()}
+
+
 def _tool_result_content(result: str, attachments: list[Any]) -> list[dict[str, Any]]:
     content = [{"type": "text", "text": result}]
     non_image_attachments: list[Any] = []
     for attachment in attachments:
         if not isinstance(attachment, dict):
             raise ValueError("OpenCode tool attachment must be an object")
-        mime = attachment.get("mime")
-        if isinstance(mime, str) and mime.lower().startswith("image/"):
-            image_url = attachment.get("url")
-            if not isinstance(image_url, str) or not image_url:
-                raise ValueError("OpenCode image attachment must contain a URL")
-            content.append(
-                {"type": "image", "data": image_url, "mimeType": mime.lower()}
-            )
+        image = _image_block(attachment)
+        if image is not None:
+            content.append(image)
         else:
             non_image_attachments.append(attachment)
     if non_image_attachments:
@@ -211,6 +218,8 @@ def opencode_events_to_actf(events: Iterable[dict[str, Any]], *, keep_thinking: 
                 if not isinstance(part.get("text"), str):
                     raise ValueError("OpenCode text part must contain text")
                 content.append({"type": "text", "text": part["text"]})
+            elif kind == "file" and role == "user" and (image := _image_block(part)) is not None:
+                content.append(image)
             elif kind == "reasoning" and role == "assistant":
                 content.append({"type": "thinking", "thinking": part["text"]})
             elif kind == "tool" and role == "assistant":

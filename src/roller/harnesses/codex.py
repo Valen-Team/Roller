@@ -37,10 +37,11 @@ from roller.harnesses.container import (
 )
 from roller.harnesses.docker import DockerRuntime, remove_container
 from roller.models import HarnessResult, RunRequest
+from roller.native_images import attached_images
 from roller.storage import safe_component
 from roller.thinking import normalize_thinking, resolve_thinking
 from roller.usage import ZERO_USAGE, extract_codex_usage
-from roller.wire_trace import WireTraceProxy, redact_jsonl_file
+from roller.wire_trace import RESPONSES_IMAGE_DETAILS, WireTraceProxy, redact_jsonl_file
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,8 @@ class CodexConfig:
     preflight_image_digest: str | None = None
     # Extra ``codex exec -c KEY=VALUE`` overrides, after Roller's own.
     config_set: tuple[ConfigAssignment, ...] = ()
+    # ``detail`` the proxy sets on Responses ``input_image`` blocks without one.
+    responses_image_detail: str | None = None
 
     def __post_init__(self) -> None:
         managed = ROLLER_MANAGED_CODEX_CONFIG
@@ -181,6 +184,13 @@ class CodexConfig:
             raise ValueError("Codex call capture requires --api-base, host network, wire tracing and --no-codex-websockets")
         if self.wire_trace_mode not in {"off", "actf", "full"}:
             raise ValueError("Codex wire trace mode must be off|actf|full")
+        if self.responses_image_detail is not None:
+            if self.responses_image_detail not in RESPONSES_IMAGE_DETAILS:
+                raise ValueError(
+                    f"Codex image detail must be {'|'.join(RESPONSES_IMAGE_DETAILS)}"
+                )
+            if not self.api_base or self.network != "host" or self.supports_websockets or self.wire_trace_mode == "off":
+                raise ValueError("Codex image detail requires --api-base, host network, wire tracing and --no-codex-websockets")
         if self.wire_trace_mode == "full" and not self.api_base:
             raise ValueError("Codex --wire-trace full requires --api-base")
         if self.wire_trace_mode == "full" and self.supports_websockets:
@@ -249,6 +259,7 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
             capture_identity_header="thread-id" if self.capture else None,
             responses_tools_path=tools_path,
             encrypted_content_retries=CODEX_ENCRYPTED_CONTENT_RETRIES,
+            responses_image_detail=self.config.responses_image_detail,
         )
         self._wire_proxy.start()
 
@@ -468,6 +479,10 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
             )
         for key, value in self.config.config_set:
             command.extend(["-c", f"{key}={value}"])
+        for image in attached_images(
+            request, self.config.workspace_container_path, first_message=not resume
+        ):
+            command.extend(["--image", image["path"]])
         command.extend(["--", prompt])
         return command
 
@@ -800,6 +815,7 @@ class CodexSession(InteractiveSession):
                 "keep_thinking": config.keep_thinking,
                 "web_search": config.web_search,
                 "supports_websockets": config.supports_websockets,
+                **({"responses_image_detail": config.responses_image_detail} if config.responses_image_detail else {}),
                 "output_collection": output_collection_metadata(artifact_result, self.request, self.output_dir),
                 "output_copy_error": output_copy_error,
                 "attempt": self.attempt,

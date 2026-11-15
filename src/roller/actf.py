@@ -56,7 +56,7 @@ def _text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
-def _user_content(value: Any, expected: str | None = None) -> str | list[Any]:
+def user_content(value: Any, expected: str | None = None) -> str | list[Any]:
     """Keep native user media while replacing transport-decorated prompt text."""
 
     if not isinstance(value, list):
@@ -94,7 +94,7 @@ def _user_content(value: Any, expected: str | None = None) -> str | list[Any]:
     return blocks
 
 
-def _append_user_content(
+def append_user_content(
     current: str | list[Any], value: str | list[Any]
 ) -> str | list[Any]:
     if not current:
@@ -452,7 +452,7 @@ def openclaw_events_to_actf(
                 if user_index < len(expected_users)
                 else None
             )
-            value = _user_content(message.get("content"), expected)
+            value = user_content(message.get("content"), expected)
             if retry_after_empty_error and pending_user and value == pending_user:
                 # OpenClaw records its internal provider retry as the same user
                 # message again. Keep that transport detail in the raw trace,
@@ -462,7 +462,7 @@ def openclaw_events_to_actf(
             retry_after_empty_error = False
             finish_current(message_time)
             user_index += 1
-            pending_user = _append_user_content(pending_user, value)
+            pending_user = append_user_content(pending_user, value)
             pending_user_time = pending_user_time or message_time
             continue
         if role == "assistant":

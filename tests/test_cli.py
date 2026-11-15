@@ -621,5 +621,57 @@ class LaunchIntervalCliTests(unittest.TestCase):
         self.assertEqual(self.intervals, [5.0, 12.0])
 
 
+class RetryBackoffCliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        isolate_gateway_ports(self)
+        self.tasks = self.root / "tasks.jsonl"
+        self.tasks.write_text(json.dumps({"id": "task", "prompt": "hi"}) + "\n")
+        self.backoffs = []
+        patches = contextlib.ExitStack()
+        self.addCleanup(patches.close)
+        patches.enter_context(patch("roller.cli._docker_preflight", return_value="image-id"))
+        patches.enter_context(patch("roller.cli.Collector", side_effect=self._collector))
+
+    def _collector(self, config, harness_factory):
+        self.backoffs.append(config.retry_backoff)
+        collector = MagicMock()
+        collector.collect.return_value = []
+        return collector
+
+    def invoke(self, *extra: str) -> int:
+        args = [
+            "collect", "--tasks", str(self.tasks), "--model", "provider/model",
+            "--output", str(self.root / "runs"), "--run-name", "run", *extra,
+        ]
+        with contextlib.redirect_stdout(io.StringIO()):
+            return _collect(_build_parser().parse_args(args))
+
+    def test_defaults_to_immediate_retries(self) -> None:
+        args = _build_parser().parse_args(["collect", "--tasks", "t.jsonl"])
+        self.assertEqual(args.retry_backoff, 0.0)
+
+    def test_rejects_negative_or_non_finite_values(self) -> None:
+        for value in ("-1", "inf", "nan"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "--retry-backoff"):
+                    self.invoke("--retry-backoff", value)
+
+    def test_recorded_in_info_but_not_locked_so_resume_may_change_it(self) -> None:
+        self.invoke()
+        run = self.root / "runs" / "run"
+        default_lock = (run / "lock.json").read_text()
+        info = json.loads((run / "info.json").read_text())
+        self.assertEqual(info["configuration"]["retry_backoff"], 0.0)
+
+        self.invoke("--retries", "2", "--retry-backoff", "30", "--resume")
+        info = json.loads((run / "info.json").read_text())
+        self.assertEqual(info["configuration"]["retry_backoff"], 30.0)
+        self.assertEqual((run / "lock.json").read_text(), default_lock)
+        self.assertEqual(self.backoffs, [0.0, 30.0])
+
+
 if __name__ == "__main__":
     unittest.main()

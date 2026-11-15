@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from roller.actf import append_user_content, user_content
 from roller.storage import atomic_write_json
+from roller.tool_id_identity import scope_claude_tool_ids
 
 CLAUDE_COMPACTION_SFT_REASON = (
     "Claude context compaction cannot be represented by the linear ACTF projection; "
@@ -138,6 +140,11 @@ def _assistant_parts(
                 "id": call_id,
                 "name": name,
                 "arguments": deepcopy(arguments),
+                **(
+                    {"original_tool_call_id": block["roller_original_tool_id"]}
+                    if "roller_original_tool_id" in block
+                    else {}
+                ),
             }
         )
     return "\n\n".join(visible), "\n\n".join(reasoning), calls
@@ -333,10 +340,11 @@ def claude_code_events_to_actf(
             seen_uuids.add(event_uuid)
         rows.append(row)
     rows.sort(key=lambda row: str(row.get("timestamp", "")))
+    rows = scope_claude_tool_ids(rows)
 
     expected_users = tuple(user_messages) if user_messages is not None else None
     expected_index = 0
-    pending_user = ""
+    pending_user: str | list[Any] = ""
     pending_user_time: str | None = None
     turns: list[dict[str, Any]] = []
     turns_by_message_id: dict[str, dict[str, Any]] = {}
@@ -443,6 +451,9 @@ def claude_code_events_to_actf(
         content = message.get("content")
         tool_results: list[Mapping[str, Any]] = []
         text_parts: list[str] = []
+        # Text and image blocks in native order; other block types stay raw-only.
+        user_blocks: list[Any] = []
+        has_image = False
         if isinstance(content, str):
             text_parts.append(content)
         elif isinstance(content, list):
@@ -453,8 +464,13 @@ def claude_code_events_to_actf(
                     text = block.get("text")
                     if isinstance(text, str):
                         text_parts.append(text)
+                        user_blocks.append(block)
+                elif isinstance(block, Mapping) and block.get("type") == "image":
+                    user_blocks.append(block)
+                    has_image = True
                 elif isinstance(block, str):
                     text_parts.append(block)
+                    user_blocks.append(block)
 
         for block in tool_results:
             call_id = block.get("tool_use_id")
@@ -502,8 +518,9 @@ def claude_code_events_to_actf(
                     expected_index = index + 1
                     break
         if selected is not None:
-            pending_user = (
-                f"{pending_user}\n\n{selected}" if pending_user else selected
+            pending_user = append_user_content(
+                pending_user,
+                user_content(user_blocks, selected) if has_image else selected,
             )
             pending_user_time = pending_user_time or timestamp
 

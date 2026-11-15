@@ -93,6 +93,7 @@ from roller.thinking_capabilities import (
 from roller.version import __version__
 from roller.viewer import DEFAULT_PORT as VIEWER_DEFAULT_PORT
 from roller.viewer import serve as serve_viewer
+from roller.wire_trace import RESPONSES_IMAGE_DETAILS
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +290,16 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     collect.add_argument("--retries", type=int, default=0)
+    collect.add_argument(
+        "--retry-backoff",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help=(
+            "wait before the first retry of a sample, doubled before each "
+            "further retry (default: 0, retry immediately)"
+        ),
+    )
     collect.add_argument("--start-index", type=int, default=0, help="first normalized task index")
     collect.add_argument("--limit", type=int, help="maximum number of tasks")
     collect.add_argument("--output", default="runs", help="root directory for collections")
@@ -577,6 +588,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "disabled by default for OpenAI-compatible HTTP proxies"
         ),
     )
+    codex.add_argument(
+        "--codex-image-detail",
+        choices=RESPONSES_IMAGE_DETAILS,
+        help=(
+            "set this detail on Responses input_image blocks that Codex sends "
+            "without one; needs the request recording proxy"
+        ),
+    )
 
     claude = collect.add_argument_group("Claude Code")
     claude.add_argument(
@@ -601,6 +620,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--claude-permission-mode",
         choices=CLAUDE_PERMISSION_MODES,
         default="bypassPermissions",
+    )
+    claude.add_argument(
+        "--claude-unique-tool-ids",
+        action="store_true",
+        help=(
+            "replace tool-use IDs the Anthropic-compatible endpoint issues more "
+            "than once before Claude Code receives them; needs the request "
+            "recording proxy"
+        ),
     )
     return parser
 
@@ -675,6 +703,7 @@ def _dry_run_payload(
         "trajectories": len(requests),
         "parallel": args.parallel,
         "launch_interval": args.launch_interval,
+        "retry_backoff": args.retry_backoff,
         "grader_parallel": args.grader_parallel or args.parallel,
         "samples": args.samples,
         "opencode_max_steps": args.opencode_max_steps,
@@ -713,6 +742,7 @@ def _dry_run_payload(
                 "context_files": len(request.task.context_files),
                 "output_dir": request.task.output_dir,
                 "input_mode": request.task.input_mode,
+                "attach_images": list(request.task.attach_images),
                 "docker_image": request.task.docker_image,
                 "image_build": request.task.image_build is not None,
                 "workspace_container_path": request.task.workspace_container_path,
@@ -837,6 +867,8 @@ def _collect(args: argparse.Namespace) -> int:
         raise ValueError("--samples must be at least 1")
     if args.retries < 0:
         raise ValueError("--retries cannot be negative")
+    if not math.isfinite(args.retry_backoff) or args.retry_backoff < 0:
+        raise ValueError("--retry-backoff must be a finite number of seconds >= 0")
     if args.timeout <= 0:
         raise ValueError("--timeout must be greater than zero")
     if args.start_index < 0:
@@ -1123,6 +1155,7 @@ def _collect(args: argparse.Namespace) -> int:
             reasoning_summary=args.reasoning_summary,
             web_search=args.codex_web_search,
             supports_websockets=args.codex_websockets,
+            responses_image_detail=args.codex_image_detail,
             wire_trace_mode=args.wire_trace,
             capture_calls=args.capture_calls, capture_debug=args.capture_debug,
             keep_thinking=args.keep_thinking,
@@ -1156,6 +1189,7 @@ def _collect(args: argparse.Namespace) -> int:
             max_turns=args.claude_max_turns,
             capture_calls=args.claude_capture_calls or args.capture_calls, capture_debug=args.capture_debug,
             permission_mode=args.claude_permission_mode,
+            unique_tool_ids=args.claude_unique_tool_ids,
             wire_trace_mode=args.wire_trace,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
@@ -1224,6 +1258,22 @@ def _collect(args: argparse.Namespace) -> int:
                 default_effort=bridge_config.reasoning_effort,
                 effort_validator=effort_validator,
                 capabilities=thinking_capabilities,
+            )
+    for task in tasks:
+        if not task.attach_images:
+            continue
+        harness = cli_harness or task.harness
+        if not HARNESSES[harness].attach_images:
+            supported = ", ".join(name for name, item in HARNESSES.items() if item.attach_images)
+            raise ValueError(
+                f"task {task.id!r}: files.attach_images is not supported by the "
+                f"{HARNESSES[harness].label} Harness; use {supported}"
+            )
+        if harness == "opencode" and not args.opencode_vision:
+            raise ValueError(f"task {task.id!r}: files.attach_images requires --opencode-vision")
+        if harness == "pi" and args.pi_input_modalities == "text":
+            raise ValueError(
+                f"task {task.id!r}: files.attach_images requires --pi-input-modalities text,image"
             )
 
     if args.dry_run:
@@ -1330,6 +1380,7 @@ def _collect(args: argparse.Namespace) -> int:
             "pass_env_names": list(codex_config.pass_env),
             **({"capture_calls": True, "capture_debug": args.capture_debug} if codex_config.capture_calls else {}),
             **({"config_set": recorded_config_assignments(codex_config.config_set)} if codex_config.config_set else {}),
+            **({"responses_image_detail": codex_config.responses_image_detail} if codex_config.responses_image_detail else {}),
         }
     if claude_code_config is not None:
         harness_configurations["claude-code"] = {
@@ -1354,6 +1405,7 @@ def _collect(args: argparse.Namespace) -> int:
             "keep_thinking": args.keep_thinking,
             "pass_env_names": list(claude_code_config.pass_env),
             **({"capture_calls": True, "capture_debug": args.capture_debug} if claude_code_config.capture_calls else {}),
+            **({"unique_tool_ids": True} if claude_code_config.unique_tool_ids else {}),
         }
 
     if hermes_config is not None:
@@ -1443,6 +1495,7 @@ def _collect(args: argparse.Namespace) -> int:
             "grader_parallel": args.grader_parallel or args.parallel,
             "samples": args.samples,
             "retries": args.retries,
+            "retry_backoff": args.retry_backoff,
             "start_index": args.start_index,
             "limit": args.limit,
             "resume": args.resume,
@@ -1687,6 +1740,7 @@ def _collect(args: argparse.Namespace) -> int:
                     parallel=args.parallel,
                     launch_interval=args.launch_interval,
                     retries=args.retries,
+                    retry_backoff=args.retry_backoff,
                     resume=lock_decision.reuse_existing_samples,
                     keep_aux_traces=keep_aux_traces,
                     capture_cache_trace=(

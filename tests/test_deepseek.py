@@ -198,6 +198,16 @@ class FakeRuntime:
 
 
 class DeepSeekHarnessTests(unittest.TestCase):
+    def test_attached_images_are_rejected_before_the_container_starts(self):
+        runtime = FakeRuntime()
+        harness = DeepSeekHarness(DeepSeekConfig(api_key_env="LOCAL_TEST_KEY", wire_trace_mode="off"), 0, runtime)
+        task = Task("test", ("one",), 0, attach_images=("inputs/chart.png",))
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}):
+            result = harness.run(RunRequest(0, task, "model", 60), Path(tmp), 1)
+        self.assertEqual(result.status, "error")
+        self.assertIn("DeepSeek does not support files.attach_images", result.error)
+        self.assertFalse(any(call[0] == "run" for call in runtime.calls))
+
     def test_session_outputs_cleanup_and_redaction(self):
         runtime = FakeRuntime()
         harness = DeepSeekHarness(DeepSeekConfig(api_key_env="LOCAL_TEST_KEY", wire_trace_mode="off"), 0, runtime)

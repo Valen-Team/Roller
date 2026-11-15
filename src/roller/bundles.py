@@ -538,6 +538,15 @@ class TaskBundleStore:
             "legacy_workspace": task.legacy_workspace,
             "resume_safe": context_manifest["resume_safe"],
         }
+        input_files = {record["logical_path"] for record in input_manifest["files"]}
+        for path in task.attach_images:
+            if path not in input_files:
+                raise BundleError(
+                    f"task {task.id} files.attach_images is not an input file: {path}"
+                )
+        if task.attach_images:
+            # Absent when unused so bundle digests of existing tasks stay the same.
+            manifest["files"]["attach_images"] = list(task.attach_images)
         manifest_digest = _canonical_digest(manifest)
         return TaskBundle(
             inputs_root=inputs_root,

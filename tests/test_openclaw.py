@@ -633,6 +633,34 @@ class OpenClawHelpersTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertIn("logging.redactSensitive", logs.output[0])
 
+    def test_attached_images_mark_the_first_message_and_stay_out_of_the_prompts(self) -> None:
+        task = Task(
+            id="task", prompts=("Describe it", "Finish"), source_index=0,
+            attach_images=("inputs/chart.png",),
+        )
+        runtime = FakeDockerRuntime()
+        harness = OpenClawHarness(
+            OpenClawConfig(docker_image="test-image", set_image_model=False),
+            worker_slot=0,
+            runtime=runtime,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            session = harness.create_session(
+                RunRequest(index=0, task=task, model="provider/model", timeout_seconds=30),
+                Path(temporary), 1,
+            )
+            session.start()
+            for prompt in task.prompts:
+                session.send(prompt, 30)
+            self.assertEqual(session.messages, ["Describe it", "Finish"])
+            session.finish("ok")
+
+        workspace = harness.config.workspace_container_path
+        self.assertEqual(runtime.agent_messages, [
+            f"[media attached: {workspace}/inputs/chart.png (image/png)]\nDescribe it",
+            "Finish",
+        ])
+
     def test_harness_collects_raw_trace_and_sends_messages_without_shell_quoting(self) -> None:
         task = Task(
             id="task",

@@ -15,6 +15,7 @@ from roller.models import (
     UserSimulatorSpec,
 )
 from roller.harness_registry import HARNESS_NAMES
+from roller.native_images import IMAGE_MEDIA_TYPES, image_media_type
 from roller.thinking import normalize_thinking
 
 TASK_SCHEMA_V1 = "roller.task/v1"
@@ -260,6 +261,33 @@ def _parse_inputs(value: Any, base_dir: Path, index: int) -> tuple[InputFile, ..
             )
         )
     return tuple(inputs)
+
+
+def _parse_attach_images(
+    value: Any, inputs: tuple[InputFile, ...], index: int
+) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise TaskFormatError(f"task {index}: files.attach_images must be a list of input paths")
+    images: list[str] = []
+    for item in value:
+        path = normalize_relative_path(item, f"task {index}: files.attach_images")
+        if path in images:
+            raise TaskFormatError(f"task {index}: files.attach_images repeats {path!r}")
+        if image_media_type(path) is None:
+            raise TaskFormatError(
+                f"task {index}: files.attach_images supports "
+                f"{', '.join(sorted(IMAGE_MEDIA_TYPES))} files, got {path!r}"
+            )
+        if not any(
+            path == spec.path or path.startswith(spec.path + "/") for spec in inputs
+        ):
+            raise TaskFormatError(
+                f"task {index}: files.attach_images path {path!r} is not declared in files.inputs"
+            )
+        images.append(path)
+    return tuple(images)
 
 
 def _parse_image_build(
@@ -540,6 +568,7 @@ def load_tasks(
                 f"task {index}: files.input_mode must be 'mount' or 'copy'"
             )
         _validate_output_input_paths(output_dir, inputs, index)
+        attach_images = _parse_attach_images(files.get("attach_images"), inputs, index)
         legacy_workspace = workspace is not None and not inputs
         if legacy_workspace:
             inputs = (InputFile(workspace, ".", True, None),)
@@ -634,6 +663,7 @@ def load_tasks(
                 output_dir=output_dir,
                 legacy_workspace=legacy_workspace,
                 input_mode=input_mode,
+                attach_images=attach_images,
                 workspace=workspace,
                 harness=task_harness,
                 model=model.strip() if isinstance(model, str) else None,

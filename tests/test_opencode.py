@@ -45,6 +45,31 @@ def write_events(path, events=None):
 
 
 class OpenCodeTraceTests(unittest.TestCase):
+    def test_user_image_file_parts_reach_actf_and_sft(self):
+        events = sample_events()
+        parts = events[-1]["data"]["messages"][0]["parts"]
+        parts.append({"id": "p1a", "messageID": "m1", "type": "file", "mime": "image/PNG",
+                      "filename": "chart.png", "url": "data:image/png;base64,AA=="})
+        actf = opencode_events_to_actf(events)
+        self.assertEqual(actf["steps"][0]["user_content"], [
+            {"type": "text", "text": "Read token"},
+            {"type": "image", "data": "data:image/png;base64,AA==", "mimeType": "image/png"},
+        ])
+        record = actf_to_sft(actf)
+        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+        self.assertEqual(record["messages"][1]["content"], "Read token\n<image>")
+
+        # A path-only reference stays in ACTF; SFT export never reads files.
+        parts[-1]["url"] = "file:///roller/workspace/chart.png"
+        actf = opencode_events_to_actf(events)
+        self.assertEqual(actf["steps"][0]["user_content"][1]["data"], "file:///roller/workspace/chart.png")
+        with self.assertRaises(SFTConversionError):
+            actf_to_sft(actf)
+
+        parts[-1].update(mime="application/pdf", url="data:application/pdf;base64,AA==")
+        with self.assertRaisesRegex(ValueError, "lose data"):
+            opencode_events_to_actf(events)
+
     def test_native_tools_reasoning_and_usage(self):
         events = sample_events()
         actf = opencode_events_to_actf(events)
@@ -389,6 +414,31 @@ class OpenCodeHarnessTests(unittest.TestCase):
         expected = "localhost,127.0.0.1,::1,models.example.test,example.test"
         self.assertEqual(environment["NO_PROXY"], expected)
         self.assertEqual(environment["no_proxy"], expected)
+
+    def test_attached_images_become_file_arguments_of_the_first_turn(self):
+        task = Task("test", ("one", "two"), 0, attach_images=("inputs/chart.png",))
+        runtime = FakeRuntime()
+        harness = OpenCodeHarness(OpenCodeConfig(api_key_env="LOCAL_TEST_KEY", wire_trace_mode="off"), 0, runtime)
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}):
+            harness.run(RunRequest(0, task, "model", 60), Path(tmp), 1)
+            self.assertEqual(
+                [turn.get("files") for turn in runtime.turn_configs],
+                [["/roller/workspace/inputs/chart.png"], None],
+            )
+            blind = OpenCodeHarness(OpenCodeConfig(api_key_env="LOCAL_TEST_KEY", wire_trace_mode="off", vision=False), 0, FakeRuntime())
+            result = blind.run(RunRequest(0, task, "model", 60), Path(tmp) / "blind", 1)
+            self.assertEqual(result.status, "error")
+            self.assertIn("--opencode-vision", result.error)
+
+        runner = self.runner()
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"OPENAI_BASE_URL": "http://example.test/v1"}), \
+                patch.object(runner.subprocess, "Popen", side_effect=RuntimeError("stop")) as popen:
+            config = {"timeout_seconds": 30, "model": "m", "context_length": 2048, "output_tokens": 512,
+                      "max_steps": 2, "message": "one", "files": ["/roller/workspace/inputs/chart.png"]}
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                runner.run_turn(config, Path(tmp))
+        args = popen.call_args.args[0]
+        self.assertEqual(args[args.index("--file") + 1], "/roller/workspace/inputs/chart.png")
 
     def runner(self):
         spec = importlib.util.spec_from_file_location("opencode_runner_tools", RUNNER_PATH)

@@ -74,6 +74,7 @@ These flags control concurrency, repetitions, retries, and which part of the tas
 | `--grader-parallel N` | `--parallel` | Limits concurrent graders separately to avoid overloading a judge service |
 | `--samples N` | `3` for SkillsBench, otherwise `1` | Creates N independent samples for each task/model pair |
 | `--retries N` | `0` | Sets additional attempts after the first failure |
+| `--retry-backoff SECONDS` | `0` | Waits before the first retry of a sample and doubles the wait before each further retry, see below |
 | `--timeout SECONDS` | `600` | Sets the total timeout for one rollout |
 | `--task-timeouts` | Off | Prefers each task's `timeout_seconds` and falls back to `--timeout` |
 | `--start-index N` | `0` | Starts at task N in the normalized task list |
@@ -88,6 +89,17 @@ roller collect ... --parallel 24 --launch-interval 8
 - The interval applies to the whole run, including launches after the first wave. N launches take at least (N − 1) × `--launch-interval` seconds. When rollouts are shorter than about `--parallel × --launch-interval`, fewer than `--parallel` rollouts run at once.
 - Samples skipped by `--resume` do not take a launch turn.
 - On interruption, rollouts still waiting for their launch turn are cancelled and leave no sample directory. Pending retries are also cancelled, regardless of the interval; the sample keeps its last failure, and `--resume` reruns it.
+- The value is recorded in `info.json` and not in `lock.json`; therefore it can be changed on `--resume`.
+
+With `--retries`, a failed sample is retried immediately by default. `--retry-backoff` inserts a wait that starts at the specified number of seconds and doubles with each retry of the same sample, which gives a rate-limited or briefly unavailable model service time to recover:
+
+```bash
+roller collect ... --retries 3 --retry-backoff 30
+```
+
+- The retries above wait 30, 60, and 120 seconds. The wait is not part of `--timeout`: each attempt keeps the full timeout.
+- A waiting sample keeps its worker, and its launch turn is taken after the wait ends.
+- On interruption, the wait ends at once and the pending retry is cancelled.
 - The value is recorded in `info.json` and not in `lock.json`; therefore it can be changed on `--resume`.
 
 ### 3.3 Output, validation, and continuation
@@ -222,6 +234,8 @@ Flags that belong to one Harness are documented in that Harness guide. Each guid
 | Pi Agent | {ref}`Pi Agent Harness guide <pi-cli-flags>` |
 
 For the tools each Harness exposes and the flags that select them, see [Harness tool availability](../harnesses/tool-availability.md).
+
+For endpoints that need adapted requests or responses, `--codex-image-detail` sets the `detail` of Responses image inputs ({ref}`Codex Harness guide <codex-cli-flags>`), and `--claude-unique-tool-ids` replaces tool-call IDs that the service issues more than once ({ref}`Claude Code Harness guide <claude-code-cli-flags>`).
 
 To inspect the complete flag set supported by the Roller version currently in use, run:
 

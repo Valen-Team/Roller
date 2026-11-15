@@ -203,17 +203,17 @@ or accesses the network: a Harness whose image tool only leaves a path must
 materialize the bytes into the ACTF layer while the file is still accessible.
 
 These are the block shapes that SFT accepts; they do not imply that every
-Harness can invoke vision at runtime. Image tool results are handled as follows:
+Harness can invoke vision at runtime. Image inputs are handled as follows:
 
 | Harness | Runtime image path | ACTF/SFT image preservation |
 | --- | --- | --- |
-| OpenClaw | Prompt attachment, `read`, or `image` auxiliary model call | Preserved; `--wire-trace off` cannot recover `image` tool inputs |
-| Codex | `view_image` through Responses | Preserved |
-| Claude Code | `Read` image result | Preserved |
-| OpenCode | `read` attachment with an inline data URL | Preserved; non-image attachments retain bounded audit metadata |
+| OpenClaw | `files.attach_images`, prompt attachment, `read`, or `image` auxiliary model call | Preserved; `--wire-trace off` cannot recover `image` tool inputs |
+| Codex | `files.attach_images` or `view_image` through Responses | Preserved |
+| Claude Code | `files.attach_images` or `Read` image result | Preserved |
+| OpenCode | `files.attach_images` or `read` attachment with an inline data URL | Preserved; non-image attachments retain bounded audit metadata |
 | Hermes | Roller enables the pinned profile's `vision_analyze` toolset | Preserved |
 | DeepSeek | Text-oriented Bash profile | Image content is rejected explicitly |
-| Pi | Native `read` image result with image-capable model registration | Preserved |
+| Pi | `files.attach_images` or native `read` image result with image-capable model registration | Preserved |
 
 An OpenCode image attachment that only carries a remote URL or path remains in
 ACTF but cannot form multimodal SFT, because export never reads files or

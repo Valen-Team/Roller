@@ -130,6 +130,7 @@ This table lists Codex-specific runtime flags only. API addresses and keys are d
 | `--reasoning-summary` | Codex default | `auto`, `concise`, `detailed`, or `none` |
 | `--codex-web-search` | `disabled` | `disabled`, `cached`, or `live` |
 | `--codex-websockets` / `--no-codex-websockets` | Off | Whether a custom provider uses Responses WebSocket |
+| `--codex-image-detail` | None | `auto`, `low`, `high`, or `original`. Sets this `detail` on Responses image inputs that Codex sends without one |
 
 A single Codex run can use the shared flag forms. In a mixed-Harness run, use the dedicated forms such as `--codex-image`, `--codex-api-base`, and `--codex-api-key-env` so that the settings apply only to the intended participant.
 
@@ -159,7 +160,17 @@ roller collect ... \
 
 The Codex Harness supports both text-only models and vision-capable Responses models. Images enter the workspace through `files.inputs`, and Codex can open local images with its native `view_image` tool. Image tool results are preserved in the native trace, ACTF, and multimodal SFT, where SFT uses `<image>` placeholders and the top-level `images` field.
 
-Vision tasks also require the Codex version, the selected model, and the Responses API service to support image input. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. Text-only models can continue to process text and ordinary files, but they cannot complete tasks that require understanding image content.
+Vision tasks also require the Codex version, the selected model, and the Responses API service to support image input. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. To send an input image with the first user message, list it in [`files.attach_images`](../tasks/task-format.md). Text-only models can continue to process text and ordinary files, but they cannot complete tasks that require understanding image content.
+
+Codex sends Responses `input_image` blocks without a `detail` field. For an endpoint that requires the field, set `--codex-image-detail` to `auto`, `low`, `high`, or `original`:
+
+```bash
+roller collect ... --harness codex --api-base https://example.test/v1 --codex-image-detail high
+```
+
+- The request recording proxy adds the value to every image input that has no `detail`, in user messages and in tool outputs. Blocks that already carry a `detail` and requests without such an image are forwarded unchanged.
+- The flag requires the proxy: `--api-base`, the default `--network host`, `--no-codex-websockets`, and `--wire-trace actf` or `full`.
+- The value is recorded in `lock.json` and `info.json` when it is set. Use a new `--run-name` after changing it.
 
 ## 6. Thinking configuration
 

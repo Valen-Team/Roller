@@ -1100,5 +1100,77 @@ class LaunchIntervalTests(unittest.TestCase):
                     CollectionConfig(run_dir=Path("run"), launch_interval=interval)
 
 
+class FailingHarness(TimedHarness):
+    def run(self, request: RunRequest, output_dir: Path, attempt: int) -> HarnessResult:
+        if attempt <= self.state["failures"]:
+            with self.state["lock"]:
+                self.state.setdefault("starts", []).append((time.monotonic(), attempt))
+                self.state.setdefault("timeouts", []).append(request.timeout_seconds)
+            return HarnessResult.error_result("transient")
+        self.state.setdefault("timeouts", []).append(request.timeout_seconds)
+        return super().run(request, output_dir, attempt)
+
+
+class RetryBackoffTests(unittest.TestCase):
+    def _state(self, **extra) -> dict:
+        return {"lock": threading.Lock(), "calls": {}, "active": 0, "max_active": 0, **extra}
+
+    def _collect(self, run_dir: Path, state: dict, requests, **config) -> list[dict]:
+        return Collector(
+            CollectionConfig(run_dir=run_dir, **config),
+            lambda slot: FailingHarness(state, slot),
+        ).collect(requests)
+
+    def test_wait_doubles_with_each_retry_and_leaves_the_timeout_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state = self._state(failures=2)
+            results = self._collect(
+                Path(temporary) / "run", state, make_requests()[:1],
+                retries=2, retry_backoff=0.15,
+            )
+
+        self.assertEqual(results[0]["status"], "ok")
+        self.assertEqual([row["attempt"] for row in results[0]["attempts"]], [1, 2, 3])
+        starts = [start for start, _ in state["starts"]]
+        gaps = [later - earlier for earlier, later in zip(starts, starts[1:])]
+        self.assertGreaterEqual(gaps[0], 0.14)
+        self.assertGreaterEqual(gaps[1], 0.29)
+        self.assertEqual(state["timeouts"], [30, 30, 30])
+
+    def test_without_backoff_retries_start_at_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state = self._state(failures=2)
+            started = time.monotonic()
+            self._collect(Path(temporary) / "run", state, make_requests()[:1], retries=2)
+
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_interrupt_ends_the_wait_and_keeps_the_last_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            # task-1 fails at once and waits 30 s; task-0 interrupts at 0.2 s.
+            state = self._state(failures=1, interrupt_task="task-0", delay=0.2)
+            requests = make_requests()[:2]
+            started = time.monotonic()
+            with self.assertRaises(KeyboardInterrupt):
+                Collector(
+                    CollectionConfig(run_dir=run_dir, parallel=2, retries=1, retry_backoff=30),
+                    lambda slot, request: (
+                        TimedHarness if request.task.id == "task-0" else FailingHarness
+                    )(state, slot),
+                ).collect(requests)
+
+            self.assertLess(time.monotonic() - started, 10)
+            info = json.loads(next(run_dir.glob("samples/*/00000001_task-1/info.json")).read_text())
+            self.assertEqual([row["attempt"] for row in info["attempts"]], [1])
+            self.assertEqual(info["status"], "error")
+
+    def test_rejects_negative_or_non_finite_backoff(self) -> None:
+        for backoff in (-1.0, float("inf"), float("nan")):
+            with self.subTest(backoff=backoff):
+                with self.assertRaises(ValueError):
+                    CollectionConfig(run_dir=Path("run"), retry_backoff=backoff)
+
+
 if __name__ == "__main__":
     unittest.main()

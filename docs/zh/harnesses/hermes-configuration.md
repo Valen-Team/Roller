@@ -82,7 +82,7 @@ Hermes 作为 Task Agent 或 User Simulator 时均使用这些参数。修改镜
 
 Hermes 提供终端、文件和可选的图片工具。模型和 API 服务均支持图片输入时，可通过 `vision_analyze` 打开本地图片。使用纯文本模型时，可通过 `--no-hermes-vision` 关闭图片工具。
 
-图片通过 `files.inputs` 进入工作区，图片工具结果保留在原始轨迹、ACTF 和多模态 SFT 中。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。视频和远程终端暂不支持。
+图片通过 `files.inputs` 进入工作区，图片工具结果保留在原始轨迹、ACTF 和多模态 SFT 中。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。不支持 `files.attach_images`。视频和远程终端暂不支持。
 
 ## 6. Session 与工作区
 

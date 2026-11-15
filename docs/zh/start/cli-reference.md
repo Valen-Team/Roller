@@ -74,6 +74,7 @@ roller collect --tasks tasks.jsonl --model provider/model
 | `--grader-parallel N` | `--parallel` | 单独限制同时运行的 grader 数，避免 judge 服务过载 |
 | `--samples N` | SkillsBench 为 `3`，其他为 `1` | 为每个 task/model 组合创建 N 个独立 sample |
 | `--retries N` | `0` | 设置首次失败后的额外尝试次数 |
+| `--retry-backoff SECONDS` | `0` | sample 首次重试前的等待时间，此后每次重试加倍，见下文 |
 | `--timeout SECONDS` | `600` | 设置每条 rollout 的总超时 |
 | `--task-timeouts` | 关闭 | 优先使用每条 task 的 `timeout_seconds`，缺失时使用 `--timeout` |
 | `--start-index N` | `0` | 从规范化 task 列表的第 N 条开始 |
@@ -88,6 +89,17 @@ roller collect ... --parallel 24 --launch-interval 8
 - 该间隔对整个 run 生效，包括第一批之后的启动。N 次启动至少需要 (N − 1) × `--launch-interval` 秒；rollout 时长短于约 `--parallel × --launch-interval` 时，实际并发数低于 `--parallel`。
 - `--resume` 跳过的 sample 不占用启动间隔。
 - 中断时，仍在等待启动的 rollout 直接取消，不留下 sample 目录；无论间隔为何值，待执行的重试同样取消，sample 保留上次失败的结果，由 `--resume` 重新运行。
+- 该值记录在 `info.json`，不写入 `lock.json`，因此 `--resume` 时可更改该值。
+
+使用 `--retries` 时，失败的 sample 默认立即重试。`--retry-backoff` 在重试前加入等待：首次重试等待指定秒数，同一 sample 此后每次重试的等待时间加倍，使被限流或暂时不可用的模型服务有时间恢复：
+
+```bash
+roller collect ... --retries 3 --retry-backoff 30
+```
+
+- 上例的三次重试分别等待 30、60、120 秒。等待时间不计入 `--timeout`，每次尝试仍有完整的超时时间。
+- 等待期间 sample 继续占用所在 worker，等待结束后再排队获取启动间隔。
+- 中断时等待立即结束，待执行的重试取消。
 - 该值记录在 `info.json`，不写入 `lock.json`，因此 `--resume` 时可更改该值。
 
 ### 3.3 输出、检查与续跑
@@ -218,6 +230,8 @@ Wire trace 用于决定是否记录模型服务的实际 HTTP 请求，常规采
 | Pi Agent | {ref}`Pi Agent Harness 指南 <pi-cli-flags>` |
 
 各 Harness 开放的工具及对应的选择参数见 [Harness 工具开放情况](../harnesses/tool-availability.md)。
+
+如果端点需要调整请求或响应，`--codex-image-detail` 为 Responses 图片输入设置 `detail`（见 {ref}`Codex Harness 指南 <codex-cli-flags>`），`--claude-unique-tool-ids` 替换服务重复签发的工具调用 ID（见 {ref}`Claude Code Harness 指南 <claude-code-cli-flags>`）。
 
 如需核对当前使用的 Roller 版本支持的完整参数列表，请运行：
 

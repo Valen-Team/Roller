@@ -87,6 +87,42 @@ def _events() -> list[dict]:
 
 
 class ClaudeCodeActfTests(unittest.TestCase):
+    def test_user_images_survive_prompt_cleanup_in_native_order(self) -> None:
+        image = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}}
+        events = _events()
+        events[0]["message"]["content"] = [
+            {"type": "text", "text": " inspect input.txt\n"}, image,
+            {"type": "document", "source": {"type": "text", "data": "ignored"}},
+        ]
+        for user_messages, text in ((["inspect input.txt"], "inspect input.txt"), (None, " inspect input.txt\n")):
+            with self.subTest(user_messages=user_messages):
+                trajectory = claude_code_events_to_actf(events, user_messages=user_messages)
+                self.assertEqual(
+                    trajectory["steps"][0]["user_content"], [{"type": "text", "text": text}, image]
+                )
+                record = actf_to_sft(trajectory)
+                self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+                self.assertEqual(record["messages"][1]["content"], f"{text}\n<image>")
+
+        # A message without prompt text is not user input Roller sent.
+        events[0]["message"]["content"] = [image]
+        events.insert(1, {"type": "user", "uuid": "user-2", "timestamp": "2026-08-22T01:00:00Z",
+                          "message": {"role": "user", "content": "second"}})
+        trajectory = claude_code_events_to_actf(events)
+        self.assertEqual(trajectory["steps"][0]["user_content"], "second")
+
+    def test_consecutive_user_messages_merge_text_around_images(self) -> None:
+        image = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AA=="}}
+        events = _events()
+        events[0]["message"]["content"] = [{"type": "text", "text": "first"}, image]
+        events.insert(1, {"type": "user", "uuid": "user-2", "timestamp": "2026-08-22T01:00:00Z",
+                          "message": {"role": "user", "content": "second"}})
+        trajectory = claude_code_events_to_actf(events)
+        self.assertEqual(
+            trajectory["steps"][0]["user_content"],
+            [{"type": "text", "text": "first"}, image, {"type": "text", "text": "second"}],
+        )
+
     def test_native_background_notification_survives_prompt_filter(self) -> None:
         notice = "<task-notification><result>CHILD_DONE</result></task-notification>"
         wrapper = "[SYSTEM NOTIFICATION - NOT USER INPUT]\nNative event.\n\n" + notice

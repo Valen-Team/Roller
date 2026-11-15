@@ -207,7 +207,7 @@ Vision-input models must declare image capability:
 
 The full template is [`examples/config/openclaw/models-multimodal.json`](../../../examples/config/openclaw/models-multimodal.json). `input` only tells OpenClaw how to use the model. The actual API backend must still support image input under the selected API protocol.
 
-Images enter the task workspace through `files.inputs` and are then opened with OpenClaw's image-viewing tool. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. Text-only models can still process text and ordinary files, but they cannot complete tasks that require understanding image content.
+Images enter the task workspace through `files.inputs` and are then opened with OpenClaw's image-viewing tool. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. To send an input image with the first user message, list it in [`files.attach_images`](../tasks/task-format.md). Text-only models can still process text and ordinary files, but they cannot complete tasks that require understanding image content.
 
 By default, Roller also attempts to set the task model as OpenClaw's image model. Older OpenClaw versions that do not support this setting only log a warning. To disable this behavior, use `--no-set-image-model`.
 

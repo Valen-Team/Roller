@@ -49,6 +49,19 @@ def write_events(path, events=None):
 
 
 class PiTraceTests(unittest.TestCase):
+    def test_user_image_blocks_reach_actf_and_sft(self):
+        events = sample_events()
+        image = {"type": "image", "data": "AA==", "mimeType": "image/png"}
+        events[1] = native({"role": "user", "content": [{"type": "text", "text": "Read token"}, image]})
+        actf = pi_events_to_actf(events)
+        self.assertEqual(actf["steps"][0]["user_content"], [{"type": "text", "text": "Read token"}, image])
+        record = actf_to_sft(actf)
+        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+        self.assertEqual(record["messages"][1]["content"], "Read token\n<image>")
+        events[1] = native({"role": "user", "content": [{"type": "image", "path": "/tmp/a.png"}]})
+        with self.assertRaisesRegex(ValueError, "lose data"):
+            pi_events_to_actf(events)
+
     def test_native_tools_reasoning_and_cache_usage(self):
         actf = pi_events_to_actf(sample_events())
         self.assertEqual(actf["tools"], [TOOL])
@@ -203,6 +216,34 @@ class PiHarnessTests(unittest.TestCase):
             self.assertEqual(args.pi_input_modalities, value)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             parser.parse_args(["collect", "--tasks", "tasks.jsonl", "--pi-input-modalities", "image"])
+
+    def test_attached_images_reach_the_first_turn_and_need_image_input(self):
+        source = RUNNER_PATH.with_name("runner.mjs").read_text(encoding="utf-8")
+        self.assertIn("payload.images ?? []", source)
+        self.assertIn("{images}", source)
+        task = Task("test", ("one", "two"), 0, attach_images=("inputs/chart.png",))
+
+        class Runtime(FakeRuntime):
+            turns = []
+
+            def run(self, args, timeout=None):
+                if args[0] == "cp" and args[1].endswith(".pi-turn.json"):
+                    self.turns.append(json.loads(Path(args[1]).read_text()))
+                return super().run(args, timeout)
+
+        runtime = Runtime()
+        harness = PiHarness(PiConfig(api_key_env="LOCAL_TEST_KEY", wire_trace_mode="off"), 0, runtime)
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}):
+            harness.run(RunRequest(0, task, "model", 60), Path(tmp), 1)
+            self.assertEqual(
+                [turn.get("images") for turn in runtime.turns],
+                [[{"path": "/roller/workspace/inputs/chart.png", "mime_type": "image/png"}], None],
+            )
+            text_only = PiHarness(PiConfig(api_key_env="LOCAL_TEST_KEY", wire_trace_mode="off",
+                                           input_modalities=("text",)), 0, FakeRuntime())
+            result = text_only.run(RunRequest(0, task, "model", 60), Path(tmp) / "text", 1)
+            self.assertEqual(result.status, "error")
+            self.assertIn("--pi-input-modalities text,image", result.error)
 
     def test_session_outputs_cleanup_and_redaction(self):
         runtime = FakeRuntime()

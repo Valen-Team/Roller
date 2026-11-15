@@ -133,7 +133,7 @@ benchmark:
 | --- | --- |
 | `output`、`run_name` | `--output`、`--run-name` |
 | `parallel`、`launch_interval`、`grader_parallel` | `--parallel`、`--launch-interval`、`--grader-parallel` |
-| `samples`、`retries`、`timeout` | `--samples`、`--retries`、`--timeout` |
+| `samples`、`retries`、`retry_backoff`、`timeout` | `--samples`、`--retries`、`--retry-backoff`、`--timeout` |
 | `start_index`、`limit`、`resume` | `--start-index`、`--limit`、`--resume` |
 | `wire_trace`、`keep_thinking` | `--wire-trace`、`--keep-thinking` / `--no-keep-thinking` |
 | `capture_calls`、`capture_debug` | `--capture-calls`、`--capture-debug` |
@@ -150,8 +150,8 @@ benchmark:
 | Harness | `extra` 字段 |
 | --- | --- |
 | OpenClaw | `model_config`、`gateway_port`、`gateway_port_step`、`gateway_startup_timeout`、`model_request_timeout`、`max_tokens`、`session_id`、`search_provider`、`collect_paths`、`set_image_model`、`cache_trace`、`config_set` |
-| Codex | `config`、`config_set`、`reasoning_summary`、`web_search`、`websockets` |
-| Claude Code | `settings`、`max_turns`、`max_thinking_tokens`、`permission_mode`、`capture_calls` |
+| Codex | `config`、`config_set`、`reasoning_summary`、`web_search`、`websockets`、`image_detail` |
+| Claude Code | `settings`、`max_turns`、`max_thinking_tokens`、`permission_mode`、`capture_calls`、`unique_tool_ids` |
 | Hermes | `max_iterations`、`context_length`、`vision`、`toolsets` |
 | OpenCode | `max_steps`、`context_length`、`output_tokens`、`vision`、`native_tools`、`deny_tools` |
 | DeepSeek | `max_steps`、`context_length`、`output_tokens`、`profile`、`permission_mode` |

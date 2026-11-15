@@ -82,7 +82,7 @@ The same settings apply when OpenCode is the Task Agent or User Simulator. After
 
 OpenCode can use `bash`, `read`, `write`, `edit`, `apply_patch`, `glob`, and `grep`. Vision-capable models and services can open local images through `read`. For a text-only model, disable the image-input declaration with `--no-opencode-vision`.
 
-Images enter the workspace through `files.inputs`, and `read` produces image attachments. Image results are preserved in the native trace, ACTF, and multimodal SFT. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly.
+Images enter the workspace through `files.inputs`, and `read` produces image attachments. Image results are preserved in the native trace, ACTF, and multimodal SFT. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. To send an input image with the first user message, list it in [`files.attach_images`](../tasks/task-format.md). It requires `--opencode-vision`, which is on by default.
 
 ## 6. Sessions and workspace
 

@@ -89,10 +89,13 @@ class BenchRunConfigTests(unittest.TestCase):
                 ],
             ),
             "codex": (
-                {"config_set": ['model_verbosity="low"']},
-                ["--codex-config-set", 'model_verbosity="low"'],
+                {"config_set": ['model_verbosity="low"'], "image_detail": "high"},
+                ["--codex-config-set", 'model_verbosity="low"', "--codex-image-detail", "high"],
             ),
-            "claude-code": ({"capture_calls": True}, ["--claude-capture-calls"]),
+            "claude-code": (
+                {"capture_calls": True, "unique_tool_ids": True},
+                ["--claude-capture-calls", "--claude-unique-tool-ids"],
+            ),
             "pi": ({"input_modalities": "text"}, ["--pi-input-modalities", "text"]),
             "hermes": ({"toolsets": ["native"]}, ["--hermes-toolset", "native"]),
             "opencode": (
@@ -112,6 +115,8 @@ class BenchRunConfigTests(unittest.TestCase):
                 payload["harness"] = {"id": harness, "extra": extra}
                 payload["execution"] = {
                     "launch_interval": 2.5,
+                    "retries": 2,
+                    "retry_backoff": 30,
                     "capture_debug": "full",
                     "capture_calls": True,
                     "thinking_capabilities": "capabilities.json",
@@ -128,11 +133,13 @@ class BenchRunConfigTests(unittest.TestCase):
                 joined = " ".join(argv)
                 self.assertIn(" ".join(expected), joined)
                 self.assertIn("--launch-interval 2.5", joined)
+                self.assertIn("--retries 2 --retry-backoff 30", joined)
                 self.assertIn("--capture-debug full", joined)
                 self.assertIn("--thinking-capabilities capabilities.json", joined)
                 self.assertIn("--capture-calls", argv)
                 parsed = _build_parser().parse_args(argv)
                 self.assertEqual(parsed.launch_interval, 2.5)
+                self.assertEqual(parsed.retry_backoff, 30.0)
                 self.assertTrue(parsed.capture_calls)
 
     def test_layers_config_and_maps_common_model_fields(self) -> None:

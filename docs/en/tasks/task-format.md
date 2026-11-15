@@ -221,6 +221,23 @@ The first path can be referenced directly in a prompt; the second path is a stab
 If the Agent must modify seed files in place, set `"input_mode": "copy"` in `files`. In this mode, Roller first
 copies the complete input tree into a private writable workspace. The default value, `mount`, uses read-only mounts.
 
+An input file reaches the model only when the Agent opens it with a tool. To send images with the first user message instead, list their workspace paths in `files.attach_images`:
+
+```json
+{
+  "files": {
+    "inputs": [{"source": "inputs/chart.png", "target": "inputs/chart.png"}],
+    "attach_images": ["inputs/chart.png"]
+  }
+}
+```
+
+- Each path must be a `.png`, `.jpg`, `.jpeg`, `.webp`, or `.gif` file that is declared in `files.inputs`, either directly or inside a declared directory. The images are sent in the listed order.
+- The images accompany the first message of the task only. Later messages, including messages after a `new_session` boundary, are sent as text.
+- OpenClaw, Codex, Claude Code, OpenCode, and Pi support this field. A task that uses it with Hermes or DeepSeek is rejected before the run starts. The selected model and API service must accept image input.
+- ACTF keeps the images on the first user message, and SFT exports them as `<image>` placeholders with top-level `images` entries.
+- The list is part of the Task Bundle identity; therefore changing it makes `--resume` rerun the task.
+
 ## 6. Context and system files
 
 `files.context` declares Context files for the Harness to load:
@@ -327,6 +344,7 @@ Roller performs the following checks before starting Docker:
 - `output_dir` must not be located under `inputs/` or `context/`, and must not overlap an input or Context target.
 - A Context target must not use the reserved top-level directories `inputs`, `outputs`, or `context`.
 - `sha256` must be a 64-character hexadecimal string.
+- `files.attach_images` paths must be image files declared in `files.inputs`, without duplicates.
 - User Simulator `max_turns` must be in `1–100`.
 
 The Task Bundle stage then also checks that files exist and validates type, size, symlinks, and the actual hash.

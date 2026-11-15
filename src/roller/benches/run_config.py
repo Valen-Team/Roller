@@ -187,6 +187,7 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "reasoning_summary": ("--reasoning-summary", "value"),
         "web_search": ("--codex-web-search", "value"),
         "websockets": ("--codex-websockets", "bool"),
+        "image_detail": ("--codex-image-detail", "value"),
         "config_set": ("--codex-config-set", "repeat"),
     },
     "claude-code": {
@@ -195,6 +196,7 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "max_thinking_tokens": ("--claude-max-thinking-tokens", "value"),
         "permission_mode": ("--claude-permission-mode", "value"),
         "capture_calls": ("--claude-capture-calls", "switch"),
+        "unique_tool_ids": ("--claude-unique-tool-ids", "switch"),
     },
     "hermes": {
         "max_iterations": ("--hermes-max-iterations", "value"),
@@ -242,6 +244,7 @@ _EXECUTION_VALUES = {
     "grader_parallel": "--grader-parallel",
     "samples": "--samples",
     "retries": "--retries",
+    "retry_backoff": "--retry-backoff",
     "timeout": "--timeout",
     "start_index": "--start-index",
     "limit": "--limit",

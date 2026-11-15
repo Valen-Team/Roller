@@ -82,7 +82,7 @@ OpenCode 作为 Task Agent 或 User Simulator 时均使用这些参数。修改�
 
 OpenCode 可使用 `bash`、`read`、`write`、`edit`、`apply_patch`、`glob` 和 `grep`。具备视觉能力的模型和服务可通过 `read` 打开本地图片。使用纯文本模型时，可通过 `--no-opencode-vision` 关闭图片输入声明。
 
-图片通过 `files.inputs` 进入工作区，并由 `read` 生成图片附件。图片结果保留在原始轨迹、ACTF 和多模态 SFT 中。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。
+图片通过 `files.inputs` 进入工作区，并由 `read` 生成图片附件。图片结果保留在原始轨迹、ACTF 和多模态 SFT 中。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。如需随首条用户消息发送输入图片，请在 [`files.attach_images`](../tasks/task-format.md) 中列出。该字段要求启用 `--opencode-vision`（默认启用）。
 
 ## 6. Session 与工作区
 

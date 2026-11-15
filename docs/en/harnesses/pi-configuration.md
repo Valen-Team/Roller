@@ -82,7 +82,7 @@ The same settings apply when Pi is the Task Agent or User Simulator. After chang
 
 Pi enables seven native tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, and `ls`. Vision-capable models and OpenAI-compatible services can open local images through `read`. Image results are preserved in the native trace, ACTF, and multimodal SFT.
 
-Images enter the workspace through `files.inputs`. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. Text-only models can still process text and ordinary files, but they cannot complete tasks that require understanding image content. Video, other Pi provider protocols, and custom extensions or plugins are not currently supported.
+Images enter the workspace through `files.inputs`. Task `messages[].content` currently accepts strings only and cannot contain image blocks directly. To send an input image with the first user message, list it in [`files.attach_images`](../tasks/task-format.md). It requires `--pi-input-modalities text,image`, the default. Text-only models can still process text and ordinary files, but they cannot complete tasks that require understanding image content. Video, other Pi provider protocols, and custom extensions or plugins are not currently supported.
 
 ## 6. Sessions and workspace
 
