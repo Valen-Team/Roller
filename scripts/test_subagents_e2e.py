@@ -83,6 +83,13 @@ def audit(run: Path, expected_children: int, case: str, harness="claude-code"):
     root_sft = 'available'
     if (sample/'trace_SFT.json').is_file():
         sft=json.loads((sample/'trace_SFT.json').read_text())
+    elif any((sample/'sft_segments').glob('*.json')):
+        # No linear SFT: the sample is exported as one record per captured root Call.
+        trajectory = json.loads((sample/'trace_ACTF.json').read_text())
+        root_sft = 'segmented'
+        sft = {'messages': [message for step in trajectory['steps'] for message in (
+            {'role': 'assistant', **step['assistant_content']},
+            *({'role': 'tool', 'content': item.get('content')} for item in step.get('observation') or []))]}
     else:
         conversion = info['runtime'].get('trajectory_conversion') or {}
         assert harness == 'codex' and 'tool_search_output' in conversion.get('error', ''), conversion
@@ -103,7 +110,9 @@ def audit(run: Path, expected_children: int, case: str, harness="claude-code"):
     assert sum(r['type']=='child_completed' for r in relations)==expected_children
     assert len({r['child_participant_id'] for r in relations if r['type']=='result_in_context'})==expected_children
     if case=='workspace':
-        assert (sample/'results/child.txt').read_text()=='WORKSPACE_CHILD\n'
+        written = (sample/'results/child.txt').read_text()
+        # Models differ on the trailing newline; the child's content is what matters.
+        assert written.rstrip('\n')=='WORKSPACE_CHILD', f'child.txt contains {written!r}'
     if case in {'parallel','identical'}:
         spawns=[c for c in calls if c['output'] and len(tool_call_ids(c['protocol'],c['output']))==2]
         if harness in {'claude-code', 'opencode'}:

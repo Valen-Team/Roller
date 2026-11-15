@@ -344,6 +344,11 @@ def _cache_trace_system_prompts(path: Path) -> list[str]:
 
 def _provider_message_ids(message: dict[str, Any]) -> set[str]:
     ids: set[str] = set()
+    # Chat Completions responses carry their id on the message; Responses
+    # items also carry one per block signature.
+    response_id = message.get("responseId")
+    if isinstance(response_id, str) and response_id:
+        ids.add(response_id)
     content = message.get("content", [])
     for block in content if isinstance(content, list) else []:
         if not isinstance(block, dict):
