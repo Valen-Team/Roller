@@ -106,4 +106,5 @@ benches/wildclawbench
 benches/skillsbench
 benches/pinchbench
 benches/qwenclawbench
+benches/swebench-pro
 ~~~

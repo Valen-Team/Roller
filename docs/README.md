@@ -71,6 +71,7 @@ python -m http.server -d _build/html 8000
 | 运行 SkillsBench 的 with-skill / no-skill 对照 | [SkillsBench](zh/benches/skillsbench.md) |
 | 运行 PinchBench（自动、混合与 LLM judge） | [PinchBench](zh/benches/pinchbench.md) |
 | 运行 QwenClawBench（本地 Qwen、judge API、每题重复运行） | [QwenClawBench](zh/benches/qwenclawbench.md) |
+| 运行 SWE-Bench Pro（官方实例镜像、隐藏测试、resolved 评分） | [SWE-Bench Pro](zh/benches/swebench-pro.md) |
 | 接入一个新 bench | [Bench 接入与评分](zh/benches/bench-format.md#6-加一个新-bench) |
 | 理解 `score.json` 与聚合口径 | [Bench 接入与评分](zh/benches/bench-format.md#5-聚合口径) |
 | 确保答案不泄漏给 Agent | [Bench 接入与评分](zh/benches/bench-format.md#4-stage答案不能放在-agent-的工作目录里) |

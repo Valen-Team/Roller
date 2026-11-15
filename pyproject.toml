@@ -22,6 +22,7 @@ dependencies = ["PyYAML>=6.0,<7"]
 
 [project.optional-dependencies]
 test = ["pytest", "tomli; python_version < '3.11'"]
+swebench-pro = ["pyarrow>=14"]
 
 [project.urls]
 Homepage = "https://github.com/Valen-Team/Roller"

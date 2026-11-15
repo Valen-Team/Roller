@@ -254,6 +254,7 @@ grader 所需的环境变量须通过 `--pass-env` 透传（所需变量由 benc
 | `skillsbench` | `opencode` | [SkillsBench](skillsbench.md) | 按 task 构建环境；支持 `with-skill` / `no-skill` 对照和官方 verifier |
 | `pinchbench` | `openclaw` | [PinchBench](pinchbench.md) | 从 manifest 导出，支持自动、LLM judge、hybrid 与多 session |
 | `qwenclawbench` | `openclaw` | [QwenClawBench](qwenclawbench.md) | 8 个领域的 100 个任务；支持 automated/hybrid、惩罚式评分和每题重复运行 |
+| `swebench-pro` | `openclaw` | [SWE-Bench Pro](swebench-pro.md) | 11 个仓库的 731 个软件工程任务；使用官方实例镜像、隐藏测试和 resolved 评分 |
 
 运行前请核对对应 README 中的参数映射和未支持项。配置缺失不一定触发错误，
 却可能改变评测条件，使分数无法直接比较。

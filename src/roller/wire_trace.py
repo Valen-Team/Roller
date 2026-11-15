@@ -609,7 +609,15 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             return line
         return b"data: " + normalized + newline
 
-    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _handle
+    def _dispatch(self) -> None:
+        try:
+            self._handle()
+        except (BrokenPipeError, ConnectionResetError):
+            # The agent closed the connection, typically when its turn timed
+            # out; _handle has already recorded the incomplete response.
+            self.close_connection = True
+
+    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _dispatch
 
 
 class WireTraceProxy:
