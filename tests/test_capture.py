@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import shutil
 import tempfile
 import unittest
@@ -16,13 +16,13 @@ from roller.capture import (
     validate_capture,
 )
 from roller.claude_capture import finalize_claude_capture
-from roller.model_protocols import anthropic_response
 from roller.claude_code_actf import claude_code_events_to_actf
-from roller.sft import SFTConversionError, actf_to_sft
-from roller.storage import write_jsonl
 from roller.collector import CollectionConfig, Collector
 from roller.harnesses.base import Harness
+from roller.model_protocols import anthropic_response
 from roller.models import HarnessResult, RunRequest, Task
+from roller.sft import SFTConversionError, actf_to_sft
+from roller.storage import write_jsonl
 
 
 def message(mid, content, stop="end_turn"):
@@ -570,7 +570,10 @@ class CaptureTests(unittest.TestCase):
                 "model",
                 30,
             )
-            factory = lambda slot: RecordedHarness()
+
+            def factory(slot):
+                return RecordedHarness()
+
             results = Collector(CollectionConfig(run_dir=run), factory).collect(
                 [request]
             )

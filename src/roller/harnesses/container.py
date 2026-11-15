@@ -7,8 +7,9 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from roller.artifacts import ArtifactCollectionResult, collect_output_directory
 from roller.harnesses.docker import DockerRuntime, warn_if_image_changed

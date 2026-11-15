@@ -6,19 +6,20 @@ The v1 on-disk schemas remain compatible with the original Claude capture.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import gzip
 import hashlib
 import json
 import shutil
-import gzip
 import zlib
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from roller.capture import (
-    read_jsonl,
     _safe_file,
     apply_capture_retention,
+    read_jsonl,
     recover_capture_retention,
 )
 from roller.capture_states import (

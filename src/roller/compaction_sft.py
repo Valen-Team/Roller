@@ -10,15 +10,18 @@ Captured Calls establish the actual prompt and response for export.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from roller.actf import OPENCLAW_ANNOUNCEMENT_SFT_REASON
 from roller.capture import _safe_file, read_jsonl
 from roller.claude_code_actf import (
     CLAUDE_COMPACTION_SFT_REASON,
+)
+from roller.claude_code_actf import (
     _read_events as read_claude_events,
 )
 from roller.harness_registry import compaction_mode

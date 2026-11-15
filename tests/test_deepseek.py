@@ -1,23 +1,23 @@
 from __future__ import annotations
 
 import contextlib
-from copy import deepcopy
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from roller.cli import _build_parser, _collect
-from roller.harnesses.deepseek import DeepSeekConfig, DeepSeekHarness, RUNNER_PATH
 from roller.deepseek_actf import (
     convert_deepseek_trace,
-    extract_deepseek_usage,
     deepseek_events_to_actf,
+    extract_deepseek_usage,
 )
+from roller.harnesses.deepseek import RUNNER_PATH, DeepSeekConfig, DeepSeekHarness
 from roller.models import RunRequest, Task
 from roller.sft import actf_to_sft
 

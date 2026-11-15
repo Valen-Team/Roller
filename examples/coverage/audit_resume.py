@@ -4,22 +4,23 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
-from dataclasses import replace
 import io
 import json
 import logging
-from pathlib import Path
 import sys
 import tempfile
+from collections import Counter
+from dataclasses import replace
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parents[1] / "src"))
+from suite import trace_requirements
+
 from roller.bundles import TaskBundleStore
 from roller.collector import CollectionConfig, Collector
 from roller.models import RunRequest
 from roller.tasks import load_tasks
-from suite import trace_requirements
 
 
 def forbidden_factory(*args):

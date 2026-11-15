@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import re
 import tempfile
-from typing import Iterable
+from collections.abc import Iterable
+from pathlib import Path
 
 REDACTED = "[REDACTED]"
 

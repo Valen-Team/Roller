@@ -12,7 +12,6 @@ from roller.codex_actf import (
 from roller.sft import SFTConversionError, actf_to_sft
 from roller.usage import extract_codex_usage
 
-
 _TOOLS = [
     {
         "type": "function",

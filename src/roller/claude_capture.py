@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
-import xml.etree.ElementTree as ET
-import re
 
-from roller.capture import read_jsonl, native_directory
+from roller.capture import native_directory, read_jsonl
 from roller.capture_protocol import NativeCapture, finalize_native_capture
 
 

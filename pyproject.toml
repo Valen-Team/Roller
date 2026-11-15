@@ -79,11 +79,19 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-# Pyflakes: unused imports and names, undefined names.
-select = ["F"]
+# pycodestyle, pyflakes, import order, pyupgrade and bugbear.
+select = ["E", "W", "F", "I", "UP", "B"]
+ignore = [
+  "E501",  # Line length is the formatter's job; long strings stay as written.
+  "B905",  # zip() without strict= is used where truncation is intended.
+]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Package facades re-export names.
+"tests/*" = ["B023"]  # Helpers defined in a loop are called within the same iteration.
+# Stand-alone scripts put the repository on sys.path before importing roller.
+"scripts/*" = ["E402"]
+"examples/coverage/*" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

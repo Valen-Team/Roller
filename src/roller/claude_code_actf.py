@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from roller.actf import append_user_content, user_content
 from roller.storage import atomic_write_json

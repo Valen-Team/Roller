@@ -1,24 +1,24 @@
 from __future__ import annotations
 
-import json
-import shutil
 import contextlib
 import hashlib
 import io
+import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from test_gateway_ports import isolate_gateway_ports
+
 from roller.actf import convert_openclaw_trace
 from roller.cli import _build_parser, _collect
 from roller.collector import CollectionConfig, Collector
 from roller.conversation import ConversationManager
-from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
 from roller.harness_registry import HARNESS_NAMES as HARNESSES
+from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
 from roller.models import HarnessResult, RunRequest, Task, UserSimulatorSpec
-
-from test_gateway_ports import isolate_gateway_ports
 
 
 class RecordingSession(InteractiveSession):

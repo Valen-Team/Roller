@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from roller.actf import openclaw_events_to_actf, convert_openclaw_trace
+from roller.actf import convert_openclaw_trace, openclaw_events_to_actf
 from roller.sft import actf_to_sft
 
 

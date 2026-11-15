@@ -7,14 +7,14 @@ across Roller turns. The host owns the hard deadline and container cleanup.
 from __future__ import annotations
 
 import argparse
-from importlib.metadata import version
 import json
 import os
-from pathlib import Path
 import socket
 import subprocess
 import sys
 import time
+from importlib.metadata import version
+from pathlib import Path
 
 VERSION = "0.1.5rc1"
 STATE = Path("/roller/deepseek-state")
@@ -177,7 +177,7 @@ def send(config):
                 break
             except (FileNotFoundError, ConnectionRefusedError):
                 if time.monotonic() >= deadline:
-                    raise TimeoutError("DeepSeek runtime startup timed out")
+                    raise TimeoutError("DeepSeek runtime startup timed out") from None
                 time.sleep(0.05)
         client.settimeout(max(0.001, deadline - time.monotonic()))
         client.sendall((json.dumps(config) + "\n").encode())

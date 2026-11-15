@@ -1,8 +1,8 @@
 """Shared lifecycle for call capture in disposable harness sessions."""
 
-from pathlib import Path
-from typing import Callable
 import shutil
+from collections.abc import Callable
+from pathlib import Path
 
 from roller.capture import CallRecorder
 from roller.capture_states import CaptureStatus

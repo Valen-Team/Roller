@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import json
-from pathlib import Path
 import tempfile
+from collections import Counter
+from pathlib import Path
 
 from suite import ROOT, absolute_sources, check
+
 from roller.bundles import TaskBundleStore
 from roller.tasks import build_requests, load_tasks
 

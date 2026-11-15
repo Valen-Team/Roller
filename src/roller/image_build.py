@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Iterable, Mapping
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 from roller.models import ContainerImageBuild, RunRequest
@@ -31,7 +31,7 @@ COPY --from=roller_harness /opt/roller-opencode-deps /opt/roller-opencode-deps
 _OVERLAYS = {"opencode": _OPENCODE_OVERLAY}
 
 
-@lru_cache(maxsize=None)
+@cache
 def _build_command_prefix(binary: str) -> list[str]:
     """Return a build prefix compatible with Docker and rootless Podman.
 

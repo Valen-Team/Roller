@@ -15,10 +15,10 @@ from jsonschema import Draft202012Validator
 
 from roller.benches import BENCHES
 from roller.benches.run_config import load_bench_run_plan
-from roller.harness_registry import HARNESS_NAMES
 from roller.bundles import TaskBundleStore
-from roller.tasks import load_tasks
+from roller.harness_registry import HARNESS_NAMES
 from roller.harnesses.openclaw import load_model_config
+from roller.tasks import load_tasks
 
 
 class ExampleFilesTests(unittest.TestCase):

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
-from roller.models import RunRequest, Task, TaskBundle
 from roller.harness_registry import HARNESS_NAMES
+from roller.models import RunRequest, Task, TaskBundle
 from roller.run_lock import (
     LEGACY_MIGRATION_FILENAME,
     build_run_lock,

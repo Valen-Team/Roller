@@ -18,10 +18,10 @@ from roller.benches.grading import GradedHarness, GradeOutcome
 from roller.benches.swebench_pro import (
     _DERIVED_IMAGES,
     _GRADER_SOURCE,
-    _image_id,
-    _test_fixture_patch,
     SWEBenchProAdapter,
     SWEBenchProGradedHarness,
+    _image_id,
+    _test_fixture_patch,
     ensure_harness_image,
 )
 from roller.cli import main

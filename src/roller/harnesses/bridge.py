@@ -8,17 +8,18 @@ side of that contract; subclasses declare what differs per Harness.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import logging
 import os
-from pathlib import Path
 import shlex
 import subprocess
 import time
-from typing import Any, ClassVar, Sequence
-from urllib.parse import urlsplit
 import uuid
+from collections.abc import Sequence
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from roller.capture_runtime import CaptureRuntime
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
@@ -64,7 +65,7 @@ def validate_bridge_config(config: Any, label: str) -> None:
     if config.api_base:
         try:
             parsed = urlsplit(config.api_base)
-            parsed.port
+            parsed.port  # noqa: B018 - reading it raises for an invalid port
             valid = (
                 parsed.scheme in {"http", "https"}
                 and parsed.hostname

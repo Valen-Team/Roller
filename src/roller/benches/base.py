@@ -75,7 +75,7 @@ class GradeSpec:
         return payload
 
     @classmethod
-    def from_dict(cls, payload: Any, label: str = "bench.grade") -> "GradeSpec":
+    def from_dict(cls, payload: Any, label: str = "bench.grade") -> GradeSpec:
         if not isinstance(payload, dict):
             raise BenchFormatError(f"{label}: must be an object")
         code = payload.get("code")
@@ -203,7 +203,7 @@ class BenchBinding:
         return payload
 
     @classmethod
-    def from_dict(cls, payload: Any, label: str = "bench") -> "BenchBinding":
+    def from_dict(cls, payload: Any, label: str = "bench") -> BenchBinding:
         if not isinstance(payload, dict):
             raise BenchFormatError(f"{label}: must be an object")
         schema_version = payload.get("schema_version", BENCH_SCHEMA)

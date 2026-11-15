@@ -9,6 +9,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from test_gateway_ports import isolate_gateway_ports
+
+from roller.bundles import TaskBundleStore
 from roller.cli import (
     _build_parser,
     _collect,
@@ -17,13 +20,10 @@ from roller.cli import (
     _jsonl_equivalent,
     _validate_thinking_requests,
 )
-from roller.bundles import TaskBundleStore
-from roller.tasks import load_tasks
-from roller.models import RunRequest, Task, UserSimulatorSpec
-from roller.thinking_capabilities import ThinkingCapabilities, ThinkingCapability
 from roller.harnesses.codex import codex_effort
-
-from test_gateway_ports import isolate_gateway_ports
+from roller.models import RunRequest, Task, UserSimulatorSpec
+from roller.tasks import load_tasks
+from roller.thinking_capabilities import ThinkingCapabilities, ThinkingCapability
 
 
 class CliTests(unittest.TestCase):

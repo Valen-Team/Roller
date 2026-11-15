@@ -9,7 +9,7 @@ would edit them, both behind the matching Roller flag's back.
 from __future__ import annotations
 
 import re
-from typing import Iterable, Mapping
+from collections.abc import Iterable, Mapping
 
 from roller.wire_trace import redact_sensitive_values
 

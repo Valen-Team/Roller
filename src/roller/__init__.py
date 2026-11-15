@@ -1,6 +1,5 @@
 """Roller: batch collection of agentic trajectories."""
 
-from roller.version import __version__
 from roller.bundles import BundlePolicy, TaskBundleStore
 from roller.collector import CollectionConfig, Collector
 from roller.conversation import ConversationManager
@@ -13,7 +12,7 @@ from roller.models import (
     TaskBundle,
     UserSimulatorSpec,
 )
-
+from roller.version import __version__
 
 __all__ = [
     "BundlePolicy",

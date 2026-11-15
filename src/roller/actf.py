@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from roller.openclaw_delivery import OpenClawDeliveryTracker
 from roller.openclaw_usage import OpenClawUsage

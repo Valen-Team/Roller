@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
-import io
 import gzip
+import io
+import json
 import tempfile
 import threading
 import unittest
@@ -12,21 +12,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
-from urllib.request import Request, build_opener, ProxyHandler
+from urllib.request import ProxyHandler, Request, build_opener
 
+from roller.capture import CallRecorder, read_jsonl
 from roller.wire_trace import (
     ERROR_INSPECTION_LIMIT,
     REDACTED_VALUE,
-    _ProxyHandler,
     WireTraceProxy,
+    _ProxyHandler,
     extract_wire_image_requests,
     extract_wire_tools,
+    normalize_chat_completion_reasoning_response,
     redact_jsonl_file,
     redact_sensitive_values,
-    normalize_chat_completion_reasoning_response,
     strip_thinking_from_body,
 )
-from roller.capture import CallRecorder, read_jsonl
 
 
 class FullCallCaptureTests(unittest.TestCase):

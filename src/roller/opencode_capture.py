@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from roller.capture import read_jsonl, native_directory
+from roller.capture import native_directory, read_jsonl
 from roller.capture_protocol import NativeCapture, finalize_native_capture
 from roller.opencode_actf import native_messages
 

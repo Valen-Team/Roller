@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 SCORE_FILE = "score.json"
 REPORT_SCHEMA = "roller.bench_report/v1"

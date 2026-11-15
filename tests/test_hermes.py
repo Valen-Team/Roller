@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import contextlib
-from copy import deepcopy
 import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import Mock, patch
+
+from test_gateway_ports import isolate_gateway_ports
 
 from roller.cli import _build_parser, _collect
 from roller.collector import CollectionConfig, Collector
-from roller.harnesses.hermes import HermesConfig, HermesHarness, RUNNER_PATH
+from roller.harnesses.hermes import RUNNER_PATH, HermesConfig, HermesHarness
 from roller.hermes_actf import (
     convert_hermes_trace,
     extract_hermes_usage,
@@ -23,9 +25,6 @@ from roller.hermes_actf import (
 from roller.models import HarnessResult, RunRequest, Task
 from roller.sft import actf_to_sft
 from roller.trajectory_audit import sft_exclusion_reason
-
-from test_gateway_ports import isolate_gateway_ports
-
 
 TOOL = {
     "type": "function",

@@ -9,11 +9,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
 import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 STATE = Path("/roller/pi-state")
 SOCKET = str(STATE / "runner.sock")
@@ -73,7 +73,7 @@ def send(config):
                 break
             except (FileNotFoundError, ConnectionRefusedError):
                 if time.monotonic() >= deadline:
-                    raise TimeoutError("Pi runtime startup timed out")
+                    raise TimeoutError("Pi runtime startup timed out") from None
                 time.sleep(0.05)
         client.settimeout(max(0.001, deadline - time.monotonic()))
         client.sendall((json.dumps(config) + "\n").encode())

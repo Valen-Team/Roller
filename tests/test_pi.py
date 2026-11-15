@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 import contextlib
-from copy import deepcopy
 import io
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from roller.cli import _build_parser, _collect
-from roller.harnesses.pi import PiConfig, PiHarness, RUNNER_PATH
-from roller.pi_actf import convert_pi_trace, extract_pi_usage, pi_events_to_actf
+from roller.harnesses.pi import RUNNER_PATH, PiConfig, PiHarness
 from roller.models import RunRequest, Task
+from roller.pi_actf import convert_pi_trace, extract_pi_usage, pi_events_to_actf
 from roller.sft import actf_to_sft
 
 TOOL = {

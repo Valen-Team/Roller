@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from roller.capture import read_jsonl, native_directory
+from roller.capture import native_directory, read_jsonl
 from roller.capture_protocol import NativeCapture
 
 

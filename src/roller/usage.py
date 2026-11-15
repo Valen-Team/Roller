@@ -7,7 +7,6 @@ from typing import Any
 from roller.openclaw_delivery import OpenClawDeliveryTracker
 from roller.openclaw_usage import OpenClawUsage
 
-
 ZERO_USAGE: dict[str, int | float] = {
     "input_tokens": 0,
     "output_tokens": 0,

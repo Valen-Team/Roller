@@ -5,10 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from roller.thinking import THINKING_LEVELS
 from roller.harness_registry import HARNESS_NAMES
 from roller.harnesses.claude_code import normalize_anthropic_base_url
-
+from roller.thinking import THINKING_LEVELS
 
 SCHEMA_VERSION = "roller.thinking-capabilities/v1"
 PROFILE_HARNESSES = frozenset(HARNESS_NAMES)

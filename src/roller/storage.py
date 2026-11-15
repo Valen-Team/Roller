@@ -5,8 +5,9 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 
 def safe_component(value: str, max_length: int = 80) -> str:

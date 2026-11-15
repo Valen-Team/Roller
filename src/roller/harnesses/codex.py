@@ -8,14 +8,14 @@ import shutil
 import subprocess
 import time
 import uuid
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
-from roller.capture_runtime import CaptureRuntime
 from roller.artifacts import ArtifactCollectionResult
+from roller.capture_runtime import CaptureRuntime
 from roller.codex_actf import convert_codex_trace
 from roller.codex_capture import retain_root_tools
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
@@ -26,14 +26,18 @@ from roller.harnesses.config_overrides import (
 )
 from roller.harnesses.container import (
     CONTEXT_CONTAINER_PATH,
-    ENV_NAME as ENV_NAME_RE,
     INPUTS_CONTAINER_PATH,
     OUTPUTS_CONTAINER_PATH,
-    PROXY_ENV_NAMES as COMMON_ENV_NAMES,
     ContainerCommands,
     build_provenance,
     docker_run_args,
     output_collection_metadata,
+)
+from roller.harnesses.container import (
+    ENV_NAME as ENV_NAME_RE,
+)
+from roller.harnesses.container import (
+    PROXY_ENV_NAMES as COMMON_ENV_NAMES,
 )
 from roller.harnesses.docker import DockerRuntime, remove_container
 from roller.models import HarnessResult, RunRequest
@@ -172,7 +176,7 @@ class CodexConfig:
         if self.api_base:
             try:
                 parsed = urlsplit(self.api_base)
-                parsed.port
+                parsed.port  # noqa: B018 - reading it raises for an invalid port
             except ValueError as exc:
                 raise ValueError(
                     "Codex API base must be an absolute http(s) URL"

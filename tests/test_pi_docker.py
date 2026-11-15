@@ -10,16 +10,16 @@ that optional test additionally requires the configured DeepSeek image.
 from __future__ import annotations
 
 import contextlib
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 import os
-from pathlib import Path
 import re
 import shlex
 import tempfile
 import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch
 
 from roller.cli import _build_parser, _collect
@@ -81,6 +81,7 @@ class PiDockerTests(unittest.TestCase):
 
     def _two_image_export_and_resume(self, modalities):
         import base64
+
         from roller.sft import actf_to_sft
         from roller.viewer import RollerRun
         from roller.viewer.app import _rollout_id

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Iterable
 from copy import deepcopy
 from datetime import datetime, timezone
-import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from roller.actf import openclaw_events_to_actf
 from roller.storage import atomic_write_json

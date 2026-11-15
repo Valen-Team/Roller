@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import io
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from roller.codex_actf import codex_events_to_actf, convert_codex_trace
@@ -14,7 +14,6 @@ from roller.collector import Collector
 from roller.harnesses.codex import CodexConfig, CodexHarness
 from roller.sft import SFTConversionError, actf_to_sft
 from roller.wire_trace import WireTraceProxy, _ProxyHandler
-
 
 TOOLS = [
     {

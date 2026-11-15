@@ -11,11 +11,11 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
-from roller.collector import CollectionConfig, Collector, check_retired_cot_samples
 from roller.benches import (
     binding_from_task_row,
     format_report,
@@ -25,52 +25,16 @@ from roller.benches import (
 )
 from roller.benches.grading import GradedHarness
 from roller.bundles import BundlePolicy, TaskBundleStore
-from roller.models import TaskBundle
+from roller.collector import CollectionConfig, Collector, check_retired_cot_samples
 from roller.conversation import ConversationManager
-from roller.image_build import prepare_task_images
+from roller.harness_registry import HARNESS_NAMES, HARNESSES
 from roller.harnesses.claude_code import (
-    DEFAULT_CLAUDE_CODE_IMAGE,
     CLAUDE_PERMISSION_MODES,
+    DEFAULT_CLAUDE_CODE_IMAGE,
     ClaudeCodeConfig,
     ClaudeCodeHarness,
     claude_effort,
     redact_anthropic_base_url,
-)
-from roller.harness_registry import HARNESSES, HARNESS_NAMES
-from roller.harnesses.config_overrides import (
-    parse_config_assignment,
-    recorded_config_assignments,
-)
-from roller.harnesses.container import PROXY_ENV_NAMES
-from roller.harnesses.deepseek import (
-    DEFAULT_DEEPSEEK_IMAGE,
-    DEEPSEEK_PERMISSION_MODES,
-    DEEPSEEK_VERSION,
-    DeepSeekConfig,
-    DeepSeekHarness,
-    deepseek_effort,
-)
-from roller.harnesses.pi import (
-    DEFAULT_PI_IMAGE,
-    PI_VERSION,
-    PI_TOOLS,
-    PiConfig,
-    PiHarness,
-    pi_effort,
-)
-from roller.harnesses.opencode import (
-    DEFAULT_OPENCODE_IMAGE,
-    OPENCODE_VERSION,
-    OpenCodeConfig,
-    OpenCodeHarness,
-    opencode_effort,
-)
-from roller.harnesses.hermes import (
-    DEFAULT_HERMES_IMAGE,
-    HERMES_REVISION,
-    HermesConfig,
-    HermesHarness,
-    hermes_effort,
 )
 from roller.harnesses.codex import (
     DEFAULT_CODEX_IMAGE,
@@ -79,18 +43,57 @@ from roller.harnesses.codex import (
     codex_effort,
     redact_api_base,
 )
+from roller.harnesses.config_overrides import (
+    parse_config_assignment,
+    recorded_config_assignments,
+)
+from roller.harnesses.container import PROXY_ENV_NAMES
+from roller.harnesses.deepseek import (
+    DEEPSEEK_PERMISSION_MODES,
+    DEEPSEEK_VERSION,
+    DEFAULT_DEEPSEEK_IMAGE,
+    DeepSeekConfig,
+    DeepSeekHarness,
+    deepseek_effort,
+)
 from roller.harnesses.gateway_ports import (
     DEFAULT_GATEWAY_PORT,
     GatewayPortReservation,
     reserve_gateway_ports,
 )
+from roller.harnesses.hermes import (
+    DEFAULT_HERMES_IMAGE,
+    HERMES_REVISION,
+    HermesConfig,
+    HermesHarness,
+    hermes_effort,
+)
 from roller.harnesses.openclaw import (
     COMMON_ENV_NAMES as OPENCLAW_COMMON_ENV_NAMES,
+)
+from roller.harnesses.openclaw import (
     DEFAULT_OPENCLAW_IMAGE,
     OpenClawConfig,
     OpenClawHarness,
     load_model_config,
 )
+from roller.harnesses.opencode import (
+    DEFAULT_OPENCODE_IMAGE,
+    OPENCODE_VERSION,
+    OpenCodeConfig,
+    OpenCodeHarness,
+    opencode_effort,
+)
+from roller.harnesses.pi import (
+    DEFAULT_PI_IMAGE,
+    PI_TOOLS,
+    PI_VERSION,
+    PiConfig,
+    PiHarness,
+    pi_effort,
+)
+from roller.image_build import prepare_task_images
+from roller.models import TaskBundle
 from roller.run_lock import (
     RUN_LOCK_SCHEMA,
     build_run_lock,
@@ -100,11 +103,11 @@ from roller.run_lock import (
 from roller.storage import atomic_write_json, safe_component
 from roller.tasks import TaskFormatError, build_requests, load_tasks
 from roller.thinking import THINKING_LEVELS, normalize_thinking, resolve_thinking
-from roller.trajectory_audit import training_summary
 from roller.thinking_capabilities import (
     ThinkingCapabilities,
     load_thinking_capabilities,
 )
+from roller.trajectory_audit import training_summary
 from roller.version import __version__
 from roller.viewer import DEFAULT_PORT as VIEWER_DEFAULT_PORT
 from roller.viewer import serve as serve_viewer

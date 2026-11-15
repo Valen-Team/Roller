@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from roller.models import RunRequest
 from roller.harness_registry import HARNESS_NAMES
+from roller.models import RunRequest
 from roller.storage import atomic_write_json
 from roller.wire_trace import redact_sensitive_values
-
 
 RUN_LOCK_SCHEMA = "roller.run-lock/v1"
 LEGACY_MIGRATION_FILENAME = ".legacy-resume-untrusted.json"

@@ -2,17 +2,19 @@
 """Evaluate a real merged-matrix run without issuing model requests."""
 
 from __future__ import annotations
+
 import argparse
-from collections import Counter, defaultdict
 import json
-from pathlib import Path
 import re
 import sys
+from collections import Counter, defaultdict
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parents[1] / "src"))
 sys.path.insert(0, str(ROOT))
 from suite import normalize_output, trace_requirements
+
 from roller.integrity import validate_resumable_sample
 from roller.models import RunRequest
 from roller.tasks import load_tasks

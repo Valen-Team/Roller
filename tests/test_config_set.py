@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from test_gateway_ports import isolate_gateway_ports
+
 from roller.cli import _build_parser, _collect
 from roller.harnesses.config_overrides import (
     config_path,
@@ -17,8 +19,6 @@ from roller.harnesses.config_overrides import (
 )
 from roller.models import HarnessResult
 from roller.wire_trace import REDACTED_VALUE
-
-from test_gateway_ports import isolate_gateway_ports
 
 
 class ConfigAssignmentTests(unittest.TestCase):

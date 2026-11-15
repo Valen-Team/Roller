@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from roller.thinking import normalize_thinking
 
@@ -171,5 +172,5 @@ class HarnessResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def error_result(cls, error: str, elapsed_seconds: float = 0.0) -> "HarnessResult":
+    def error_result(cls, error: str, elapsed_seconds: float = 0.0) -> HarnessResult:
         return cls(status="error", elapsed_seconds=elapsed_seconds, error=error)
