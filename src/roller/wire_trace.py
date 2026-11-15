@@ -12,14 +12,20 @@ OpenAI-compatible HTTP layer, it works for harness versions that honour
 
 from __future__ import annotations
 
+import io
 import json
 import threading
 import time
+import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib import request as urllib_request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from roller.response_metadata import ResponseMetadata
+
+from roller.codex_tools import tool_snapshot
+from roller.capture import CallRecorder
 
 
 HOP_BY_HOP_HEADERS = {
@@ -49,6 +55,30 @@ REDACTED_VALUE = "<redacted>"
 
 THINKING_MESSAGE_KEYS = ("reasoning_content", "reasoning", "reasoning_text")
 THINKING_BLOCK_TYPES = ("thinking", "reasoning")
+
+ENCRYPTED_CONTENT_ERROR = "invalid_encrypted_content"
+ENCRYPTED_CONTENT_RETRY_DELAY_SECONDS = 0.5
+ERROR_INSPECTION_LIMIT = 64 * 1024
+
+
+def _is_encrypted_content_rejection(payload: bytes, content_encoding: str) -> bool:
+    """Inspect a bounded copy; keep the original response intact for forwarding."""
+    if len(payload) > ERROR_INSPECTION_LIMIT:
+        return False
+    encoding = content_encoding.strip().lower()
+    try:
+        if encoding in {"gzip", "deflate"}:
+            decoder = zlib.decompressobj(31 if encoding == "gzip" else 15)
+            payload = decoder.decompress(payload, ERROR_INSPECTION_LIMIT + 1)
+            if len(payload) > ERROR_INSPECTION_LIMIT or not decoder.eof or decoder.unused_data:
+                return False
+        elif encoding not in {"", "identity"}:
+            return False
+        body = json.loads(payload)
+    except (ValueError, UnicodeError, RecursionError, zlib.error):
+        return False
+    error = body.get("error") if isinstance(body, dict) else None
+    return isinstance(error, dict) and error.get("code") == ENCRYPTED_CONTENT_ERROR
 
 
 def normalize_chat_completion_reasoning_response(body: Any) -> Any:
@@ -204,10 +234,15 @@ class _ProxyHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - stdlib signature
         return
 
-    def _record(self, body: bytes | None) -> None:
+    def _record(self, body: bytes | None) -> int:
         proxy: WireTraceProxy = self.server.proxy  # type: ignore[attr-defined]
+        capture_responses_tools = (
+            proxy.responses_tools_path is not None
+            and self.command == "POST"
+            and urlsplit(self.path).path.rstrip("/").endswith("/responses")
+        )
         entry: dict[str, Any] = {
-            "seq": proxy.next_seq(),
+            "seq": proxy.next_seq(responses_request=capture_responses_tools),
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z",
             "kind": "request",
             "method": self.command,
@@ -230,8 +265,15 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 parsed = candidate if isinstance(candidate, dict) else None
             except (json.JSONDecodeError, UnicodeDecodeError):
                 parsed = None
+        if capture_responses_tools and parsed is None:
+            raise ValueError("Cannot capture tools from a non-object Responses request")
         if parsed is not None:
             entry["model"] = parsed.get("model")
+            if capture_responses_tools:
+                proxy.write_tools({
+                    "kind": "codex_tools", "seq": entry["seq"],
+                    "snapshot": tool_snapshot(parsed),
+                })
             if proxy.mode == "full":
                 entry["body"] = parsed
             else:
@@ -254,6 +296,15 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                         entry["tools"] = tools
                         entry["n_tools"] = len(tools)
         proxy.write(entry)
+        if (proxy.capture_recorder is not None and parsed is not None
+                and self.command == "POST"
+                and urlsplit(self.path).path.rstrip("/").endswith(("/messages", "/chat/completions", "/responses"))):
+            native_session = self.headers.get(proxy.capture_identity_header) if proxy.capture_identity_header else None
+            native_run = self.headers.get(proxy.capture_run_header) if proxy.capture_run_header else None
+            proxy.capture_recorder.begin(entry["seq"], proxy.forward_path(self.path), parsed,
+                native_identity={**({"session_id": native_session} if native_session else {}),
+                                 **({"run_id": native_run} if native_run else {})} or None)
+        return entry["seq"]
 
     def _handle(self) -> None:
         proxy: WireTraceProxy = self.server.proxy  # type: ignore[attr-defined]
@@ -265,10 +316,14 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 body = json.dumps(parsed, ensure_ascii=False).encode("utf-8")
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
+        request_seq = None
         try:
-            self._record(body)
-        except Exception:
-            pass
+            request_seq = self._record(body)
+        except Exception as exc:
+            if proxy.responses_tools_path is not None:
+                proxy.recording_error = str(exc)
+            if proxy.capture_recorder is not None:
+                proxy.capture_recorder.error = str(exc)
         self.close_connection = True
         url = proxy.upstream_origin + proxy.forward_path(self.path)
         outgoing = urllib_request.Request(url, data=body, method=self.command)
@@ -281,10 +336,11 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             ):
                 outgoing.add_header(key, value)
         try:
-            response = urllib_request.urlopen(outgoing, timeout=proxy.timeout_seconds)
-        except urllib_request.HTTPError as exc:  # 4xx/5xx still carry a body
-            response = exc
+            response = proxy.open_upstream(outgoing, request_seq)
         except Exception as exc:
+            if proxy.capture_recorder is not None and request_seq in proxy.capture_recorder.request_seqs:
+                proxy.capture_recorder.finish(request_seq, status=None, content_type="",
+                    content_encoding="", complete=False, error=f"upstream transport error: {type(exc).__name__}")
             payload = json.dumps({"error": str(exc)}).encode("utf-8")
             self.send_response(502)
             self.send_header("Content-Type", "application/json")
@@ -303,38 +359,87 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         content_type = response.headers.get("Content-Type", "").lower()
         content_encoding = response.headers.get("Content-Encoding", "").lower()
+        observer = ResponseMetadata(content_type, content_encoding)
+        recorder = proxy.capture_recorder
+        captured = recorder is not None and request_seq in recorder.request_seqs
+        response_file = None
+        capture_error = None
+        complete = False
+        if captured:
+            try:
+                response_file = recorder.open_response(request_seq)
+            except Exception as exc:
+                capture_error = recorder.error = str(exc)
+
+        def observe(chunk: bytes) -> None:
+            nonlocal capture_error
+            observer.feed(chunk)
+            if response_file is not None:
+                try:
+                    recorder.append_response(response_file, chunk)
+                except Exception as exc:
+                    capture_error = recorder.error = str(exc)
+
+        def record_response() -> None:
+            # Diagnostics must never prevent delivery of the original response.
+            if isinstance(request_seq, int):
+                try:
+                    proxy.write({"kind": "response_metadata", "request_seq": request_seq,
+                                 "http_status": status, **observer.finish()})
+                except Exception:
+                    pass
         normalize_reasoning = (
             proxy.normalize_reasoning_replay
             and self.path.split("?", 1)[0].rstrip("/").endswith("/chat/completions")
             and content_encoding in ("", "identity")
         )
-        if normalize_reasoning and "text/event-stream" in content_type:
-            while True:
-                line = response.readline()
-                if not line:
-                    break
-                self.wfile.write(self._normalize_sse_reasoning_line(line))
+        try:
+            if normalize_reasoning and "text/event-stream" in content_type:
+                while True:
+                    line = response.readline()
+                    if not line:
+                        break
+                    observe(line)
+                    self.wfile.write(self._normalize_sse_reasoning_line(line))
+                    self.wfile.flush()
+            elif normalize_reasoning and "json" in content_type:
+                payload = response.read()
+                observe(payload)
+                try:
+                    payload = json.dumps(normalize_chat_completion_reasoning_response(
+                        json.loads(payload)), ensure_ascii=False).encode("utf-8")
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+                self.wfile.write(payload)
                 self.wfile.flush()
-            return
-        if normalize_reasoning and "json" in content_type:
-            payload = response.read()
-            try:
-                parsed = json.loads(payload)
-                payload = json.dumps(
-                    normalize_chat_completion_reasoning_response(parsed),
-                    ensure_ascii=False,
-                ).encode("utf-8")
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                pass
-            self.wfile.write(payload)
-            self.wfile.flush()
-            return
-        while True:
-            chunk = response.read(65536)
-            if not chunk:
-                break
-            self.wfile.write(chunk)
-            self.wfile.flush()
+            else:
+                while True:
+                    # read1 forwards available SSE bytes without waiting for a
+                    # 64 KiB buffer or the end of the upstream response.
+                    chunk = response.read1(65536) if captured and hasattr(response, "read1") else response.read(65536)
+                    if not chunk:
+                        break
+                    observe(chunk)
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+            complete = True
+        except Exception as exc:
+            capture_error = f"response forwarding interrupted: {type(exc).__name__}"
+            raise
+        finally:
+            if response_file is not None:
+                try:
+                    response_file.close()
+                except Exception as exc:
+                    capture_error = recorder.error = str(exc)
+            if captured:
+                recorder.finish(request_seq, status=status, content_type=content_type,
+                    content_encoding=content_encoding, complete=complete and not capture_error,
+                    error=capture_error)
+            record_response()
+            close_response = getattr(response, "close", None)
+            if callable(close_response):
+                close_response()
 
     @staticmethod
     def _normalize_sse_reasoning_line(line: bytes) -> bytes:
@@ -374,9 +479,16 @@ class WireTraceProxy:
 
         drop_query_parameters: Sequence[str] = (),
         drop_request_headers: Sequence[str] = (),
+        responses_tools_path: Path | None = None,
+        capture_recorder: CallRecorder | None = None,
+        capture_identity_header: str | None = None,
+        capture_run_header: str | None = None,
+        encrypted_content_retries: int = 0,
     ) -> None:
         if mode not in ("tools", "full"):
             raise ValueError(f"unknown wire trace mode: {mode}")
+        if encrypted_content_retries < 0:
+            raise ValueError("encrypted content retries must be non-negative")
         parts = urlsplit(upstream_base_url)
         if not parts.scheme or not parts.netloc:
             raise ValueError(f"upstream base URL must be absolute: {upstream_base_url}")
@@ -384,15 +496,27 @@ class WireTraceProxy:
         self.base_path = parts.path.rstrip("/")
         self.log_path = log_path
         self.mode = mode
+        self.responses_tools_path = responses_tools_path
+        self.capture_recorder = capture_recorder
+        self.capture_identity_header = capture_identity_header
+        self.capture_run_header = capture_run_header
+        self.recording_error: str | None = None
         self.strip_thinking = strip_thinking
         self.normalize_reasoning_replay = normalize_reasoning_replay
         self.drop_query_parameters = frozenset(drop_query_parameters)
         self.drop_request_headers = frozenset(
             name.strip().lower() for name in drop_request_headers if name.strip()
         )
+        if capture_identity_header and capture_identity_header.lower().startswith("x-roller-"):
+            self.drop_request_headers |= {capture_identity_header.lower()}
+        if capture_run_header and capture_run_header.lower().startswith("x-roller-"):
+            self.drop_request_headers |= {capture_run_header.lower()}
         self.timeout_seconds = timeout_seconds
+        self.encrypted_content_retries = encrypted_content_retries
         self._lock = threading.Lock()
+        self._stopping = threading.Event()
         self._seq = 0
+        self.responses_request_count = 0
         self.tool_schema_fingerprints: set[str] = set()
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -407,6 +531,9 @@ class WireTraceProxy:
         self._thread.start()
 
     def stop(self) -> None:
+        # Wake pending retries before closing the listener; daemon handlers can
+        # outlive the server and must not initiate another model request.
+        self._stopping.set()
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
@@ -447,10 +574,58 @@ class WireTraceProxy:
         )
         return urlunsplit(("", "", parts.path, query, ""))
 
-    def next_seq(self) -> int:
+    def open_upstream(
+        self, outgoing: urllib_request.Request, request_seq: int | None
+    ) -> Any:
+        """Open the upstream response, resending transient replay rejections.
+
+        Relayed Responses endpoints can intermittently fail to verify their own
+        ``reasoning.encrypted_content`` when Codex replays it. The 400 arrives
+        before generation starts, so the identical request is safe to resend.
+        """
+        retryable = (
+            outgoing.get_method() == "POST"
+            and urlsplit(outgoing.full_url).path.rstrip("/").endswith("/responses")
+        )
+        attempt = 0
+        while not self._stopping.is_set():
+            try:
+                return urllib_request.urlopen(outgoing, timeout=self.timeout_seconds)
+            except urllib_request.HTTPError as exc:  # 4xx/5xx still carry a body
+                if not retryable or exc.code != 400 or attempt >= self.encrypted_content_retries:
+                    return exc
+                payload = exc.read()
+                exc.close()
+                buffered = urllib_request.HTTPError(
+                    exc.filename, exc.code, exc.msg, exc.headers, io.BytesIO(payload)
+                )
+                if not _is_encrypted_content_rejection(
+                    payload, exc.headers.get("Content-Encoding", "")
+                ):
+                    return buffered
+                if self._stopping.wait(ENCRYPTED_CONTENT_RETRY_DELAY_SECONDS * (attempt + 1)):
+                    return buffered
+                buffered.close()
+            attempt += 1
+            try:
+                self.write({"kind": "upstream_retry", "request_seq": request_seq,
+                            "attempt": attempt, "http_status": 400,
+                            "reason": ENCRYPTED_CONTENT_ERROR})
+            except Exception:
+                pass
+        raise OSError("wire proxy stopped")
+
+    def next_seq(self, *, responses_request: bool = False) -> int:
         with self._lock:
             self._seq += 1
+            if responses_request:
+                self.responses_request_count += 1
             return self._seq
+
+    def write_tools(self, entry: Mapping[str, Any]) -> None:
+        assert self.responses_tools_path is not None
+        with self._lock, self.responses_tools_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def write(self, entry: Mapping[str, Any]) -> None:
         line = json.dumps(entry, ensure_ascii=False)

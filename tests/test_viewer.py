@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import socket
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from roller.cli import _build_parser
 from roller.viewer import RollerRun, make_server
+from roller.viewer import app as viewer_app
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -18,6 +21,21 @@ def write_json(path: Path, payload: object) -> None:
 
 
 class ViewerTests(unittest.TestCase):
+    def test_inline_image_blocks_preserve_order_and_reject_remote_sources(self):
+        from roller.viewer.app import _observation_view
+        content = [{"type": "text", "text": "before"},
+            {"type": "image", "data": "AA==", "mimeType": "image/png"},
+            {"type": "text", "text": "between"},
+            {"type": "image", "data": "AQ==", "mimeType": "image/jpeg"}]
+        blocks = _observation_view(content, 40000)["blocks"]
+        self.assertEqual([b["type"] for b in blocks], ["text", "image", "text", "image"])
+        self.assertEqual([b["url"] for b in blocks if b["type"] == "image"],
+            ["data:image/png;base64,AA==", "data:image/jpeg;base64,AQ=="])
+        for block in ({"type": "image", "data": "https://example.com/image.png"},
+                      {"type": "image", "data": "AA==", "mimeType": "image/svg+xml"},
+                      {"type": "image", "data": "not-base64", "mimeType": "image/png"}):
+            self.assertNotIn("blocks", _observation_view([block], 40000))
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "run"
@@ -256,7 +274,28 @@ class ViewerTests(unittest.TestCase):
         args = _build_parser().parse_args(["view", str(self.root)])
         self.assertEqual(args.command, "view")
         self.assertEqual(args.host, "127.0.0.1")
-        self.assertEqual(args.port, 8765)
+        self.assertIsNone(args.port)
+
+    def test_busy_default_port_falls_back_to_a_free_port(self) -> None:
+        with socket.socket() as blocker:
+            blocker.bind(("127.0.0.1", 0))
+            blocker.listen()
+            busy = blocker.getsockname()[1]
+            with mock.patch.object(viewer_app, "DEFAULT_PORT", busy):
+                server = make_server(self.root)
+            try:
+                self.assertNotEqual(server.server_address[1], busy)
+                self.assertGreater(server.server_address[1], 0)
+            finally:
+                server.server_close()
+
+    def test_busy_explicit_port_is_an_error(self) -> None:
+        with socket.socket() as blocker:
+            blocker.bind(("127.0.0.1", 0))
+            blocker.listen()
+            busy = blocker.getsockname()[1]
+            with self.assertRaisesRegex(RuntimeError, "another --port"):
+                make_server(self.root, port=busy)
 
 
 if __name__ == "__main__":

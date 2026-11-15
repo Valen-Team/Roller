@@ -1,15 +1,15 @@
 # CLI reference
 
-Use this page to look up Roller command-line flags. If this is your first run, complete [Getting started](getting-started.md) first. Return here when you need to change tasks, concurrency, output paths, or Harness behavior.
+This page lists the Roller command-line flags. Before the first run, complete [Getting started](getting-started.md). Return to this page to change tasks, concurrency, output paths, or Harness behavior.
 
-For a first pass, remember four things:
+On a first reading, note the following four points:
 
 - `--tasks` selects what Roller will run.
 - `--model` and `--harness` select the model and Agent runtime.
-- `--output` and `--run-name` decide where results are saved.
+- `--output` and `--run-name` determine where results are saved.
 - `--dry-run` checks the configuration without starting containers.
 
-The command output for the current checkout is always authoritative:
+The command output from the Roller version currently in use is always authoritative:
 
 ```bash
 roller --help
@@ -24,11 +24,12 @@ Choose the command for the job first, then add that command's flags.
 | Command | Purpose |
 | --- | --- |
 | `roller collect [OPTIONS]` | Reads tasks, runs a Harness, and collects trajectories |
+| `roller init [DIRECTORY]` | Writes the example tasks and configuration templates to `DIRECTORY/examples` (default: the current directory); existing files are kept |
 | `roller view RUN_DIR` | Opens an existing run in the Viewer |
-| `roller bench ...` | Runs, lists, exports, or summarizes benchmarks, with options in section 8 |
+| `roller bench ...` | Lists, exports, or summarizes benchmarks, with collection flags in section 8 |
 | `roller --version` | Shows the installed Roller version |
 
-The smallest collect command needs a task list. Set the model with `--model` or in each task's `model` field.
+A minimal collect command requires a task list. Set the model with `--model` or in each task's `model` field.
 
 ```bash
 roller collect --tasks tasks.jsonl --model provider/model
@@ -40,20 +41,20 @@ The same setting can appear in both a task and the command line. Roller uses the
 
 | Setting | Final value |
 | --- | --- |
-| Model | Command-line `--model` values win when present, otherwise use each task's `model` |
-| Thinking | task `runtime.thinking` wins, followed by `--thinking`, then the Harness or model default |
-| Workspace | task `workspace` wins, otherwise use the global `--workspace` |
-| User Simulator model | `user_simulator.model` wins, otherwise follow the current task Agent model |
+| Model | Command-line `--model` values take precedence when present, otherwise each task's `model` is used |
+| Thinking | task `runtime.thinking` takes precedence, followed by `--thinking`, then the Harness or model default |
+| Workspace | task `workspace` takes precedence, otherwise the global `--workspace` is used |
+| User Simulator model | `user_simulator.model` takes precedence, otherwise the current task Agent model is used |
 
-Roller removes duplicate `--model` values. When you specify multiple models, every selected task runs once for each model. `--start-index` and `--limit` select tasks before Roller expands those model combinations.
+Roller removes duplicate `--model` values. When multiple models are specified, every selected task runs once for each model. `--start-index` and `--limit` select tasks before Roller expands those model combinations.
 
 ## 3. Shared collection flags
 
-These flags decide which tasks to run, how many runs to create, and where to save the results. They work with every Harness.
+These flags determine which tasks run, how many runs are created, and where the results are saved. They apply to every Harness.
 
-### Inputs and runtime selection
+### 3.1 Inputs and runtime selection
 
-These flags tell Roller where to read tasks and which model and Harness should execute them.
+These flags specify where Roller reads tasks and which model and Harness execute them.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
@@ -62,13 +63,14 @@ These flags tell Roller where to read tasks and which model and Harness should e
 | `--model-label LABEL` | Actual service model ID | Sets a safe local name for sample directories and containers without changing the upstream model ID, only for runs with one final model |
 | `--harness NAME` | task `harness` or `openclaw` | Selects `openclaw`, `codex`, `claude-code`, `hermes`, `opencode`, `deepseek`, or `pi` |
 
-### Execution scale and task range
+### 3.2 Execution scale and task range
 
 These flags control concurrency, repetitions, retries, and which part of the task list runs.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `--parallel N` | `1` | Sets the maximum number of concurrent rollouts |
+| `--launch-interval SECONDS` | `0` | Sets the minimum gap between two rollout launches, see below |
 | `--grader-parallel N` | `--parallel` | Limits concurrent graders separately to avoid overloading a judge service |
 | `--samples N` | `3` for SkillsBench, otherwise `1` | Creates N independent samples for each task/model pair |
 | `--retries N` | `0` | Sets additional attempts after the first failure |
@@ -77,7 +79,18 @@ These flags control concurrency, repetitions, retries, and which part of the tas
 | `--start-index N` | `0` | Starts at task N in the normalized task list |
 | `--limit N` | Unlimited | Selects at most N tasks |
 
-### Output, validation, and continuation
+By default, a run starts `--parallel` rollouts at once. Start-up requires much more memory than steady-state operation (roughly twice as much for an OpenClaw container); therefore the memory peaks of rollouts that start together add up. `--launch-interval` separates consecutive launches, including retries, by at least the specified number of seconds:
+
+```bash
+roller collect ... --parallel 24 --launch-interval 8
+```
+
+- The interval applies to the whole run, including launches after the first wave. N launches take at least (N − 1) × `--launch-interval` seconds. When rollouts are shorter than about `--parallel × --launch-interval`, fewer than `--parallel` rollouts run at once.
+- Samples skipped by `--resume` do not take a launch turn.
+- On interruption, rollouts still waiting for their launch turn are cancelled and leave no sample directory. Pending retries are also cancelled, regardless of the interval; the sample keeps its last failure, and `--resume` reruns it.
+- The value is recorded in `info.json` and not in `lock.json`; therefore it can be changed on `--resume`.
+
+### 3.3 Output, validation, and continuation
 
 These flags control the result directory and whether Roller validates, starts, or continues a run.
 
@@ -88,7 +101,7 @@ These flags control the result directory and whether Roller validates, starts, o
 | `--dry-run` | Off | Checks tasks, files, and the run plan without starting Docker |
 | `--resume` | Off | Continues the same run and skips complete successful samples, see section 6 |
 
-### Compatibility and debugging
+### 3.4 Compatibility and debugging
 
 These flags mainly support legacy data or logging. New task files usually do not need the first three.
 
@@ -99,7 +112,7 @@ These flags mainly support legacy data or logging. New task files usually do not
 | `--id-key NAME` | `id` | Selects the ID field in legacy data |
 | `--log-level LEVEL` | `INFO` | Sets `DEBUG`, `INFO`, `WARNING`, or `ERROR` logging |
 
-### Input file limits
+### 3.5 Input file limits
 
 These flags limit the files that one task can bring into a container and help prevent unexpectedly large inputs.
 
@@ -112,7 +125,7 @@ These flags limit the files that one task can bring into a container and help pr
 
 These flags control how a Harness container starts, connects to a model service, and records trajectory data. The selected Harness still determines the supported values.
 
-### Container and connection
+### 4.1 Container and connection
 
 These flags select the image, Docker runtime settings, and model-service connection.
 
@@ -127,17 +140,18 @@ These flags select the image, Docker runtime settings, and model-service connect
 | `--pass-env NAME` | None | Passes one additional non-empty environment variable into the Harness container and can be repeated |
 | `--keep-container-on-error` | Off | Keeps the stopped container after failure for inspection |
 
-### Reasoning and traces
+### 4.2 Reasoning and traces
 
-These flags control reasoning levels and trace retention. Supported levels and wire-trace modes differ by Harness.
+`--thinking` sets the model's reasoning or thinking effort. The same setting can appear in a task as `runtime.thinking`. The task value takes precedence over the CLI. If both are omitted, Roller uses the Harness or model default.
+
+The Roller CLI recognizes the logical levels below, but each Harness supports only a subset and may use different defaults or mappings. See the matching Harness guide for the exact behavior.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `--thinking LEVEL` | Unset | Sets the Harness reasoning or thinking level |
+| `--thinking-capabilities PATH` | Unset | Loads versioned model/endpoint capability declarations for preflight validation |
 | `--keep-thinking` / `--no-keep-thinking` | On | Decides whether ACTF and SFT export visible reasoning |
 | `--wire-trace MODE` | `actf` | Selects `off`, `actf`, or `full` request recording |
-
-The CLI can parse the following logical thinking values. Each Harness guide defines its supported subset, defaults, and mappings.
 
 ```text
 off | minimal | low | medium | high | xhigh | adaptive | max | ultra
@@ -145,7 +159,39 @@ off | minimal | low | medium | high | xhigh | adaptive | max | ultra
 
 Input `none` is normalized to `off`. Unsupported values fail before the rollout starts.
 
-### Wire trace modes
+For all seven Harnesses, provider/model support can be declared
+without adding model-name rules to Roller:
+
+```json
+{
+  "schema_version": "roller.thinking-capabilities/v1",
+  "profiles": [
+    {
+      "harness": "hermes",
+      "model": "served-model-id",
+      "api_base": "https://gateway.example/v1",
+      "supported_efforts": ["low", "medium", "high"]
+    }
+  ]
+}
+```
+
+Pass this file with `--thinking-capabilities`. Matching is exact on Harness and
+served model ID; `api_base` is optional, and an endpoint-specific entry takes
+precedence over a generic entry. A matched unsupported effort fails before any
+container or model request starts. Unmatched models retain provider-side
+validation, and Roller never silently substitutes another effort. The file's
+SHA-256 is included in the run lock.
+
+Profiles support all seven registered harnesses and validate both agent and
+simulator. Unknown harnesses/fields and surrounding whitespace are rejected.
+Use logical Roller effort names (Claude `ultra`, not its wire value `ultracode`).
+OpenClaw matches the full `provider/model` name and resolves the endpoint from
+that provider's model-config `baseUrl`. If the endpoint is unavailable, only
+generic profiles match. Declarations never override native effort restrictions
+or rewrite requests.
+
+### 4.3 Wire trace modes
 
 Wire trace controls whether Roller records the actual HTTP requests sent to the model service. The default `actf` mode is sufficient for normal collection.
 
@@ -157,13 +203,13 @@ Wire trace controls whether Roller records the actual HTTP requests sent to the 
 
 `full` can retain complete request text including prompts, reasoning, tool arguments, and results. This makes the output larger and more sensitive. See the matching Harness guide for support and network requirements, and see {ref}`Trajectory outputs <wire-trace-jsonl>` for the file format.
 
-### Compatibility note
+### 4.4 Compatibility note
 
 `--external-thinking` has been removed. Replace it with `--thinking` and delete obsolete arguments from old commands.
 
 ## 5. Harness-specific flag index
 
-When a flag belongs to one Harness, look it up in that Harness guide. Each guide owns its image, API, key, execution limit, and native configuration flags.
+Flags that belong to one Harness are documented in that Harness guide. Each guide documents its image, API, key, execution limit, and native configuration flags.
 
 | Harness | Flag and configuration guide |
 | --- | --- |
@@ -175,7 +221,7 @@ When a flag belongs to one Harness, look it up in that Harness guide. Each guide
 | DeepSeek | {ref}`DeepSeek Harness guide <deepseek-cli-flags>` |
 | Pi Agent | {ref}`Pi Agent Harness guide <pi-cli-flags>` |
 
-To inspect the complete flag set for the current checkout, run:
+To inspect the complete flag set supported by the Roller version currently in use, run:
 
 ```bash
 roller collect --help
@@ -205,7 +251,7 @@ roller view RUN_DIR [--host HOST] [--port PORT]
 | --- | --- | --- |
 | `RUN_DIR` | Required | Selects a Roller run containing `info.json` and `samples/` |
 | `--host` | `127.0.0.1` | Sets the listen address |
-| `--port` | `8765` | Sets the listen port |
+| `--port` | `17865` | Sets the listen port; when omitted and the default is busy, a free port is used |
 
 Listening on `0.0.0.0` exposes trajectory contents to the network. For remote access, keep the default address and use SSH port forwarding.
 
@@ -216,24 +262,19 @@ Bench flags convert an external benchmark into Roller tasks, run collection, gra
 | Command | Purpose |
 | --- | --- |
 | `roller bench list` | Lists the available benchmark adapters |
-| `roller bench run --config BASE --extra-config BENCH` | Resolves layered YAML/JSON, then converts, runs, grades, and summarizes a benchmark |
-| `roller collect --bench ...` | Direct low-level benchmark entry point |
+| `roller collect --bench ...` | Converts, runs, grades, and summarizes a benchmark, recommended for most users |
 | `roller bench export ...` | Converts a benchmark to task JSONL without running tasks |
 | `roller bench report RUN_DIR` | Regenerates a grading summary for an existing run |
 
 Common command forms:
 
 ```bash
-roller bench run --config BASE.yaml [--extra-config FILE_OR_JSON]... [--dry-run]
-roller collect --bench NAME --bench-root ROOT [--bench-category CAT]... [--bench-task-id ID]... [--bench-variant NAME] [--bench-timeout-multiplier N] [--bench-runs-per-task N] ...
+roller collect --bench NAME --bench-root ROOT [--bench-category CAT]... [--bench-task-id ID]... [--bench-variant NAME] [--bench-timeout-multiplier N] ...
 roller bench export NAME ROOT --output TASKS.jsonl [--category CAT]... [--task-id ID]... [--variant NAME] [--timeout-multiplier N]
 roller bench report RUN_DIR [--output REPORT.json]
 ```
 
-See [Benchmark run standard](../benches/benchmark-standard.md) for the configuration schema,
-merge rules, and maintained examples.
-
-Use `bench run` for repeatable benchmark jobs. It resolves the shared and benchmark-specific configuration, then follows the same conversion, container, grading, and aggregation path as `collect --bench`. The direct command remains useful for one-off runs.
+Prefer `collect --bench`. It converts tasks, runs containers, grades results, and aggregates them in one command, then saves `tasks.jsonl` and `bench-report.json` in the run directory.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
@@ -243,7 +284,6 @@ Use `bench run` for repeatable benchmark jobs. It resolves the shared and benchm
 | `--bench-task-id ID` / `--task-id ID` | Unlimited | Selects one task and can be repeated, invalid IDs fail immediately |
 | `--bench-variant NAME` / `--variant NAME` | Adapter default | Selects a benchmark condition such as SkillsBench `with-skill` or `no-skill` |
 | `--bench-timeout-multiplier N` / `--timeout-multiplier N` | Adapter default | Scales each benchmark task timeout by a finite positive number |
-| `--bench-runs-per-task N` / `--runs-per-task N` | `1` | Duplicates selected benchmark tasks and records their upstream run indices |
 | `--output` / `-o` | Required for export | Sets the exported task JSONL or report JSON |
 | `RUN_DIR` | Required for report | Selects a completed run and is a positional argument |
 | `--rebuild-task-images` | Off | Rebuilds task-specific benchmark images even when they already exist |

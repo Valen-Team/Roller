@@ -56,18 +56,18 @@ class ContextFile:
 class TaskBundle:
     """Materialized, content-addressed files shared by all models for one task."""
 
-    root: Path
     inputs_root: Path
     context_root: Path
-    manifest_path: Path
-    input_manifest_path: Path
-    context_manifest_path: Path
     manifest_digest: str
     input_tree_digest: str
     input_manifest_digest: str
     context_manifest_digest: str
     legacy_workspace: bool = False
     resume_safe: bool = True
+    # In-memory Context manifest; only its digest is stored in samples.
+    context_manifest: Mapping[str, Any] = field(
+        default_factory=dict, compare=False, repr=False
+    )
 
 
 @dataclass(frozen=True)
