@@ -23,6 +23,10 @@
 </p>
 
 <p align="center">
+  More from Valen Team: <a href="https://github.com/Valen-Team/Valen">Valen-Decision</a>, a multimodal System One decision model
+</p>
+
+<p align="center">
   <a href="#news">News</a> · <a href="#architecture">Architecture</a> · <a href="#highlights">Features</a> · <a href="#quick-start">Quick start</a> · <a href="#harnesses">Harnesses</a> · <a href="#outputs">Outputs</a> · <a href="#benchmarks">Benchmarks</a> · <a href="#documentation">Docs</a> · <a href="#contributing">Contributing</a>
 </p>
 
@@ -394,6 +398,14 @@ ruff format --check
   </tr>
 </table>
 
+<a id="more-from-valen-team"></a>
+
+## More from Valen Team
+
+Roller is one of the open-source projects of [Valen Team](https://github.com/Valen-Team), which works on fast decision models, recursive self-improvement (RSI) and agents.
+
+[Valen-Decision](https://github.com/Valen-Team/Valen) is a multimodal System One decision model: text, images and video in; structured decision probabilities out. It comes in five sizes from 0.8B to 27B, answers bbox questions, and has a [web demo and free API](https://valen-team.github.io/).
+
 <a id="license-and-acknowledgements"></a>
 
 ## License and acknowledgements
@@ -401,3 +413,20 @@ ruff format --check
 Roller is licensed under the [Apache License 2.0](LICENSE).
 
 Roller invokes the following third-party agent runtimes and benchmarks: OpenClaw, Codex, Claude Code, Hermes Agent, OpenCode, DeepSeek Harness, Pi Agent, WildClawBench, SkillsBench, PinchBench, QwenClawBench and SWE-Bench Pro. Their images, code and data are subject to their respective licenses. We thank the authors of these projects.
+
+<a id="citation"></a>
+
+## Citation
+
+If you use Roller in your work, please cite this repository:
+
+```bibtex
+@misc{roller,
+  author       = {{Valen Team}},
+  title        = {Roller},
+  howpublished = {GitHub - Valen-Team/Roller: Agent trajectory collection across models and Harnesses.},
+  note         = {GitHub repository},
+  year         = {2026},
+  url          = {https://github.com/Valen-Team/Roller}
+}
+```
