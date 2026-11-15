@@ -213,6 +213,7 @@ ROLLER_MANAGED_OPENCLAW_CONFIG: dict[str, str] = {
     "agents.defaults.imageModel": "use --set-image-model / --no-set-image-model",
     "tools.web.search.provider": "use --search-provider",
     "diagnostics.cacheTrace": "use --cache-trace / --no-cache-trace",
+    "logging.redactSensitive": "Roller keeps task text verbatim in session transcripts",
 }
 
 
@@ -762,6 +763,23 @@ exec node --input-type=module -e "$1"
                     CACHE_TRACE_CONTAINER_PATH,
                 ],
                 "cache trace path setup",
+            )
+        # OpenClaw masks credential-shaped text (``RV_9fc…1812``) when it
+        # persists a session, and later turns rebuild context from that copy.
+        # Task text must survive verbatim; trajectories are sensitive anyway.
+        try:
+            self._checked(
+                ["exec", container, "openclaw", "config", "set", "logging.redactSensitive", "off"],
+                "transcript redaction setup",
+            )
+        except RuntimeError as exc:
+            # Releases that retired the key reject it; keep running.
+            logger.warning(
+                "[%s] OpenClaw %s kept logging.redactSensitive; its session transcript "
+                "may abbreviate credential-shaped task text: %s",
+                request.task.id,
+                version,
+                exc,
             )
         if self.config.set_image_model:
             image_result = self.runtime.run(
