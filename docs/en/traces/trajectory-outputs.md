@@ -4,25 +4,24 @@
 This guide describes their contents, when they are created and retained, and how
 to use them for training, analysis, and debugging.
 
-## 1. Start with the conclusion
+## 1. Quick reference
 
 | Need | Preferred file | Why |
 | --- | --- | --- |
 | Train a Task Agent directly | Run-level `sft.jsonl` | One minimal SFT record per line, ready for streaming reads |
-| Inspect a single training sample | Sample-level `trace_SFT.json` | Identical to the matching record in `sft.jsonl` |
+| Inspect a legacy training record | Sample-level `trace_SFT.json` | Identical to the matching record in `sft.jsonl` |
+| Inspect compacted context | Sample-level `sft_segments/*.json` | Separate opt-in records with an explicit target mask |
+| Read all compacted records in a run | Run-level `sft_segments.jsonl` | Aggregates the same masked segment records in request order |
 | Trajectory analysis, scoring, token stats | `trace_ACTF.json` | Has step, reasoning, observation, metric, and timing |
 | Trace Harness session raw events | `trace.jsonl` | OpenClaw, Codex, Claude Code, Hermes, OpenCode, DeepSeek, or Pi native session; Roller does not clean it for training |
 | Inspect the first system prompt captured into ACTF | Top level of `trace_ACTF.json` | Taken from whichever native/cache/wire source each Harness can obtain, frozen once |
 | Check whether the OpenClaw system prompt changes per call | `cache_trace.jsonl` from `--wire-trace full` | Keeps a diagnostic record of every OpenClaw LLM call |
-| Check the request history and tools the model actually received | `wire_trace.jsonl` from `--wire-trace full` | Saves each JSON request body the proxy actually forwarded |
+| Check the request history and tools received by the model | `wire_trace.jsonl` from `--wire-trace full` | Saves each JSON request body forwarded by the proxy |
 | Inspect Task Agent delivered files | `results/` | Recovers only the output directories the task declared plus extra collect paths |
 | Inspect the dialogue both sides can see | `conversation.json` | Does not include hidden reasoning, tool calls, or tool results |
 
-Use SFT for training and ACTF for analysis. For adapter, context assembly, or
-upstream issues, inspect session raw and full wire. Here, session raw means
-`trace.jsonl`; `wire_trace.jsonl` records requests for diagnosis.
-Wire traces repeat history across turns and grow close to O(N²), so they are
-unsuitable for direct use as training data.
+Use SFT for training and ACTF for analysis. When troubleshooting Harness execution, context assembly, or model-service behavior, inspect the native session in `trace.jsonl` and complete request records in `wire_trace.jsonl`.
+Complete request records repeat conversation history across turns and grow quickly, so they are unsuitable for direct use as training data.
 
 ## 2. Directory layout
 
@@ -30,7 +29,7 @@ unsuitable for direct use as training data.
 
 OpenClaw defaults are `--cache-trace --wire-trace actf --keep-thinking`; Codex
 disables web search by default and keeps the reasoning content or summary that
-is actually visible in the native session; Claude Code keeps plaintext thinking
+is visible in the native session; Claude Code keeps plaintext thinking
 blocks from the native session. The main layout of a successful run is the same
 for all seven Harnesses:
 
@@ -46,7 +45,7 @@ for all seven Harnesses:
             ├── trace_ACTF.json
             ├── trace_SFT.json
             ├── info.json
-            └── results/                 # Task 输出含文件或目录时存在
+            └── results/                 # present when the task output contains files or directories
 ```
 
 OpenClaw's default `actf` wire mode temporarily captures the tools schema, writes
@@ -66,10 +65,10 @@ and retains `tools_capture.jsonl` after conversion. Claude Code temporarily capt
 ├── trace.jsonl
 ├── trace_ACTF.json
 ├── trace_SFT.json
-├── cache_trace.jsonl              # 仅 OpenClaw
+├── cache_trace.jsonl              # OpenClaw only
 ├── wire_trace.jsonl
 ├── info.json
-└── results/                       # 可选
+└── results/                       # optional
 ```
 
 ### 2.3 User Simulator rollout
@@ -82,18 +81,18 @@ subdirectory:
 ├── trace.jsonl                    # Task Agent raw
 ├── trace_ACTF.json                # Task Agent ACTF
 ├── trace_SFT.json                 # Task Agent SFT
-├── conversation.json              # 双方可见的干净交替对话
-├── info.json                      # 总 usage 与双方索引
+├── conversation.json              # clean alternating dialogue visible to both participants
+├── info.json                      # total usage and index of both participants
 ├── user_simulator/
 │   ├── trace.jsonl                # Simulator raw
 │   ├── trace_ACTF.json            # Simulator ACTF
 │   ├── trace_SFT.json             # Simulator SFT
-│   └── info.json                  # Simulator 独立状态和 usage
-└── results/                       # 只属于 Task Agent，可选
+│   └── info.json                  # Simulator status and usage
+└── results/                       # Task Agent only; optional
 ```
 
 Run-level `sft.jsonl` aggregates only the Task Agent in the root directory. It
-does not mix in User Simulator SFT.
+does not include User Simulator SFT.
 
 ## 3. Data path from a run to a training set
 
@@ -112,10 +111,14 @@ Harness session store ────────────────> trace.js
                                   └─ Claude Code Anthropic wire
                                                 │
                                                 v
-trace.jsonl + Harness 可取得的 system/tools ──> trace_ACTF.json
-trace_ACTF.json ────────────────────────────────> trace_SFT.json
-全部成功/Resume sample 的 trace_SFT.json ───────> run/sft.jsonl
+trace.jsonl + system/tools available to the Harness ──> trace_ACTF.json
+trace_ACTF.json ── linear ───────────────────────> trace_SFT.json ──> run/sft.jsonl
+captured Calls ──── compaction ──────────────────> sft_segments/ (opt-in)
 ```
+
+The following figure shows the same data path, including the files that are enabled by flags (dashed).
+
+![Trace data pipeline: the Harness session is copied to trace.jsonl and converted to trace_ACTF.json, which yields trace_SFT.json and sft.jsonl; --capture-calls enables compaction segments and --wire-trace full keeps request bodies in wire_trace.jsonl](../../../assets/diagrams/pipeline-en-light.png)
 
 `trace.jsonl` records events from the current Harness session. ACTF converts
 those events into an analysis format; SFT removes fields that training does not
@@ -127,23 +130,23 @@ need. SFT is not used to generate ACTF or raw.
 | --- | --- | --- | --- |
 | `trace.jsonl` | Harness session export layer | Which user/assistant/tool events the Agent recorded, in what order, with what usage | Which full history a given request carried; verbatim upstream HTTP request/response |
 | `cache_trace.jsonl` | OpenClaw context-assembly diagnostic point | The assembled system prompt and related diagnostic stages for each LLM call | Full messages/input and final provider request parameters |
-| `wire_trace.jsonl` (`full`) | After the Harness provider adapter, before the real model API | The JSON body Roller's proxy actually forwarded, including messages/input, tools, and sampling parameters | How the model service tokenizes, truncates, or routes the request internally |
+| `wire_trace.jsonl` (`full`) | After the Harness provider adapter, before the real model API | The JSON body forwarded by Roller's proxy, including messages/input, tools, and sampling parameters | How the model service tokenizes, truncates, or routes the request internally |
 
 ### 3.2 Session history is not the model request context
 
-A message that "exists" in `trace.jsonl` only means it entered the Harness session
-record. It does not mean it was sent verbatim on every later model call. OpenClaw
+The presence of a message in `trace.jsonl` means only that it entered the Harness
+session record. It does not mean that it was sent verbatim on every later model call. OpenClaw
 builds a runtime context from the session, bounded by the context window. Its
 official docs distinguish the persisted transcript from the model context:
 compaction replaces older history with a summary and keeps recent messages;
-pruning can drop old tool results from the in-memory prompt without rewriting
+pruning can remove old tool results from the in-memory prompt without rewriting
 the on-disk transcript. A plugin context engine and runtime hooks can also take
 part in context assembly. See
 [OpenClaw Context](https://docs.openclaw.ai/concepts/context) and
 [Session Management and Compaction](https://docs.openclaw.ai/reference/session-management-compaction).
 The exact compaction, pruning, and persistence behavior depends on the OpenClaw
 version in the image, the model profile, and the chosen context engine. Roller
-does not guess those transforms from session files; it captures full wire at the
+does not infer those transforms from session files; it captures full wire at the
 final API request boundary. Codex likewise inserts base/developer instructions,
 environment context, a tool namespace, resume history, and compaction results
 between the native session and the Responses input; that final shape can only be
@@ -178,7 +181,7 @@ assistant, thinking, tool call, tool result, usage, and so on. In the default
 image, Roller reads events by exact session identity through the public
 `openclaw/plugin-sdk/session-transcript-runtime`, then serializes them one by
 one as JSONL. It does not delete, merge, or reorder valid events for training.
-"Raw" here is relative to Roller's ACTF/SFT conversion. It is not a byte copy of
+In this context, "raw" is relative to Roller's ACTF/SFT conversion. It is not a byte copy of
 the underlying SQLite/JSONL file, and it is not a network-level raw request or
 response. The SDK returns only transcript events that OpenClaw recognizes, so
 corrupt lines or non-event records in the underlying store do not appear in the
@@ -274,16 +277,22 @@ Harness already failed or timed out. A failed sample may therefore still have
 ACTF. Explicitly recorded conversion unavailability is stored in
 `runtime.trajectory_conversion`, separately from the Harness collection status.
 
-### 4.3 `trace_SFT.json`: one minimal training sample
+### 4.3 Sample-level SFT records
 
-SFT is generated from ACTF. Text-only records contain these top-level fields;
+Linear SFT is generated from ACTF as `trace_SFT.json`. For main-agent
+compaction, Roller reconstructs windows from captured Calls and writes
+`sft_segments/0001.json`, `0002.json`, etc., only when root Calls correspond
+one-to-one with ACTF main steps, apart from summary Calls recorded by native
+compaction rows. Otherwise SFT is marked unavailable while
+the raw trace and capture remain. Text-only linear records contain
+these top-level fields;
 image records also contain `images`:
 
 ```json
 {"messages": [], "tools": []}
 ```
 
-It drops schema version, task/model, usage, metric, step ID, stop reason,
+It removes schema version, task/model, usage, metric, step ID, stop reason,
 timestamps, run paths, and observation metadata. An assistant always stores
 `role`, `reasoning_content`, `content`, and `tool_calls`. A tool message stores
 only `role`, `tool_call_id`, and string `content`.
@@ -292,6 +301,19 @@ SFT expresses the logical conversation reconstructed from session events. It is
 not a snapshot of each provider request. It is suitable for training, but not
 for per-request replay or for proving that an earlier tool result was still
 visible in a later model call.
+
+Compaction segments instead start with the actual captured request context.
+Their extra `target_start_index` marks the first supervised assistant message;
+subsequent assistant messages are targets, while intervening user/tool messages
+remain context. Segment metadata in `info.json` records paths, order, boundary
+source, and Call IDs. If captured input cannot be represented faithfully,
+Roller records SFT as unavailable and retains raw/ACTF evidence.
+With `--no-keep-thinking`, reasoning is cleared from segment prompts as well as
+targets, matching linear SFT.
+These segments require an opt-in reader that honors the target mask. The
+legacy run-level `sft.jsonl` remains linear-only.
+When valid segments exist, the run root also contains `sft_segments.jsonl`
+with those records in request order. Its reader must honor `target_start_index`.
 
 
 Generation conditions:
@@ -308,22 +330,26 @@ Generation conditions:
 Codex preserves native Responses tool definitions, namespaces, and custom grammars.
 Other harnesses normalize flat/nested functions to nested function schemas. An image tool result is exported as an `<image>`
 placeholder plus a top-level `images` data-URI list; see
-[SFT data format](sft-format.md) for the alignment contract. Anything that
-cannot be exported losslessly — audio or other unknown block types,
+[SFT data format](sft-format.md) for the alignment contract. Content that
+cannot be exported losslessly still fails conversion: audio or other unknown block types,
 unsupported media types, malformed base64, or an image block that only
-references a path — still fails conversion. The Collector records
+references a path. The Collector records
 `target: "sft"`, `status: "unavailable"`, and the reason in
 `runtime.trajectory_conversion`, retaining the collection status and raw/ACTF.
 Aggregation skips that sample; Resume does not call the model again for an
-export failure. Roller never silently drops content.
+export failure. Roller never silently discards content.
 
 See [SFT data format](sft-format.md) for the full field definition.
 
 ### 4.4 `sft.jsonl`: run-level training set
 
-After the Collector finishes every request, it reads sample-level
-`trace_SFT.json` in request-index order and writes the run root atomically and
-as a stream:
+After the Collector finishes every request, it reads eligible linear
+`trace_SFT.json` records in request-index order and writes the run root
+atomically as a stream. It validates compaction segments and writes them to
+`sft_segments.jsonl` separately, keeping this legacy dataset linear-only.
+
+The run summary counts such a sample as `sft_segmented`, not `sft_included`
+or `sft_excluded`.
 
 - Samples with `status=ok` are included;
 - `--resume` reused samples with `status=skipped` were originally `ok`, and are
@@ -333,7 +359,7 @@ as a stream:
 - An empty file is still created when there are no successful samples;
 - User Simulator sub-trajectories are not included.
 
-Each line is the same JSON object as the matching `trace_SFT.json`. No task ID
+Each line is the same JSON object as its matching sample-level SFT record. No task ID
 or other metadata is added. Sample provenance must be recovered from the
 adjacent run/sample `info.json` and from directory location.
 
@@ -360,8 +386,8 @@ digests the Task Bundle already has.
 
 The CLI writes initial run information before collection starts. The Collector
 updates it on the first result, then after every additional 25 results, and also
-immediately when two completion events are at least 30 seconds apart. It force
-checkpoints on interrupt and during finalization. It stores:
+immediately when two completion events are at least 30 seconds apart. It forces a
+checkpoint on interrupt and during finalization. It stores:
 
 - Roller version and collection configuration;
 - Current `state`: `initializing`, `running`, `finalizing`, `finished`,
@@ -372,8 +398,10 @@ checkpoints on interrupt and during finalization. It stores:
 - Token, cache, cost, and request-count totals;
 - Per-sample status, error, path, and usage.
 
-A catchable interrupt writes `state=interrupted` and tries to build a partial
-`sft.jsonl` from already completed samples. `SIGKILL`, power loss, or host
+A catchable interrupt such as `Ctrl-C` immediately cancels samples that are
+still queued and only waits for running samples to finish normally (collecting
+traces and removing containers). It then writes `state=interrupted` and attempts
+to build a partial `sft.jsonl` from already completed samples. `SIGKILL`, power loss, or host
 failure cannot perform that last write, but atomic writes and periodic
 checkpoints keep `info.json` as the previous complete snapshot. The Viewer also
 scans already finalized samples.
@@ -388,7 +416,7 @@ kept here.
 
 OpenClaw sessions sometimes record an already delivered reply again with
 `api=cli`; genuine CLI-backend replies use that marker too. Roller does not
-drop messages based on the marker alone. It deduplicates tokens and request
+remove messages based on the marker alone. It deduplicates tokens and request
 counts only when usage matches within the same turn and the CLI source matches
 the latest provider reply's provider/model. A message is omitted only when its
 final text matches the delivered text. Matched gap fills keep new text without
@@ -421,7 +449,7 @@ Conflicting cost reports retain the higher known amount rather than applying
 refunds; these are session-reported costs, not reconciliation with a provider's
 billing records.
 
-Raw is unchanged. Re-parsing retained raw after upgrading can produce updated
+This processing does not modify raw. Re-parsing retained raw after upgrading can produce updated
 statistics, but resume does not recompute usage cached in existing `info.json`.
 
 ### 5.4 `cache_trace.jsonl`
@@ -555,30 +583,90 @@ participant, use that participant's own raw/ACTF/SFT.
 | `off` | Does not start a proxy for recording | OpenClaw/Codex are `null`; Claude Code derives from native | none kept | Minimal diagnostics-off mode |
 
 After OpenClaw `off` or a degraded `actf`, SFT validation fails for missing tool
-schema if the trajectory actually called tools. When there are no tool calls,
+schema if the trajectory contains tool calls. When there are no tool calls,
 SFT `tools` is `[]`. Claude Code retains its native schema fallback. Codex never
 infers schemas: absent capture (including `off`, WebSockets, or no API base),
 changing definitions, and programmatic `additional_tools` make SFT unavailable.
-See [Codex tool capture](../harnesses/codex-configuration.md#8-trajectory-outputs).
+See [Codex tool capture](../harnesses/codex-configuration.md#9-trajectories-and-request-recording).
 
 ### 6.2 Thinking
 
 | Flag | Current reply | Later request history | ACTF | SFT | raw |
 | --- | --- | --- | --- | --- | --- |
-| `--keep-thinking` (default) | Accept whatever the backend returns | Keep normal Harness history | Save visible reasoning | Save from ACTF | Keep original events |
+| `--keep-thinking` (default) | Accept the backend output as returned | Keep normal Harness history | Save visible reasoning | Save from ACTF | Keep original events |
 | `--no-keep-thinking` | The current turn can still produce reasoning | OpenClaw strips later wire history; Codex/Claude Code do not rewrite resume/continue | Reasoning emptied | Reasoning emptied | Original events still kept |
 
 `--thinking LEVEL` sets the reasoning level in the Harness/model request.
 Whether reasoning text can be saved depends on the service response. See
-[Thinking configuration](../harnesses/openclaw-configuration.md#5-thinking-system-prompt-and-wire-trace)
+[Thinking configuration](../harnesses/openclaw-configuration.md#6-thinking-configuration)
 for GPT native effort, open-model profiles, and OpenClaw image limits, and
-[Thinking and effort](../harnesses/claude-code-configuration.md#5-thinking-and-effort)
+[Thinking configuration](../harnesses/claude-code-configuration.md#6-thinking-configuration)
 for the Claude Code mapping. When the backend reports only reasoning tokens and
 does not return a reasoning summary/content, ACTF/SFT have no
 `reasoning_content` to save. A GPT compacted summary enters that field as-is;
 encrypted reasoning does not enter SFT.
 
 The default `--keep-thinking` retains visible reasoning returned by the service. This includes GPT summaries, Claude visible thinking, and plaintext reasoning returned by open models.
+
+When a reasoning effort was explicitly requested, sample `info.json` records
+`runtime.thinking_audit`. This audit counts only visible reasoning retained in
+ACTF. If `off` was requested but visible reasoning is still present, its status
+is `mismatch` and Roller records a runtime warning without deleting or changing
+the returned text. With `--no-keep-thinking`, the status is `not_observable`:
+an empty exported field is not evidence that the model performed no hidden
+reasoning.
+
+Samples with a `mismatch` keep their execution status and per-sample SFT for
+inspection, but record `runtime.sft_eligibility = {"eligible": false,
+"reason": "thinking_effort_mismatch"}` and are excluded from `sft.jsonl`,
+including on resume. `no_visible_reasoning` is not proof that reasoning was
+disabled. Failed or timed-out samples retain available raw/ACTF evidence but
+do not export per-sample SFT.
+
+Before pruning auxiliary traces, both agent and user-simulator archives record:
+
+- `runtime.wire_effort_audit`: checks each outgoing request, including retries.
+  Explicit conflicts are `mismatch`; omitted controls, budgets alone, and unknown
+  encodings are `unverified`; missing readable requests are `not_observable`.
+  Default `actf` mode also reads native request snapshots for Pi, DeepSeek,
+  Hermes, and OpenCode when no wire requests were captured. `source` identifies
+  the evidence used. The audit survives pruning.
+  `matched` describes client parameters, not provider compliance.
+- `runtime.completion_audit`: flags a final `length`, `max_tokens`, or
+  `max_output_tokens` stop, or an empty text answer without tool calls, as
+  `incomplete`. Unknown/missing stop reasons are not inferred. `not_flagged`
+  does not mean the task passed. A final observed response with `incomplete` or
+  a token-limit finish reason also flags truncation, even if ACTF says `stop`;
+  an earlier truncated request followed by a completed request does not.
+  `actf_completion_audit` retains the original ACTF finding when overridden.
+- Explicit wire mismatches and these incomplete trajectories set
+  `sft_eligibility.eligible=false`, excluding them from the agent aggregate.
+  Omitted controls alone do not trigger exclusion. Convertible per-sample SFT
+  remains diagnostic evidence. Failed/timed-out simulator archives also omit SFT;
+  successful simulator artifacts retain diagnostics and never enter the agent
+  aggregate. Resume does not backfill new audits on previously collected samples.
+
+When strict conversion produces no ACTF, Pi/OpenClaw can record
+`completion_audit.source=native` from completed native assistant messages,
+ignoring context history and partial deltas. Unknown schemas remain unobservable;
+conversion is not relaxed and failed SFT is not exported.
+
+The proxy extracts model names and finish reasons from JSON/SSE responses into
+wire `response_metadata` events linked by `request_seq`, without retaining
+additional response text. Archived `runtime.model_identity_audit` records each
+wire `requested_model`, `response_models`, and `finish_reasons`. A `name_mismatch`
+produces a warning but no automatic training exclusion: aliases can be legitimate.
+These are server-declared names, not proof of actual backend routing. Compressed
+or unknown protocols, missing fields, and capture limits do not imply a match.
+The runtime audit survives default actf-mode wire pruning.
+
+The terminal completion message and run `summary.training` report SFT inclusion/
+exclusion, thinking mismatches, and unverified/not-observable wire audits. Counts
+refer to processed primary-agent samples, including resumed ones, not HTTP
+requests or simulators. Categories can overlap; missing legacy audits do not
+imply a match. Reporting shares the export exclusion policy; it adds no strict
+switch and changes neither execution status nor CLI exit codes. Inclusion does
+not imply that a task grader passed.
 
 Even with `--wire-trace off`, `--no-keep-thinking` must still start a proxy to
 strip request history, so OpenClaw still requires a proxyable `baseUrl` in
@@ -592,8 +680,8 @@ strip request history, so OpenClaw still requires a proxyable `baseUrl` in
 | `--no-cache-trace` | `""` | Not created |
 
 If training needs the first assembled system prompt the Agent captured, do not
-turn cache trace off. If you need to reproduce the context of every model call,
-ACTF/SFT alone is not enough. You must also keep full cache/wire.
+turn cache trace off. To reproduce the context of every model call,
+ACTF/SFT alone is not sufficient; full cache/wire must also be kept.
 
 ## 7. Success, failure, retry, and Resume
 
@@ -634,7 +722,10 @@ These cases turn an otherwise successful Harness result into `error`:
 `--retries N` runs at most N extra complete rollouts. Before each attempt
 starts, runtime raw/cache/wire files from the previous attempt are cleaned so
 attempts are not mixed. Sample `info.json.attempts` keeps each status and
-elapsed time. Canonical raw/ACTF/SFT correspond to the final attempt.
+elapsed time. Canonical raw/ACTF/SFT correspond to the final attempt. When the
+final status is not `ok`, the sample also keeps every attempt's process logs as
+`rollout/*.attempt-<N>.log` (for example OpenClaw's `gateway.attempt-1.log` and
+`agent.attempt-1.log`) for troubleshooting.
 
 ### 7.4 Resume
 
@@ -645,7 +736,7 @@ conditions are not mixed in one batch. If the old run has no lock, the current
 lock is written and every old sample is rerun once. A durable migration marker
 keeps reuse forbidden until the full recapture and run-level SFT aggregation
 succeed, so leftover samples are not trusted even if the process is killed
-midway.
+before completion.
 
 After the lock matches, `--resume` reuses only old samples whose status was `ok`
 and that satisfy all of the following:
@@ -666,11 +757,11 @@ A reused result is marked `skipped` in this run and is still written into the
 new `sft.jsonl`. If any required file is missing or trajectory validation fails,
 the entire sample is rerun. SHA-256 values stored in the output manifest are
 not recomputed on Resume, so a routine checkpoint restart does not reread large
-artifacts. Re-check that hash separately when you need a content-level audit.
+artifacts. For a content-level audit, verify that hash separately.
 
 ## 8. Recommended configurations
 
-### Batch-generate text/tool SFT
+### 8.1 Batch-generate text/tool SFT
 
 ```bash
 roller collect \
@@ -685,7 +776,7 @@ roller collect \
 Keep the default `--cache-trace` and `--keep-thinking`. This configuration
 produces complete ACTF/SFT and deletes the larger diagnostic intermediate layer.
 
-### Debug reasoning, compaction, or request history
+### 8.2 Debug reasoning, compaction, or request history
 
 ```bash
 roller collect \
@@ -697,8 +788,8 @@ roller collect \
   --output debug-runs
 ```
 
-Use this configuration to confirm the messages/input that OpenClaw actually
-hands to the model API after context assembly, compaction, pruning, and provider
+Use this configuration to confirm the messages/input that OpenClaw passes
+to the model API after context assembly, compaction, pruning, and provider
 adaptation. After debugging, prefer to keep raw/ACTF/SFT. Delete full cache/wire
 once request-level audit is no longer needed, to reduce duplicated data and
 sensitive-information exposure.
@@ -709,16 +800,17 @@ Check at least the following:
 
 1. Run `info.json.summary.failed` is 0, or failed tasks have been explicitly
    excluded;
-2. The number of lines in `sft.jsonl` equals the expected `ok + skipped`
-   task/model request count;
-3. Each line has only `messages` and `tools` at the top level;
+2. The number of lines in `sft.jsonl` equals the number of eligible linear
+   records; compaction segments are checked separately;
+3. Each line has `messages` and `tools`; image records add `images`.
+   Only separate compaction segments add `target_start_index`;
 4. Every assistant has `reasoning_content`, `content`, and `tool_calls`;
 5. Tool call IDs and tool messages correspond one to one;
 6. The tools schema is compatible with the tool format of the chat template used
    at training time;
 7. System prompts, user content, tool results, reasoning, and Agent outputs have
    been reviewed for privacy;
-8. If you used `--no-keep-thinking`, confirm that the raw/full diagnostic layer
+8. If `--no-keep-thinking` was used, confirm that the raw/full diagnostic layer
    will not be mistaken for thinking-stripped published data;
 9. If the dataset claims to reproduce model-visible context, confirm collection
    used `--wire-trace full`, wire `seq` is contiguous, and the request count
@@ -728,6 +820,6 @@ Hermes raw uses `roller.hermes-events/v1`: full request snapshots, model respons
 
 OpenCode raw uses `roller.opencode-events/v1`: serialized provider requests, native message/part updates, and session exports. Updates are merged by native IDs for ACTF/SFT. It produces no `cache_trace.jsonl`. See [OpenCode traces](../harnesses/opencode-configuration.md).
 
-DeepSeek raw: `roller.deepseek-events/v1`, native SDK notifications and serialized requests; no OpenClaw cache trace. [DeepSeek Harness](../harnesses/deepseek-configuration.md).
+DeepSeek raw uses `roller.deepseek-events/v1`: native SDK notifications and serialized requests. It produces no OpenClaw cache trace. See [DeepSeek Harness](../harnesses/deepseek-configuration.md).
 
 Pi raw uses `roller.pi-events/v1`: native events, contexts, actual requests, and turn boundaries. No OpenClaw cache trace is required. See [Pi Agent](../harnesses/pi-configuration.md).

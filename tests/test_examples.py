@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 import tempfile
-import tomllib
 import unittest
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
+
 from roller.bundles import TaskBundleStore
-from roller.harnesses.openclaw import load_model_config
 from roller.tasks import load_tasks
+from roller.harnesses.openclaw import load_model_config
 
 
 class ExampleFilesTests(unittest.TestCase):
@@ -106,6 +110,29 @@ class ExampleFilesTests(unittest.TestCase):
         self.assertNotIn("apiKey", combined)
         self.assertNotIn("API_KEY", combined)
         self.assertNotIn('"hooks"', combined)
+
+    def test_openclaw_reasoning_example_uses_native_model_profiles(self) -> None:
+        config = load_model_config(
+            self.examples_root / "config/openclaw/models-reasoning.json",
+            {
+                "MY_PROXY_BASE_URL": "https://proxy.example/v1",
+                "MY_PROXY_API_KEY": "secret",
+                "MY_CHAT_BASE_URL": "https://chat.example/v1",
+                "MY_CHAT_API_KEY": "secret",
+            },
+        )
+
+        gpt = config["providers"]["openai"]
+        self.assertEqual(gpt["api"], "openai-responses")
+        self.assertEqual(gpt["models"][0]["id"], "gpt-5.6-sol")
+        self.assertEqual(gpt["models"][0]["agentRuntime"], {"id": "openclaw"})
+
+        chat = config["providers"]["my-chat-proxy"]["models"][0]
+        self.assertEqual(
+            chat["compat"]["supportedReasoningEfforts"],
+            ["low", "medium", "high"],
+        )
+        self.assertNotIn("thinkingLevelMap", chat)
 
     def test_user_simulator_example_is_an_independent_dynamic_task(self) -> None:
         tasks = load_tasks(
