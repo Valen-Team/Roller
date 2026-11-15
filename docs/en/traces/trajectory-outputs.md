@@ -324,11 +324,11 @@ Generation conditions:
 - Every tool call has exactly one tool result in the same step;
 - The called tool exists in the top-level tools schema;
 - Function arguments can be encoded as a JSON object; Codex custom input remains a string;
-- The tool result is a string, text blocks, or image blocks with embedded
-  base64 bytes.
+- User content and tool results are strings, text blocks, or image blocks with
+  embedded base64 bytes.
 
 Codex preserves native Responses tool definitions, namespaces, and custom grammars.
-Other harnesses normalize flat/nested functions to nested function schemas. An image tool result is exported as an `<image>`
+Other harnesses normalize flat/nested functions to nested function schemas. An image in a user message or tool result is exported as an `<image>`
 placeholder plus a top-level `images` data-URI list; see
 [SFT data format](sft-format.md) for the alignment contract. Content that
 cannot be exported losslessly still fails conversion: audio or other unknown block types,

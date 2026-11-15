@@ -75,13 +75,13 @@ Therefore, the default `USER.md` for `role: "user"`, the default `MEMORY.md` for
 
 `capture` controls how the Task Bundle records Context content:
 
-| Strategy | Record hash | Include legacy blob identifier in digest | Allow safe Resume |
+| Strategy | Record hash | Keep source in the run | Allow safe Resume |
 | --- | --- | --- | --- |
 | `full` | yes | yes | yes |
 | `hash` | yes | no | yes |
 | `none` | no | no | no |
 
-All three strategies copy Context directly into the runtime context directory, validating its bytes against the scan digest while copying. No strategy writes an extra blob or rereads the destination for hashing. The strategies differ only in the in-memory digest payload and in later Resume decisions; the final sample does not keep Context source text. Legacy blob identifiers remain in input and `full` Context digest payloads solely to preserve compatibility with existing run locks; they do not refer to stored files.
+All three strategies copy Context directly into the runtime context directory, validating its bytes against the scan digest while copying. No strategy writes an extra blob or rereads the destination for hashing. For `full`, Roller also keeps one copy of each file in the run directory at `context/sha256/<sha256>`, shared by every task and model that uses the same content, and writes `context/manifests/<context_manifest_digest>.json`, which maps each Context target to its content. A sample records `context_manifest_digest` in `info.json`, so the Context an Agent saw can be read back from the run. Resume restores missing copies without rerunning samples. The `blobs/sha256/...` identifiers in input and `full` Context digest payloads are kept only for compatibility with existing run locks and do not refer to stored files.
 
 By default, `user` and `memory` use `hash`, and other roles use `full`. Use `hash` for private content that still requires reliable change detection. Use `none` when not even a content hash should be recorded; in that case, the task cannot safely Resume.
 
@@ -160,6 +160,7 @@ Final layout of an ordinary rollout:
 ├── info.json
 ├── lock.json
 ├── sft.jsonl
+├── context/                 # capture=full Context source, by content
 └── samples/
     └── <model>/
         └── <index>_<task>/
@@ -286,7 +287,7 @@ Do not put real keys in tasks, JSON examples, or READMEs in the repository. Pref
 
 ### 8.3 Context
 
-`capture=hash` still stores an irreversible content hash; if the hash must not be kept either, use `capture=none`. This disables safe Resume for the task because Roller cannot confirm whether Context changed.
+`capture=full` keeps Context source in the run directory under `context/`, so treat the run as holding that content. `capture=hash` still stores an irreversible content hash; if the hash must not be kept either, use `capture=none`. This disables safe Resume for the task because Roller cannot confirm whether Context changed.
 
 ## 9. Retry and Resume
 

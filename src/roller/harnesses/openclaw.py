@@ -1487,6 +1487,9 @@ class OpenClawSession(InteractiveSession):
                     cache_trace=(
                         cache_trace_path if cache_trace_path.is_file() else None
                     ),
+                    wire_trace=(
+                        wire_trace_path if wire_trace_path.is_file() else None
+                    ),
                     tools=(
                         extract_wire_tools(wire_trace_path)
                         if wire_trace_path.is_file()

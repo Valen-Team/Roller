@@ -64,6 +64,10 @@ class TaskBundle:
     context_manifest_digest: str
     legacy_workspace: bool = False
     resume_safe: bool = True
+    # In-memory Context manifest; only its digest is stored in samples.
+    context_manifest: Mapping[str, Any] = field(
+        default_factory=dict, compare=False, repr=False
+    )
 
 
 @dataclass(frozen=True)
