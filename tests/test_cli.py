@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from roller.cli import _build_parser, _collect, _docker_preflight, _init, _jsonl_equivalent, _validate_thinking_requests
+from roller.bundles import TaskBundleStore
 from roller.tasks import load_tasks
 from roller.models import RunRequest, Task, UserSimulatorSpec
 from roller.thinking_capabilities import ThinkingCapabilities, ThinkingCapability
@@ -291,6 +292,44 @@ def grade(transcript, workspace_path):
         self.assertEqual(payload["model_labels"], ["display-model"])
         self.assertEqual(payload["plan"][0]["model"], "provider/external-served-id")
         self.assertEqual(payload["plan"][0]["model_label"], "display-model")
+
+    def test_dry_run_reports_bundle_digests_without_writing_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "brief.md").write_text("read me", encoding="utf-8")
+            tasks = root / "tasks.jsonl"
+            tasks.write_text(
+                json.dumps(
+                    {"id": "hello", "prompt": "say hello", "files": {"inputs": ["brief.md"]}}
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            args = _build_parser().parse_args(
+                [
+                    "collect", "--tasks", str(tasks), "--model", "provider/model",
+                    "--output", str(root / "runs"), "--dry-run",
+                ]
+            )
+            before = sorted(path.name for path in root.iterdir())
+            output = io.StringIO()
+            with (
+                contextlib.redirect_stdout(output),
+                patch(
+                    "roller.cli.tempfile.TemporaryDirectory",
+                    side_effect=AssertionError("dry-run must not copy inputs"),
+                ),
+            ):
+                self.assertEqual(_collect(args), 0)
+            self.assertEqual(sorted(path.name for path in root.iterdir()), before)
+
+            task = load_tasks(tasks)[0]
+            bundle = TaskBundleStore(root / "run").prepare(task)
+
+        row = json.loads(output.getvalue())["plan"][0]
+        self.assertEqual(row["task_bundle_digest"], bundle.manifest_digest)
+        self.assertEqual(row["input_tree_digest"], bundle.input_tree_digest)
+        self.assertEqual(row["context_manifest_digest"], bundle.context_manifest_digest)
 
     def test_collect_help_groups_shared_options_by_scope(self) -> None:
         parser = _build_parser()

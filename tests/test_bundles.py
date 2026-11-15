@@ -208,6 +208,52 @@ class TaskBundleTests(unittest.TestCase):
             self.assertFalse((root / "run" / "blobs").exists())
             self.assertEqual(len(list((root / "run" / "trees" / "sha256").iterdir())), 1)
 
+    def test_validation_only_store_reports_the_same_digests_without_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "inputs").mkdir()
+            (root / "inputs" / "data.txt").write_text("input", encoding="utf-8")
+            (root / "skills" / "nested").mkdir(parents=True)
+            (root / "skills" / "nested" / "a.md").write_text("skill", encoding="utf-8")
+            payload = {
+                "id": "plan",
+                "prompt": "read",
+                "files": {
+                    "inputs": [
+                        "inputs",
+                        {"path": "config.yaml", "content": "a: 1\n"},
+                    ],
+                    "context": [
+                        {"role": "skill", "source": "skills", "target": "skills/demo"}
+                    ],
+                },
+            }
+            task = load_tasks(self._write_task(root, payload))[0]
+
+            planned = TaskBundleStore(root / "plan", materialize=False).prepare(task)
+            self.assertFalse((root / "plan").exists())
+
+            real = TaskBundleStore(root / "run").prepare(task)
+            for name in (
+                "manifest_digest",
+                "input_tree_digest",
+                "input_manifest_digest",
+                "context_manifest_digest",
+            ):
+                self.assertEqual(getattr(planned, name), getattr(real, name), name)
+
+            payload["files"]["inputs"] = [
+                {
+                    "source": "inputs/data.txt",
+                    "target": "data.txt",
+                    "sha256": "0" * 64,
+                }
+            ]
+            task = load_tasks(self._write_task(root, payload))[0]
+            with self.assertRaisesRegex(BundleError, "sha256 mismatch"):
+                TaskBundleStore(root / "plan", materialize=False).prepare(task)
+            self.assertFalse((root / "plan").exists())
+
     def test_materializes_renamed_and_inline_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

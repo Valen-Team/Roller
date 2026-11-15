@@ -98,7 +98,7 @@ These flags control the result directory and whether Roller validates, starts, o
 | --- | --- | --- |
 | `--output DIR` | `runs` | Sets the parent directory for all run roots |
 | `--run-name NAME` | UTC timestamp | Sets the directory name for this run |
-| `--dry-run` | Off | Checks tasks, files, and the run plan without starting Docker |
+| `--dry-run` | Off | Checks tasks, files, and the run plan without starting Docker or writing files. Each planned rollout lists the bundle digests a real run would record |
 | `--resume` | Off | Continues the same run and skips complete successful samples, see section 6 |
 
 ### 3.4 Compatibility and debugging
