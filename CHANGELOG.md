@@ -7,6 +7,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 ### Added
 
 - Prebuilt `linux/amd64` images of the Codex, Hermes, OpenCode, DeepSeek and Pi Harnesses at `ghcr.io/valen-team`. Claude Code is built locally because its licence does not allow redistribution.
+- `roller export RUN_DIR` converts the trajectories of a run to ATIF-v1.7, the trajectory format of [Harbor](https://github.com/harbor-framework/harbor). Each sample becomes a `trajectory.json` with its images stored as files.
 
 ### Changed
 
