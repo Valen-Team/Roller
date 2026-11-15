@@ -82,6 +82,8 @@ class OpenCodeConfig:
     context_length: int = 128000
     output_tokens: int = 8192
     vision: bool = True
+    native_tools: bool = False
+    deny_tools: tuple[str, ...] = ()
     wire_trace_mode: str = "actf"
     capture_calls: bool = False
     capture_debug: str = "on-error"
@@ -90,9 +92,21 @@ class OpenCodeConfig:
     docker_binary: str = "docker"
     preflight_image_digest: str | None = None
 
+    @property
+    def tool_selection(self) -> dict[str, Any]:
+        """Run-lock and settings fields describing the permitted tools."""
+
+        if self.native_tools:
+            return {"tools": None, "tool_policy": "native", "deny_tools": list(self.deny_tools)}
+        return {"tools": list(OPENCODE_TOOLS)}
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "reasoning_effort", opencode_effort(self.reasoning_effort))
         validate_bridge_config(self, "OpenCode")
+        if any(not isinstance(name, str) or not name.strip() for name in self.deny_tools):
+            raise ValueError("OpenCode denied tools must contain non-empty names")
+        if self.deny_tools and not self.native_tools:
+            raise ValueError("OpenCode --opencode-deny-tool requires --opencode-native-tools")
         validate_step_limits(self, "OpenCode")
 
 
@@ -158,6 +172,7 @@ class OpenCodeSession(BridgeSession):
         return {
             "max_steps": config.max_steps, "context_length": config.context_length,
             "output_tokens": config.output_tokens, "vision": config.vision,
+            **({"native_tools": True, "deny_tools": list(config.deny_tools)} if config.native_tools else {}),
             **({"files": [image["path"] for image in images]} if images else {}),
         }
 
@@ -185,7 +200,7 @@ class OpenCodeSession(BridgeSession):
         return {
             "max_steps": config.max_steps, "context_length": config.context_length,
             "output_tokens": config.output_tokens, "vision": config.vision,
-            "tools": [*OPENCODE_TOOLS, *(["task"] if config.capture_calls else [])],
+            **(config.tool_selection if config.native_tools else {"tools": [*OPENCODE_TOOLS, *(["task"] if config.capture_calls else [])]}),
             **({"capture_calls": True, "subagent_profile_policy": "explore-tool-restrictions/v1"} if config.capture_calls else {}),
         }
 

@@ -66,6 +66,8 @@ This table lists DeepSeek-specific runtime flags only. See section 3 for API add
 | Option | Default / behavior |
 | --- | --- |
 | `--deepseek-image` | Takes precedence over `--docker-image`. If neither is set, `ROLLER_DEEPSEEK_IMAGE` is used, with `roller-deepseek:0.1.5rc1` as the fallback |
+| `--deepseek-profile NAME` | `sdk-minimal` by default, which provides Bash only. `sdk` selects the full native profile with its file, search, and shell tools |
+| `--deepseek-permission-mode MODE` | Unset by default, so the profile's own permission mode applies. Accepts `read-only`, `workspace-write`, or `danger-full-access`, and applies inside the task container only |
 | `--deepseek-max-steps` | 12 model requests per user turn. Task and conversation deadlines also apply |
 | `--deepseek-context-length` | 128000 tokens by default, minimum 1024. Set it to match the endpoint |
 | `--deepseek-output-tokens` | 8192 by default. Must be positive and smaller than the context window |
@@ -73,7 +75,7 @@ This table lists DeepSeek-specific runtime flags only. See section 3 for API add
 | `--wire-trace` | Controls request recording. `full` also saves complete HTTP requests and requires an explicit API address with `--network host` |
 | `--no-keep-thinking` | Removes reasoning from ACTF/SFT only. Native history is retained |
 
-The same settings apply when DeepSeek is the Task Agent or User Simulator. After changing the image, API address, step limit, or token limits, use a new `--run-name` to avoid a conflict with the previous run configuration.
+The same settings apply when DeepSeek is the Task Agent or User Simulator. After changing the image, API address, profile, permission mode, step limit, or token limits, use a new `--run-name` to avoid a conflict with the previous run configuration.
 
 ## 5. Multimodal capabilities
 
@@ -90,6 +92,8 @@ Multi-turn messages for the same participant reuse one DeepSeek session and Bash
 ## 7. Tools and capability limits
 
 The current `sdk-minimal` configuration provides one persistent `bash` tool. File operations and content search also use Bash commands. Separate image, Web, MCP, and subagent tools are not available.
+
+`--deepseek-profile sdk` selects the full native profile instead. Its tools come from the SDK, and its Bash tool starts a separate process for each call, so shell variables do not persist between calls while files and the session do. Pair it with `--deepseek-permission-mode danger-full-access` to let tools run without approval prompts inside the disposable container. See [Harness tool availability](tool-availability.md).
 
 Automatic compaction is disabled. Long tasks need a sufficiently large `--deepseek-context-length`, and the selected endpoint must support the DeepSeek request format and thinking fields.
 

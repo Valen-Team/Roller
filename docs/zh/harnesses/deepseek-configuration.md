@@ -66,6 +66,8 @@ roller collect \
 | 参数 | 默认值与行为 |
 | --- | --- |
 | `--deepseek-image` | 优先于 `--docker-image`。两者均未设置时使用 `ROLLER_DEEPSEEK_IMAGE`，该变量也未设置时使用 `roller-deepseek:0.1.5rc1` |
+| `--deepseek-profile NAME` | 默认 `sdk-minimal`，仅提供 Bash。`sdk` 选择完整的原生 profile，提供文件、搜索和 shell 工具 |
+| `--deepseek-permission-mode MODE` | 默认不设置，使用 profile 自身的权限模式。可选 `read-only`、`workspace-write` 或 `danger-full-access`，仅作用于 task 容器内部 |
 | `--deepseek-max-steps` | 每条用户消息最多 12 次模型请求，同时受 task 和对话轮次超时的限制 |
 | `--deepseek-context-length` | 默认 128000，至少 1024，按实际服务设置 |
 | `--deepseek-output-tokens` | 默认 8192，必须为正且小于上下文窗口 |
@@ -73,7 +75,7 @@ roller collect \
 | `--wire-trace` | 控制请求记录方式。`full` 额外保存完整 HTTP 请求，需要显式 API 地址和 `--network host` |
 | `--no-keep-thinking` | 仅移除 ACTF/SFT 中的 reasoning，保留原始事件和续聊历史 |
 
-DeepSeek 作为 Task Agent 或 User Simulator 时均使用这些参数。修改镜像、API 地址、步数或 token 上限后，建议使用新的 `--run-name`，以免与原有运行配置冲突。
+DeepSeek 作为 Task Agent 或 User Simulator 时均使用这些参数。修改镜像、API 地址、profile、权限模式、步数或 token 上限后，建议使用新的 `--run-name`，以免与原有运行配置冲突。
 
 ## 5. 多模态能力
 
@@ -90,6 +92,8 @@ DeepSeek Harness 当前固定使用官方最小工具配置 `sdk-minimal`，仅�
 ## 7. 工具与能力限制
 
 当前 `sdk-minimal` 工具配置只提供一个持续可用的 `bash` 工具。读写文件和搜索内容也通过 Bash 命令完成，不提供单独的图片、Web、MCP 或子 Agent 工具。
+
+`--deepseek-profile sdk` 改用完整的原生 profile，工具由 SDK 提供。其 Bash 工具每次调用启动独立进程，因此 shell 变量不会跨调用保留，文件和 session 仍然保留。配合 `--deepseek-permission-mode danger-full-access` 可使工具在一次性容器内无需审批直接执行。详见 [Harness 工具开放情况](tool-availability.md)。
 
 自动压缩已关闭。长 task 需要通过 `--deepseek-context-length` 设置足够大的上下文窗口；所选模型服务须支持 DeepSeek 的请求格式和 thinking 字段。
 

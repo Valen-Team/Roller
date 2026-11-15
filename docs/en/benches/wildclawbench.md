@@ -29,6 +29,14 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
 The task snapshot and report are saved as `run1/tasks.jsonl` and
 `run1/bench-report.json`.
 
+The same run can be described in a YAML file and started with `roller bench run`; see
+[Benchmark run configuration](benchmark-standard.md):
+
+```bash
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/wildclawbench.yaml
+```
+
 ## 2. Upstream parameters → Roller equivalents
 
 CLI flags of `eval/run_batch.py`:
@@ -164,7 +172,9 @@ Mounting the entire `<declared>` directory adds an unwanted path level: skills
 and warmup refer to `/tmp_workspace/utils.py`, but the file is located under
 `/tmp_workspace/exec/`. It also exposes `gt/` to the Agent. Setting `workspace`
 to `<declared>/exec` isolates the answers through the mount layout, without
-filtering individual files.
+filtering individual files. The adapter also sets `runtime.workspace_path` to
+`/tmp_workspace` on every row, so each Harness works in the directory that task
+prompts and graders address by absolute path.
 
 ## 8. Section mapping
 
@@ -200,3 +210,6 @@ filtering individual files.
   three still have valid scores: images in observations, timeouts during tool
   calls, and a final turn with only a tool call and no closing text. See
   [Bench integration and scoring §3.2](bench-format.md#32-a-grading-failure-is-not-a-0-score).
+- WildClawBench rows set `bench.grade.grade_on_agent_failure`, so a sample whose
+  Agent timed out or exited with an error is still graded on the live workspace,
+  as the upstream runner does. The task grader decides its score.

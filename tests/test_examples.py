@@ -10,6 +10,11 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
+import yaml
+
+from roller.benches import BENCHES
+from roller.benches.run_config import load_bench_run_plan
+from roller.harness_registry import HARNESS_NAMES
 from roller.bundles import TaskBundleStore
 from roller.tasks import load_tasks
 from roller.harnesses.openclaw import load_model_config
@@ -152,6 +157,107 @@ class ExampleFilesTests(unittest.TestCase):
         self.assertIn("MY_PROXY_BASE_URL=https://api.example.com/v1", content)
         self.assertIn("MY_PROXY_API_KEY=replace-with-your-api-key", content)
         self.assertIn("BRAVE_API_KEY=replace-with-your-brave-api-key", content)
+
+    def test_benchmark_config_examples_are_layerable_and_secret_free(self) -> None:
+        config_root = self.examples_root / "benchmarks"
+        environment = {
+            "ROLLER_MODEL_ID": "example/model",
+            "ROLLER_MODEL_BASE_URL": "https://model.example/v1",
+            "ROLLER_MODEL_API_KEY": "model-secret",
+            "ROLLER_BENCH_OUTPUT": "/tmp/roller-benchmark-results",
+            "ROLLER_JUDGE_BASE_URL": "https://judge.example/v1",
+            "ROLLER_JUDGE_API_KEY": "judge-secret",
+            "ROLLER_JUDGE_MODEL": "example-judge",
+            "ROLLER_SEARCH_API_KEY": "search-secret",
+            "WILDCLAWBENCH_ROOT": "/tmp/wildclawbench",
+            "PINCHBENCH_ROOT": "/tmp/pinchbench",
+            "QWENCLAWBENCH_ROOT": "/tmp/qwenclawbench",
+            "SKILLSBENCH_ROOT": "/tmp/skillsbench",
+        }
+        cases = (
+            ("wildclawbench.yaml", (), "wildclawbench", "openclaw"),
+            ("pinchbench.yaml", (), "pinchbench", "openclaw"),
+            ("qwenclawbench.yaml", (), "qwenclawbench", "openclaw"),
+            ("skillsbench.yaml", (), "skillsbench", "opencode"),
+            (
+                "skillsbench.yaml",
+                ("skillsbench-no-skill.yaml",),
+                "skillsbench",
+                "opencode",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            for primary, additional, benchmark, harness in cases:
+                with self.subTest(primary=primary, additional=additional):
+                    overlays = [str(config_root / primary)] + [
+                        str(config_root / name) for name in additional
+                    ]
+                    plan = load_bench_run_plan(
+                        config_root / "base.yaml",
+                        overlays,
+                        environ=environment,
+                        temporary_root=Path(temporary),
+                    )
+                    argv = list(plan.collect_argv)
+                    self.assertEqual(argv[argv.index("--bench") + 1], benchmark)
+                    self.assertEqual(argv[argv.index("--harness") + 1], harness)
+                    if benchmark == "qwenclawbench":
+                        self.assertEqual(
+                            argv[argv.index("--bench-runs-per-task") + 1], "3"
+                        )
+                        self.assertEqual(argv[argv.index("--samples") + 1], "1")
+                    self.assertNotIn("model-secret", " ".join(argv))
+                    self.assertNotIn("judge-secret", json.dumps(plan.provenance))
+                    self.assertNotIn("search-secret", json.dumps(plan.provenance))
+
+        combined = "\n".join(
+            path.read_text(encoding="utf-8") for path in config_root.glob("*.yaml")
+        )
+        self.assertNotIn("sk-", combined)
+        self.assertNotIn("joyrouter", combined.lower())
+
+    def test_benchmark_run_schema_tracks_registered_harnesses(self) -> None:
+        schema = json.loads(
+            (self.project_root / "schemas" / "bench-run.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(
+            schema["properties"]["schema_version"]["const"],
+            "roller.bench-run/v1",
+        )
+        self.assertEqual(
+            set(schema["properties"]["harness"]["properties"]["id"]["enum"]),
+            set(HARNESS_NAMES),
+        )
+
+    def test_every_benchmark_example_names_a_registered_bench(self) -> None:
+        named = set()
+        for path in sorted((self.examples_root / "benchmarks").glob("*.yaml")):
+            benchmark = yaml.safe_load(path.read_text(encoding="utf-8")).get(
+                "benchmark", {}
+            )
+            if "id" not in benchmark:
+                continue
+            with self.subTest(config=path.name):
+                self.assertIn(benchmark["id"], BENCHES)
+                self.assertEqual(path.stem, benchmark["id"])
+                script = self.project_root / "scripts" / f"prepare-{path.stem}.sh"
+                self.assertTrue(script.is_file())
+                self.assertTrue(script.stat().st_mode & 0o111)
+            named.add(benchmark["id"])
+        self.assertTrue(named)
+
+    def test_benchmark_examples_ship_with_the_package(self) -> None:
+        build = tomllib.loads(
+            (self.project_root / "pyproject.toml").read_text(encoding="utf-8")
+        )["tool"]["hatch"]["build"]["targets"]
+        self.assertEqual(
+            build["wheel"]["force-include"]["examples/benchmarks"],
+            "roller/examples/benchmarks",
+        )
+        self.assertIn("/examples/benchmarks", build["sdist"]["include"])
 
 
 if __name__ == "__main__":

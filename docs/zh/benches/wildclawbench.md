@@ -26,6 +26,14 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
 
 任务快照与报告分别保存在 `run1/tasks.jsonl` 和 `run1/bench-report.json`。
 
+同一次运行也可以写成 YAML 文件，并通过 `roller bench run` 启动，见
+[Benchmark 运行配置](benchmark-standard.md)：
+
+```bash
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/wildclawbench.yaml
+```
+
 ## 2. 上游参数 → Roller 对应项
 
 `eval/run_batch.py` 的 CLI 参数：
@@ -145,7 +153,8 @@ Adapter 保留这段前缀，使导出的 prompt 与上游逐字节一致；遗�
 挂载整个 `<declared>` 目录会使种子文件多出一层路径：skill 和 warmup 引用
 `/tmp_workspace/utils.py`，文件却位于 `/tmp_workspace/exec/` 下。同时，Agent 会获得
 读取 `gt/` 的权限。因此 `workspace` 指向 `<declared>/exec`，通过挂载范围隔离答案，
-无需再过滤文件。
+无需再过滤文件。Adapter 同时为每个 task 设置 `runtime.workspace_path` 为
+`/tmp_workspace`，各 Harness 的工作目录与任务 prompt 和 grader 中的绝对路径一致。
 
 ## 8. 段落映射总表
 
@@ -177,3 +186,6 @@ Adapter 保留这段前缀，使导出的 prompt 与上游逐字节一致；遗�
   四种常见的 `status: error` 情况中，有三种仍有有效分数：observation 包含图片、
   工具调用中途超时、末轮只有工具调用而没有收尾文本。见
   [Bench 接入与评分 §3.2](bench-format.md#32-grading-失败--0-分)。
+- WildClawBench 的 task 设置了 `bench.grade.grade_on_agent_failure`：Agent 超时或
+  报错退出后，Roller 仍对存活的 workspace 评分，与上游 runner 一致。分数由任务
+  grader 决定。

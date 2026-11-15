@@ -14,7 +14,6 @@ from unittest.mock import Mock, patch
 
 from roller.cli import _build_parser, _collect
 from roller.harnesses.opencode import (
-    OPENCODE_TOOLS,
     RUNNER_PATH,
     OpenCodeConfig,
     OpenCodeHarness,
@@ -431,9 +430,7 @@ class OpenCodeHarnessTests(unittest.TestCase):
             self.assertEqual(result.status, "error")
             self.assertIn("--opencode-vision", result.error)
 
-        spec = importlib.util.spec_from_file_location("opencode_runner_files", RUNNER_PATH)
-        runner = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(runner)
+        runner = self.runner()
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"OPENAI_BASE_URL": "http://example.test/v1"}), \
                 patch.object(runner.subprocess, "Popen", side_effect=RuntimeError("stop")) as popen:
             config = {"timeout_seconds": 30, "model": "m", "context_length": 2048, "output_tokens": 512,
@@ -443,12 +440,79 @@ class OpenCodeHarnessTests(unittest.TestCase):
         args = popen.call_args.args[0]
         self.assertEqual(args[args.index("--file") + 1], "/roller/workspace/inputs/chart.png")
 
-    def test_native_skill_tool_is_allowed(self):
-        self.assertIn("skill", OPENCODE_TOOLS)
+    def runner(self):
         spec = importlib.util.spec_from_file_location("opencode_runner_tools", RUNNER_PATH)
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
-        self.assertIn("skill", runner.TOOLS)
+        return runner
+
+    def session(self, **kwargs):
+        harness = OpenCodeHarness(OpenCodeConfig(**kwargs), 0, Mock())
+        return harness.create_session(RunRequest(0, Task("test", ("one",), 0), "model", 60), Path("unused"), 1)
+
+    def test_default_lock_settings_and_permissions_are_unchanged(self):
+        tools = ["bash", "read", "write", "edit", "apply_patch", "glob", "grep", "skill"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tasks = root / "tasks.json"
+            tasks.write_text(json.dumps([{"harness": "opencode", "model": "model", "prompt": "OK"}]))
+            command = ["collect", "--tasks", str(tasks), "--output", str(root / "runs"), "--run-name", "case", "--api-base", "https://opencode.example/v1", "--api-key-env", "LOCAL_TEST_KEY"]
+            with patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}), patch("roller.cli._docker_preflight", return_value="sha256:test"), patch("roller.cli.Collector") as collector, contextlib.redirect_stdout(io.StringIO()):
+                collector.return_value.collect.return_value = []
+                self.assertEqual(_collect(_build_parser().parse_args(command)), 0)
+                with self.assertRaisesRegex(Exception, "lock|configuration|mismatch"):
+                    _collect(_build_parser().parse_args(command + ["--resume", "--opencode-native-tools"]))
+            locked = json.loads((root / "runs/case/lock.json").read_text())["execution"]["opencode"]
+        self.assertEqual(locked, {
+            "docker_image": "roller-opencode:1.18.30", "container_user": "0", "network": "host",
+            "api_base": "https://opencode.example/v1", "api_key_env": "LOCAL_TEST_KEY", "reasoning_effort": None,
+            "max_steps": 12, "opencode_version": "1.18.30", "context_length": 128000, "output_tokens": 8192,
+            "vision": True, "tools": tools, "api_mode": "chat_completions", "wire_trace": "actf", "keep_thinking": True,
+            "pass_env_names": ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"],
+            "compaction": {"auto": False, "prune": False}, "docker_image_digest": "sha256:test",
+        })
+        session = self.session()
+        self.assertEqual(session.settings(), {"max_steps": 12, "context_length": 128000, "output_tokens": 8192, "vision": True, "tools": tools})
+        self.assertEqual(session.turn_options(60), {"max_steps": 12, "context_length": 128000, "output_tokens": 8192, "vision": True})
+        captured = self.session(capture_calls=True, api_base="http://localhost:1234/v1").settings()
+        self.assertEqual(captured["tools"], [*tools, "task"])
+        self.assertEqual(captured["subagent_profile_policy"], "explore-tool-restrictions/v1")
+        runner = self.runner()
+        allowed = {name: "allow" for name in tools}
+        self.assertEqual(runner.tool_permissions({}), {"*": "deny", **allowed, "external_directory": "allow"})
+        self.assertEqual(runner.tool_permissions({"capture_calls": True}), {"*": "deny", **allowed, "external_directory": "allow", "task": "allow"})
+        self.assertEqual(runner.agent_profiles({"max_steps": 12}), {"build": {"steps": 12}, "title": {"disable": True}, "summary": {"disable": True}})
+        self.assertEqual(runner.agent_profiles({"max_steps": 12, "capture_calls": True})["explore"], {"steps": 12, "permission": {
+            "write": "deny", "edit": "deny", "apply_patch": "deny", "task": "deny", "skill": "deny"}})
+
+    def test_native_tools_keep_subagents_behind_call_capture(self):
+        runner = self.runner()
+        for capture in (False, True):
+            with self.subTest(capture_calls=capture):
+                session = self.session(native_tools=True, deny_tools=("webfetch",), capture_calls=capture,
+                                       api_base="http://localhost:1234/v1")
+                self.assertEqual({key: session.settings()[key] for key in ("tools", "tool_policy", "deny_tools")},
+                                 {"tools": None, "tool_policy": "native", "deny_tools": ["webfetch"]})
+                turn = {"capture_calls": capture, **session.turn_options(60)}
+                self.assertEqual((turn["native_tools"], turn["deny_tools"]), (True, ["webfetch"]))
+                policy = runner.tool_permissions(turn)
+                # OpenCode applies the last matching rule.
+                self.assertEqual(list(policy)[0], "*")
+                self.assertEqual(policy["*"], "allow")
+                self.assertEqual(policy["webfetch"], "deny")
+                self.assertEqual(policy.get("task", policy["*"]), "allow" if capture else "deny")
+                agents = runner.agent_profiles(turn)
+                if capture:
+                    self.assertEqual(agents["explore"]["permission"], {
+                        "*": "deny", "bash": "allow", "read": "allow", "glob": "allow", "grep": "allow",
+                        "external_directory": "allow", "webfetch": "deny"})
+                else:
+                    self.assertNotIn("explore", agents)
+        self.assertEqual(runner.tool_permissions({"capture_calls": True, "native_tools": True, "deny_tools": ["task"]})["task"], "deny")
+        with self.assertRaises(ValueError):
+            OpenCodeConfig(deny_tools=("webfetch",))
+        with self.assertRaises(ValueError):
+            OpenCodeConfig(native_tools=True, deny_tools=("",))
 
     def test_skillsbench_prompt_preserves_upstream_output_paths(self):
         task = Task(

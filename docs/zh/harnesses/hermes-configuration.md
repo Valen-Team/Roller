@@ -71,11 +71,12 @@ roller collect \
 | `--hermes-context-length` | 可选上下文窗口覆盖，至少 64000 tokens |
 | `--hermes-max-iterations` | 每条用户消息最多 12 次模型迭代，同时受整个 task 的超时限制 |
 | `--hermes-vision` / `--no-hermes-vision` | 启用 `vision_analyze`，并声明所选模型支持图片输入。默认开启 |
+| `--hermes-toolset NAME` | 以指定的 Hermes 工具集替换默认的 `terminal`、`file` 和可选的 `vision`，可重复指定多个。`native` 表示由 Hermes 自身的工具集发现决定。`delegation` 工具集仅在开启 `--capture-calls` 时可用 |
 | `--thinking` / `runtime.thinking` | 可选原生 reasoning 提示：`off/minimal/low/medium/high/xhigh`。实际支持及归一化由 Hermes、模型和服务共同决定 |
 | `--wire-trace` | 所有模式均保留原生请求中的工具定义和 system prompt。`full` 额外保存 HTTP 轨迹，要求显式 API 地址和 `--network host` |
 | `--no-keep-thinking` | 只从 ACTF/SFT 导出中移除 reasoning，保留原始轨迹与原生续聊历史 |
 
-Hermes 作为 Task Agent 或 User Simulator 时均使用这些参数。修改镜像、API 地址或迭代上限后，建议使用新的 `--run-name`，以免与原有运行配置冲突。
+Hermes 作为 Task Agent 或 User Simulator 时均使用这些参数。修改镜像、API 地址、迭代上限或工具集后，建议使用新的 `--run-name`，以免与原有运行配置冲突。
 
 ## 5. 多模态能力
 
@@ -90,6 +91,8 @@ Hermes 提供终端、文件和可选的图片工具。模型和 API 服务均�
 同一参与者的多轮消息会保留对话历史和工作区文件。每一轮均重新启动 Python agent 进程，因此后台进程句柄等内存状态不会保留。需要跨轮使用的信息应写入工作区文件。
 
 采集时不启用 Hermes 的持久记忆和 skill 自动学习。Context 和 skill 文件仍可由 task 按路径读取。
+
+通过 `--hermes-toolset` 选择的工具集在同一容器内运行。调用外部服务的工具集需要镜像中已安装相应依赖，凭据通过 `--pass-env` 或 task 的 `runtime.env` 传入。详见 [Harness 工具开放情况](tool-availability.md)。
 
 ## 7. 轨迹与请求记录
 

@@ -70,11 +70,13 @@ This table lists OpenCode-specific runtime flags only. See section 3 for API add
 | `--opencode-context-length` | 128000 tokens by default, minimum 1024. Set it to match the actual model |
 | `--opencode-output-tokens` | 32768 for SkillsBench and 8192 otherwise. Must be positive and smaller than the context window |
 | `--opencode-vision` / `--no-opencode-vision` | Declares image-input support to OpenCode. Enabled by default; can be disabled explicitly for text-only models |
+| `--opencode-native-tools` | Off. Permits every tool in the native OpenCode registry instead of the fixed `bash/read/write/edit/apply_patch/glob/grep/skill` list. The `task` tool is permitted only with `--capture-calls` |
+| `--opencode-deny-tool NAME` | Denies one native tool or permission under `--opencode-native-tools`. Repeat it as needed |
 | `--thinking` / `runtime.thinking` | `off/minimal/low/medium/high/xhigh`. `off` maps to `none`. Provider support is required |
 | `--wire-trace` | Native requests and tool definitions are captured in every mode. `full` adds HTTP records and requires an explicit API address with `--network host` |
 | `--no-keep-thinking` | Removes reasoning from ACTF/SFT only. Native logs and continuation history are retained |
 
-The same settings apply when OpenCode is the Task Agent or User Simulator. After changing the image, API address, context window, or step limit, use a new `--run-name` to avoid a conflict with the previous run configuration.
+The same settings apply when OpenCode is the Task Agent or User Simulator. After changing the image, API address, context window, step limit, or tool selection, use a new `--run-name` to avoid a conflict with the previous run configuration.
 
 ## 5. Multimodal capabilities
 
@@ -89,6 +91,8 @@ Each Agent or Simulator runs in an isolated container and does not read the host
 Multi-turn messages for the same participant resume one OpenCode session, so conversation history and workspace files remain available. Each turn starts a new CLI process, so background process handles do not persist.
 
 Collection does not automatically share sessions, update OpenCode, or enable MCP, subagents, and network tools. Context and skill files remain readable by path.
+
+`--opencode-native-tools` permits the remaining tools of the native registry, including network tools. Subagents stay tied to `--capture-calls`, and the Explore subagent keeps its `bash/read/glob/grep` profile. See [Harness tool availability](tool-availability.md).
 
 ## 7. Trajectories and request recording
 

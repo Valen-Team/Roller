@@ -18,9 +18,10 @@ export ROLLER_RUN_ROOT="$PWD/runs/pinchbench"
 mkdir -p "$ROLLER_RUN_ROOT"
 ```
 
-`prepare-pinchbench.sh` clones the upstream data when the target directory is missing and pulls
-the pinned `linux/amd64` OpenClaw image. It does not update an existing checkout. The script
-prints the commit for experiment records and does not read or write API keys. To prepare the
+`prepare-pinchbench.sh` fetches the pinned upstream commit when the target directory is missing
+and pulls the pinned `linux/amd64` OpenClaw image. For an existing checkout, it verifies the
+commit without changing the data. The script prints the commit for experiment records and does
+not read or write API keys. To prepare the
 environment manually, clone <https://github.com/pinchbench/skill> and pull
 `ghcr.io/openclaw/openclaw:2026.7.1-2`.
 
@@ -69,6 +70,14 @@ roller collect --bench pinchbench --bench-root "$PINCHBENCH_ROOT" \
   --model example/example-model --model-config example.models.json \
   --samples 1 --parallel 1 --grader-parallel 1 \
   --output "$ROLLER_RUN_ROOT" --run-name core
+```
+
+The same run can be described in a YAML file and started with `roller bench run`; see
+[Benchmark run configuration](benchmark-standard.md):
+
+```bash
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/pinchbench.yaml
 ```
 
 ## Variants

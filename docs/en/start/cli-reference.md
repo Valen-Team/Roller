@@ -24,9 +24,9 @@ Choose the command for the job first, then add that command's flags.
 | Command | Purpose |
 | --- | --- |
 | `roller collect [OPTIONS]` | Reads tasks, runs a Harness, and collects trajectories |
-| `roller init [DIRECTORY]` | Writes the example tasks and configuration templates to `DIRECTORY/examples` (default: the current directory); existing files are kept |
+| `roller init [DIRECTORY]` | Writes the example tasks, configuration templates, and benchmark run configurations to `DIRECTORY/examples` (default: the current directory); existing files are kept |
 | `roller view RUN_DIR` | Opens an existing run in the Viewer |
-| `roller bench ...` | Lists, exports, or summarizes benchmarks, with collection flags in section 8 |
+| `roller bench ...` | Lists, runs, exports, or summarizes benchmarks, with collection flags in section 8 |
 | `roller --version` | Shows the installed Roller version |
 
 A minimal collect command requires a task list. Set the model with `--model` or in each task's `model` field.
@@ -233,12 +233,9 @@ Flags that belong to one Harness are documented in that Harness guide. Each guid
 | DeepSeek | {ref}`DeepSeek Harness guide <deepseek-cli-flags>` |
 | Pi Agent | {ref}`Pi Agent Harness guide <pi-cli-flags>` |
 
-The following Harness flags adapt the traffic of an OpenAI- or Anthropic-compatible endpoint. Both depend on the request recording proxy, and both are recorded in `lock.json` only when they are set:
+For the tools each Harness exposes and the flags that select them, see [Harness tool availability](../harnesses/tool-availability.md).
 
-| Flag | Harness | Purpose |
-| --- | --- | --- |
-| `--codex-image-detail auto\|low\|high\|original` | Codex | Sets `detail` on Responses image inputs that Codex sends without one |
-| `--claude-unique-tool-ids` | Claude Code | Replaces tool-call IDs that the API service issues more than once and records them in `tool_id_mappings.jsonl` |
+For endpoints that need adapted requests or responses, `--codex-image-detail` sets the `detail` of Responses image inputs ({ref}`Codex Harness guide <codex-cli-flags>`), and `--claude-unique-tool-ids` replaces tool-call IDs that the service issues more than once ({ref}`Claude Code Harness guide <claude-code-cli-flags>`).
 
 To inspect the complete flag set supported by the Roller version currently in use, run:
 
@@ -282,14 +279,16 @@ Bench flags convert an external benchmark into Roller tasks, run collection, gra
 | --- | --- |
 | `roller bench list` | Lists the available benchmark adapters |
 | `roller collect --bench ...` | Converts, runs, grades, and summarizes a benchmark, recommended for most users |
+| `roller bench run --config FILE` | Starts the same `collect --bench` run from layered YAML or JSON files |
 | `roller bench export ...` | Converts a benchmark to task JSONL without running tasks |
 | `roller bench report RUN_DIR` | Regenerates a grading summary for an existing run |
 
 Common command forms:
 
 ```bash
-roller collect --bench NAME --bench-root ROOT [--bench-category CAT]... [--bench-task-id ID]... [--bench-variant NAME] [--bench-timeout-multiplier N] ...
-roller bench export NAME ROOT --output TASKS.jsonl [--category CAT]... [--task-id ID]... [--variant NAME] [--timeout-multiplier N]
+roller collect --bench NAME --bench-root ROOT [--bench-category CAT]... [--bench-task-id ID]... [--bench-variant NAME] [--bench-timeout-multiplier N] [--bench-runs-per-task N] ...
+roller bench run --config FILE [--extra-config FILE_OR_JSON]... [--dry-run]
+roller bench export NAME ROOT --output TASKS.jsonl [--category CAT]... [--task-id ID]... [--variant NAME] [--timeout-multiplier N] [--runs-per-task N]
 roller bench report RUN_DIR [--output REPORT.json]
 ```
 
@@ -303,10 +302,21 @@ Prefer `collect --bench`. It converts tasks, runs containers, grades results, an
 | `--bench-task-id ID` / `--task-id ID` | Unlimited | Selects one task and can be repeated, invalid IDs fail immediately |
 | `--bench-variant NAME` / `--variant NAME` | Adapter default | Selects a benchmark condition such as SkillsBench `with-skill` or `no-skill` |
 | `--bench-timeout-multiplier N` / `--timeout-multiplier N` | Adapter default | Scales each benchmark task timeout by a finite positive number |
+| `--bench-runs-per-task N` / `--runs-per-task N` | `1` | Duplicates each selected task N times and records the run index in the bench metadata |
 | `--output` / `-o` | Required for export | Sets the exported task JSONL or report JSON |
 | `RUN_DIR` | Required for report | Selects a completed run and is a positional argument |
 | `--rebuild-task-images` | Off | Rebuilds task-specific benchmark images even when they already exist |
 
 `collect --bench` automatically uses each benchmark task's timeout. For a manual export followed by collect, add `--task-timeouts` to collect. Both workflows can use `--pass-env` for environment variables required by the grader.
+
+`bench run` takes its settings from files instead of flags:
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--config FILE` | Required | Selects the base run configuration in YAML or JSON |
+| `--extra-config FILE_OR_JSON` | None | Adds a layer from a file or an inline JSON object and can be repeated, later layers override earlier ones |
+| `--dry-run` | Off | Validates the merged configuration and prints the plan without starting containers |
+
+See [Benchmark run configuration](../benches/benchmark-standard.md) for the fields and the `collect` flag each one sets.
 
 See [Bench integration and scoring](../benches/bench-format.md) for field semantics, scoring order, `stage` leak prevention, and aggregation rules.

@@ -357,7 +357,10 @@ def prepare_benchmark_workspace(
         return
     actual = workspace_container_path(session)
     expected = spec.workspace_path
-    if actual == expected:
+    # Some benchmark graders intentionally run from the container root so
+    # staged files keep upstream absolute paths such as /verifier. The root
+    # already exists and cannot be replaced with a workspace symlink.
+    if actual == expected or expected == "/":
         return
     container = getattr(session, "container", None)
     runtime = getattr(getattr(session, "harness", None), "runtime", None)
@@ -446,8 +449,19 @@ class GradedHarness(Harness):
             status = "error"
             error = str(exc)
 
-        outcome = self._grade(session, request, status)
-        result = session.finish(status, error)
+        grade_started = time.monotonic()
+        try:
+            outcome = self._grade(session, request, status)
+        except Exception as exc:
+            logger.exception("[%s] grading raised", request.task.id)
+            outcome = GradeOutcome(
+                _error_scores(str(exc)),
+                time.monotonic() - grade_started,
+                error=str(exc),
+            )
+        finally:
+            # Grader failures must not skip saving the agent's work and teardown.
+            result = session.finish(status, error)
         if outcome is not None:
             self._attach(result, request, output_dir, outcome)
         return result
@@ -469,12 +483,18 @@ class GradedHarness(Harness):
         spec = self.binding.grade
         if spec is None:
             return None
-        if status != "ok":
+        if status != "ok" and not spec.grade_on_agent_failure:
             # Agent timeouts/errors are excluded by benchmark protocol. A timed
             # out harness may already have stopped its container, so attempting
             # an exec here only obscures the real failure with a runtime error.
             message = f"agent {status}; benchmark grading skipped"
             return GradeOutcome(_error_scores(message), 0.0, error=message)
+        if status != "ok":
+            logger.info(
+                "[%s] grading workspace after agent %s per benchmark protocol",
+                request.task.id,
+                status,
+            )
         container = getattr(session, "container", None)
         if not getattr(session, "container_started", False) or not container:
             # The container never came up, so there is nothing to inspect. A

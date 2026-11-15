@@ -42,7 +42,7 @@ from roller.harnesses.config_overrides import (
 )
 from roller.harnesses.container import PROXY_ENV_NAMES
 from roller.harnesses.deepseek import (
-    DEFAULT_DEEPSEEK_IMAGE, DEEPSEEK_VERSION, DEEPSEEK_TOOLS,
+    DEFAULT_DEEPSEEK_IMAGE, DEEPSEEK_PERMISSION_MODES, DEEPSEEK_VERSION,
     DeepSeekConfig, DeepSeekHarness, deepseek_effort,
 )
 from roller.harnesses.pi import (
@@ -50,7 +50,7 @@ from roller.harnesses.pi import (
     PiConfig, PiHarness, pi_effort,
 )
 from roller.harnesses.opencode import (
-    DEFAULT_OPENCODE_IMAGE, OPENCODE_VERSION, OPENCODE_TOOLS,
+    DEFAULT_OPENCODE_IMAGE, OPENCODE_VERSION,
     OpenCodeConfig, OpenCodeHarness, opencode_effort,
 )
 from roller.harnesses.hermes import (
@@ -134,6 +134,29 @@ def _build_parser() -> argparse.ArgumentParser:
 
     bench_sub.add_parser("list", help="list registered benchmark adapters")
 
+    bench_run = bench_sub.add_parser(
+        "run", help="run a benchmark from layered YAML/JSON configuration"
+    )
+    bench_run.add_argument(
+        "--config",
+        required=True,
+        help="base benchmark run configuration (YAML or JSON)",
+    )
+    bench_run.add_argument(
+        "--extra-config",
+        action="append",
+        default=[],
+        help=(
+            "YAML/JSON overlay path or inline JSON object; repeatable and applied "
+            "from left to right"
+        ),
+    )
+    bench_run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="resolve and validate the complete plan without starting containers",
+    )
+
     bench_export = bench_sub.add_parser(
         "export", help="convert a checked-out bench into a Roller task list"
     )
@@ -210,6 +233,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0,
         help="multiply benchmark task timeouts (default: 1.0)",
+    )
+    collect.add_argument(
+        "--bench-runs-per-task",
+        type=int,
+        default=1,
+        help="duplicate each selected benchmark task before collection (default: 1)",
     )
     collect.add_argument(
         "--model",
@@ -471,6 +500,10 @@ def _build_parser() -> argparse.ArgumentParser:
     api.add_argument("--claude-api-key-env", help="Claude Code-only API key environment variable")
 
     hermes = collect.add_argument_group("Hermes")
+    hermes.add_argument(
+        "--hermes-toolset", action="append", metavar="NAME",
+        help="Hermes toolset to enable instead of terminal/file/vision; repeat to select several, or pass 'native' for native discovery",
+    )
     hermes.add_argument("--hermes-max-iterations", type=int, default=12, help="maximum model iterations per Hermes user turn (default: 12)")
     hermes.add_argument("--hermes-context-length", type=int, help="override Hermes model context window (at least 64000 tokens)")
     hermes.add_argument(
@@ -481,6 +514,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     opencode = collect.add_argument_group("OpenCode")
+    opencode.add_argument("--opencode-native-tools", action="store_true", help="permit every tool of the native OpenCode registry instead of the fixed tool list")
+    opencode.add_argument("--opencode-deny-tool", action="append", default=[], metavar="NAME", help="deny a native OpenCode tool or permission under --opencode-native-tools; repeat as needed")
     opencode.add_argument(
         "--opencode-max-steps",
         type=int,
@@ -505,6 +540,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     deepseek = collect.add_argument_group("DeepSeek")
+    deepseek.add_argument("--deepseek-profile", default="sdk-minimal", metavar="NAME", help="native DeepSeek SDK profile (default: sdk-minimal; sdk selects the full native tool set)")
+    deepseek.add_argument("--deepseek-permission-mode", choices=DEEPSEEK_PERMISSION_MODES, help="native DeepSeek permission mode inside the task container (default: the profile's own)")
     deepseek.add_argument("--deepseek-max-steps", type=int, default=12, help="maximum model steps per DeepSeek user turn (default: 12)")
     deepseek.add_argument("--deepseek-context-length", type=int, default=128000, help="DeepSeek model context window (default: 128000 tokens)")
     deepseek.add_argument("--deepseek-output-tokens", type=int, default=8192, help="DeepSeek maximum output tokens (default: 8192)")
@@ -653,7 +690,7 @@ def _dry_run_payload(args: argparse.Namespace, requests: list) -> dict:
         cli_harness or getattr(request.task, "harness", "openclaw")
         for request in requests
     }
-    return {
+    payload = {
         "dry_run": True,
         "harness": next(iter(agent_harnesses)) if len(agent_harnesses) == 1 else "mixed",
         "docker_image": args.docker_image,
@@ -712,6 +749,10 @@ def _dry_run_payload(args: argparse.Namespace, requests: list) -> dict:
             for request in requests
         ],
     }
+    bench_run_config = getattr(args, "_bench_run_config", None)
+    if isinstance(bench_run_config, dict):
+        payload["bench_run_config"] = bench_run_config
+    return payload
 
 
 def _with_task_timeout(request):
@@ -728,6 +769,49 @@ def _with_task_timeout(request):
     if declared == request.timeout_seconds:
         return request
     return dataclasses.replace(request, timeout_seconds=declared)
+
+
+def _repeat_bench_rows(
+    rows: list[dict[str, Any]], runs_per_task: int, adapter_name: str
+) -> list[dict[str, Any]]:
+    """Duplicate benchmark rows while preserving upstream run provenance."""
+
+    if runs_per_task < 1:
+        raise TaskFormatError("runs per task must be positive")
+    if runs_per_task == 1:
+        return rows
+    repeated: list[dict[str, Any]] = []
+    width = max(2, len(str(runs_per_task)))
+    for row in rows:
+        task_id = row.get("id")
+        bench = row.get("bench")
+        if not isinstance(task_id, str) or not task_id:
+            raise TaskFormatError(
+                f"{adapter_name}: exported task has no valid id"
+            )
+        if not isinstance(bench, dict):
+            raise TaskFormatError(
+                f"{adapter_name}: exported task {task_id!r} has no bench block"
+            )
+        metadata = bench.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise TaskFormatError(
+                f"{adapter_name}: exported task {task_id!r} has invalid metadata"
+            )
+        upstream_task_id = metadata.get("upstream_task_id") or task_id
+        for run_index in range(1, runs_per_task + 1):
+            clone = json.loads(json.dumps(row))
+            clone["id"] = f"{task_id}__run_{run_index:0{width}d}"
+            clone_metadata = clone["bench"].setdefault("metadata", {})
+            clone_metadata.update(
+                {
+                    "upstream_task_id": upstream_task_id,
+                    "run_index": run_index,
+                    "runs_per_task": runs_per_task,
+                }
+            )
+            repeated.append(clone)
+    return repeated
 
 
 def _validate_thinking_requests(
@@ -784,6 +868,8 @@ def _collect(args: argparse.Namespace) -> int:
         raise ValueError("--start-index cannot be negative")
     if args.limit is not None and args.limit <= 0:
         raise ValueError("--limit must be greater than zero")
+    if args.bench_runs_per_task < 1:
+        raise ValueError("--bench-runs-per-task must be at least 1")
     bundle_policy = BundlePolicy(
         max_file_bytes=args.max_input_file_bytes,
         max_task_input_bytes=args.max_task_input_bytes,
@@ -812,6 +898,7 @@ def _collect(args: argparse.Namespace) -> int:
         )
         if not rows:
             raise TaskFormatError(f"{adapter.name}: selection matched no tasks")
+        rows = _repeat_bench_rows(rows, args.bench_runs_per_task, adapter.name)
         bench_manifest = "".join(
             json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows
         ).encode("utf-8")
@@ -825,6 +912,7 @@ def _collect(args: argparse.Namespace) -> int:
             "categories": list(args.bench_category),
             "task_ids": list(args.bench_task_id),
             "timeout_multiplier": args.bench_timeout_multiplier,
+            "runs_per_task": args.bench_runs_per_task,
             "exported_task_count": len(rows),
         }
     else:
@@ -832,6 +920,8 @@ def _collect(args: argparse.Namespace) -> int:
             raise ValueError("--bench-* selection options require --bench")
         if args.bench_timeout_multiplier != 1.0:
             raise ValueError("--bench-timeout-multiplier requires --bench")
+        if args.bench_runs_per_task != 1:
+            raise ValueError("--bench-runs-per-task requires --bench")
         tasks_path = Path(args.tasks).expanduser().resolve()
     tasks = load_tasks(
         tasks_path,
@@ -1123,18 +1213,21 @@ def _collect(args: argparse.Namespace) -> int:
             **bridge_options("hermes", hermes_api_base, hermes_api_key_env),
             max_iterations=args.hermes_max_iterations,
             context_length=args.hermes_context_length, vision=args.hermes_vision,
+            toolsets=tuple(args.hermes_toolset) if args.hermes_toolset else None,
         )
     if "opencode" in selected_harnesses:
         opencode_config = OpenCodeConfig(
             **bridge_options("opencode", opencode_api_base, opencode_api_key_env),
             max_steps=args.opencode_max_steps, context_length=args.opencode_context_length,
             output_tokens=args.opencode_output_tokens, vision=args.opencode_vision,
+            native_tools=args.opencode_native_tools, deny_tools=tuple(args.opencode_deny_tool),
         )
     if "deepseek" in selected_harnesses:
         deepseek_config = DeepSeekConfig(
             **bridge_options("deepseek", deepseek_api_base, deepseek_api_key_env),
             max_steps=args.deepseek_max_steps, context_length=args.deepseek_context_length,
             output_tokens=args.deepseek_output_tokens,
+            profile=args.deepseek_profile, permission_mode=args.deepseek_permission_mode,
         )
     if "pi" in selected_harnesses:
         pi_config = PiConfig(
@@ -1314,7 +1407,8 @@ def _collect(args: argparse.Namespace) -> int:
             "api_key_env": hermes_api_key_env, "reasoning_effort": args.thinking,
             "max_iterations": args.hermes_max_iterations, "hermes_revision": HERMES_REVISION,
             "context_length": args.hermes_context_length, "vision": args.hermes_vision,
-            "toolsets": ["terminal", "file", *(["delegation"] if hermes_config.capture_calls else []), *(["vision"] if args.hermes_vision else [])], "api_mode": "chat_completions",
+            "toolsets": hermes_config.enabled_toolsets, "api_mode": "chat_completions",
+            **({"disabled_toolsets": hermes_config.disabled_toolsets} if hermes_config.toolsets is not None else {}),
             "wire_trace": args.wire_trace,
             "keep_thinking": args.keep_thinking, "pass_env_names": list(hermes_config.pass_env),
             **({"capture_calls": True, "capture_debug": args.capture_debug} if hermes_config.capture_calls else {}),
@@ -1328,7 +1422,7 @@ def _collect(args: argparse.Namespace) -> int:
             "max_steps": args.opencode_max_steps, "opencode_version": OPENCODE_VERSION,
             "context_length": args.opencode_context_length, "output_tokens": args.opencode_output_tokens,
             "vision": args.opencode_vision,
-            "tools": list(OPENCODE_TOOLS), "api_mode": "chat_completions",
+            **opencode_config.tool_selection, "api_mode": "chat_completions",
             "wire_trace": args.wire_trace,
             "keep_thinking": args.keep_thinking, "pass_env_names": list(opencode_config.pass_env),
             "compaction": {"auto": False, "prune": False},
@@ -1342,10 +1436,11 @@ def _collect(args: argparse.Namespace) -> int:
             "api_key_env": deepseek_api_key_env, "reasoning_effort": args.thinking,
             "max_steps": args.deepseek_max_steps, "deepseek_version": DEEPSEEK_VERSION,
             "context_length": args.deepseek_context_length, "output_tokens": args.deepseek_output_tokens,
-            "tools": list(DEEPSEEK_TOOLS), "api_mode": "chat_completions",
+            "tools": deepseek_config.tools, "api_mode": "chat_completions",
             "wire_trace": args.wire_trace,
             "keep_thinking": args.keep_thinking, "pass_env_names": list(deepseek_config.pass_env),
-            "profile": "sdk-minimal", "retry_count": 0,
+            "profile": deepseek_config.profile, "retry_count": 0,
+            **({"permission_mode": deepseek_config.permission_mode} if deepseek_config.permission_mode else {}),
             **({"capture_calls": True, "capture_debug": args.capture_debug} if deepseek_config.capture_calls else {}),
         }
 
@@ -1382,6 +1477,7 @@ def _collect(args: argparse.Namespace) -> int:
                 if bench_context is not None
                 else None
             ),
+            "bench_run_config": getattr(args, "_bench_run_config", None),
             "models": args.model,
             "trajectory_count": len(requests),
             "workspace": str(workspace) if workspace else None,
@@ -1692,6 +1788,25 @@ def _bench(args: argparse.Namespace) -> int:
             )
             print(f"{adapter.name:<16} {adapter.description}{variants}")
         return 0
+    if args.bench_command == "run":
+        from roller.benches.run_config import (
+            load_bench_run_plan,
+            temporary_environment,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="roller-bench-run-") as temporary:
+            plan = load_bench_run_plan(
+                args.config,
+                args.extra_config,
+                temporary_root=Path(temporary),
+            )
+            collect_argv = list(plan.collect_argv)
+            if args.dry_run:
+                collect_argv.append("--dry-run")
+            collect_args = _build_parser().parse_args(collect_argv)
+            collect_args._bench_run_config = plan.provenance
+            with temporary_environment(plan.environment):
+                return _collect(collect_args)
     if args.bench_command == "export":
         adapter = get_bench(args.name)
         root = Path(args.root).expanduser().resolve()
@@ -1706,41 +1821,7 @@ def _bench(args: argparse.Namespace) -> int:
         )
         if not rows:
             raise TaskFormatError(f"{adapter.name}: selection matched no tasks")
-        if args.runs_per_task < 1:
-            raise TaskFormatError("--runs-per-task must be positive")
-        if args.runs_per_task > 1:
-            repeated: list[dict[str, Any]] = []
-            width = max(2, len(str(args.runs_per_task)))
-            for row in rows:
-                task_id = row.get("id")
-                bench = row.get("bench")
-                if not isinstance(task_id, str) or not task_id:
-                    raise TaskFormatError(
-                        f"{adapter.name}: exported task has no valid id"
-                    )
-                if not isinstance(bench, dict):
-                    raise TaskFormatError(
-                        f"{adapter.name}: exported task {task_id!r} has no bench block"
-                    )
-                metadata = bench.get("metadata", {})
-                if not isinstance(metadata, dict):
-                    raise TaskFormatError(
-                        f"{adapter.name}: exported task {task_id!r} has invalid metadata"
-                    )
-                upstream_task_id = metadata.get("upstream_task_id") or task_id
-                for run_index in range(1, args.runs_per_task + 1):
-                    clone = json.loads(json.dumps(row))
-                    clone["id"] = f"{task_id}__run_{run_index:0{width}d}"
-                    clone_metadata = clone["bench"].setdefault("metadata", {})
-                    clone_metadata.update(
-                        {
-                            "upstream_task_id": upstream_task_id,
-                            "run_index": run_index,
-                            "runs_per_task": args.runs_per_task,
-                        }
-                    )
-                    repeated.append(clone)
-            rows = repeated
+        rows = _repeat_bench_rows(rows, args.runs_per_task, adapter.name)
         output = Path(args.output).expanduser().resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", encoding="utf-8") as handle:
@@ -1817,7 +1898,7 @@ def _init(args: argparse.Namespace) -> int:
     source = package / "examples" if (package / "examples").is_dir() else package.parents[1] / "examples"
     target = Path(args.directory) / "examples"
     written = kept = 0
-    for name in ("tasks", "config", "env"):
+    for name in ("tasks", "config", "benchmarks", "env"):
         for path in sorted((source / name).rglob("*")):
             if not path.is_file() or path.suffix == ".env":
                 continue

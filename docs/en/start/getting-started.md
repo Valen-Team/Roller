@@ -32,7 +32,7 @@ Write the example tasks and configuration templates into the working directory. 
 roller init
 ```
 
-`roller init` creates `examples/tasks`, `examples/config` and `examples/env`, and leaves files that already exist untouched.
+`roller init` creates `examples/tasks`, `examples/config`, `examples/benchmarks` and `examples/env`, and leaves files that already exist untouched.
 
 Install Roller from source if you want the latest changes or plan to contribute. A clone already contains `examples/`, so `roller init` is not needed there:
 

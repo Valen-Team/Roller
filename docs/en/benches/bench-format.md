@@ -97,6 +97,7 @@ standard task fields:
 | `workspace_path` | harness default | Grader working directory (absolute path inside the container) |
 | `transcript_path` | derived automatically | Set only when the harness cannot report the session file location itself |
 | `score_key` | `overall_score` | Key in the grader return value that is used as the total score |
+| `grade_on_agent_failure` | `false` | Grade the live workspace when the Agent timed out or exited with an error; by default such a sample is recorded as unscored |
 | `stage` | `[]` | Host paths copied into the container only before grading; see §4 |
 
 Grader calling convention:
@@ -276,6 +277,9 @@ One-command `collect --bench` enables per-task timeouts automatically and saves
 `tasks.jsonl` and `bench-report.json` in the run directory. It therefore requires neither
 `--task-timeouts` nor a separate `bench report` invocation.
 
+`roller bench run --config FILE` starts the same `collect --bench` run from a YAML description;
+see [Benchmark run configuration](benchmark-standard.md).
+
 Environment variables required by the grader must be passed with `--pass-env`; the
 bench's task definition declares which variables are required. When a variable is
 missing, Roller issues a warning and continues. Before a real run, confirm that the logs do not contain
@@ -291,6 +295,7 @@ See each bench's README for its configuration (see §6.1):
 | `skillsbench` | `opencode` | [SkillsBench](skillsbench.md) | Builds each task environment; supports `with-skill` / `no-skill` and official verifiers |
 | `pinchbench` | `openclaw` | [PinchBench](pinchbench.md) | Manifest-driven export with automated, LLM-judge, hybrid, and multi-session tasks |
 | `qwenclawbench` | `openclaw` | [QwenClawBench](qwenclawbench.md) | 100 tasks in 8 domains; automated/hybrid grading, penalized scores, and repeated runs |
+| `swebench-pro` | `openclaw` | [SWE-Bench Pro](swebench-pro.md) | 731 software-engineering tasks across 11 repositories; official instance images, hidden tests, and resolved scoring |
 
 Before running, check the README's parameter mappings and unsupported options.
 Missing configuration may change evaluation conditions without raising an

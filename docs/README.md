@@ -9,7 +9,7 @@
 | `en/` | 英文手册（网站默认语言） |
 | `zh/` | 中文手册 |
 | `en/start/` · `zh/start/` | 快速上手、CLI 参数 |
-| `en/harnesses/` · `zh/harnesses/` | OpenClaw、Codex、Claude Code、Hermes、OpenCode、DeepSeek、Pi Agent |
+| `en/harnesses/` · `zh/harnesses/` | OpenClaw、Codex、Claude Code、Hermes、OpenCode、DeepSeek、Pi Agent、工具开放情况 |
 | `en/tasks/` · `zh/tasks/` | Task 格式、Bundle 与存储、User Simulator |
 | `en/traces/` · `zh/traces/` | 轨迹产物、SFT、Viewer |
 | `en/benches/` · `zh/benches/` | Bench 接入与各 bench 说明 |
@@ -67,10 +67,12 @@ python -m http.server -d _build/html 8000
 | 目标 | 文档 |
 | --- | --- |
 | 运行 benchmark 并评分 | [Bench 接入与评分](zh/benches/bench-format.md#7-cli) |
+| 用 YAML 配置文件描述并运行 benchmark | [Benchmark 运行配置](zh/benches/benchmark-standard.md) |
 | 运行 WildClawBench（上游参数对应、search shim、已知问题） | [WildClawBench](zh/benches/wildclawbench.md) |
 | 运行 SkillsBench 的 with-skill / no-skill 对照 | [SkillsBench](zh/benches/skillsbench.md) |
 | 运行 PinchBench（自动、混合与 LLM judge） | [PinchBench](zh/benches/pinchbench.md) |
 | 运行 QwenClawBench（本地 Qwen、judge API、每题重复运行） | [QwenClawBench](zh/benches/qwenclawbench.md) |
+| 运行 SWE-Bench Pro（官方实例镜像、隐藏测试、resolved 评分） | [SWE-Bench Pro](zh/benches/swebench-pro.md) |
 | 接入一个新 bench | [Bench 接入与评分](zh/benches/bench-format.md#6-加一个新-bench) |
 | 理解 `score.json` 与聚合口径 | [Bench 接入与评分](zh/benches/bench-format.md#5-聚合口径) |
 | 确保答案不泄漏给 Agent | [Bench 接入与评分](zh/benches/bench-format.md#4-stage答案不能放在-agent-的工作目录里) |

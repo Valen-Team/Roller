@@ -82,6 +82,14 @@ QWENCLAW_REQUIRE_JUDGE=0 \
 `MAX_STEPS` 会映射到 Claude Code、Hermes、OpenCode、DeepSeek 和 Pi 对应的步数
 参数；OpenClaw 与 Codex 当前没有用于该上限的通用 CLI 参数。
 
+同一次运行也可以写成 YAML 文件，并通过 `roller bench run` 启动，见
+[Benchmark 运行配置](benchmark-standard.md)：
+
+```bash
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/qwenclawbench.yaml
+```
+
 ## 3. 本地 Qwen
 
 仓库提供了 vLLM/OpenClaw 模型配置

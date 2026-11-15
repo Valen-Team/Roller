@@ -87,6 +87,7 @@ Bench 层复用以下三个接口：
 | `workspace_path` | harness 默认 | grader 的工作目录（容器内绝对路径） |
 | `transcript_path` | 自动推导 | 仅在 harness 无法自行报告会话文件位置时需要显式指定 |
 | `score_key` | `overall_score` | grader 返回值中用作总分的键 |
+| `grade_on_agent_failure` | `false` | Agent 超时或报错退出后仍对存活的 workspace 评分；默认将此类样本记为未评分 |
 | `stage` | `[]` | 仅在评分前复制到容器的 host 路径，见 §4 |
 
 grader 的调用约定：
@@ -240,6 +241,9 @@ bench 的每个任务自带超时（WildClawBench 实测有 300/360/600/900/1200
 单条命令 `collect --bench` 会自动启用逐题 timeout，并在 run 目录保存 `tasks.jsonl` 和
 `bench-report.json`，因此无需再传入 `--task-timeouts` 或单独执行 `bench report`。
 
+`roller bench run --config FILE` 根据 YAML 描述启动同一个 `collect --bench` 运行，见
+[Benchmark 运行配置](benchmark-standard.md)。
+
 grader 所需的环境变量须通过 `--pass-env` 透传（所需变量由 bench 的任务定义声明）。
 缺少变量时，Roller 发出警告并继续运行。正式采集前，请确认日志中没有
 `grading environment variable ... is unset`。
@@ -254,6 +258,7 @@ grader 所需的环境变量须通过 `--pass-env` 透传（所需变量由 benc
 | `skillsbench` | `opencode` | [SkillsBench](skillsbench.md) | 按 task 构建环境；支持 `with-skill` / `no-skill` 对照和官方 verifier |
 | `pinchbench` | `openclaw` | [PinchBench](pinchbench.md) | 从 manifest 导出，支持自动、LLM judge、hybrid 与多 session |
 | `qwenclawbench` | `openclaw` | [QwenClawBench](qwenclawbench.md) | 8 个领域的 100 个任务；支持 automated/hybrid、惩罚式评分和每题重复运行 |
+| `swebench-pro` | `openclaw` | [SWE-Bench Pro](swebench-pro.md) | 11 个仓库的 731 个软件工程任务；使用官方实例镜像、隐藏测试和 resolved 评分 |
 
 运行前请核对对应 README 中的参数映射和未支持项。配置缺失不一定触发错误，
 却可能改变评测条件，使分数无法直接比较。

@@ -52,6 +52,18 @@ SkillsBench 默认每题运行 3 次，每个 OpenCode turn 最多 100 步，单
 `--bench-category` 与 `--bench-task-id` 可以重复传入。对于较慢的模型，可用
 `--bench-timeout-multiplier 2` 同时延长 Agent 和 verifier 的时间上限。
 
+这两次运行也可以写成 YAML 文件，并通过 `roller bench run` 启动，见
+[Benchmark 运行配置](benchmark-standard.md)。第二层配置选择 no-skill 运行：
+
+```bash
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/skillsbench.yaml
+
+roller bench run --config examples/benchmarks/base.yaml \
+  --extra-config examples/benchmarks/skillsbench.yaml \
+  --extra-config examples/benchmarks/skillsbench-no-skill.yaml
+```
+
 ## Roller 如何执行任务
 
 Roller 先读取 `integrations/agentbeats/task_sets/skillsbench-v1.1.json` 中的任务顺序。
