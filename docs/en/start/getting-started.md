@@ -13,18 +13,37 @@ Requirements:
 - the OpenClaw image.
 - a model API that supports OpenAI Responses or Chat Completions.
 
-Use an isolated Python environment. This example uses Conda and Python 3.11. Run the following commands from the repository root:
+Use an isolated Python environment. This example uses [uv](https://docs.astral.sh/uv/) and Python 3.11:
 
 ```bash
-conda create -n roller python=3.11 -y
-conda activate roller
+uv venv --python 3.11
+source .venv/bin/activate
 
-python -m pip install -e .
+uv pip install roller-agent
 roller --version
 docker version
 ```
 
-Using `python -m pip` ensures that pip belongs to the activated Python environment. After Docker is installed and started, `docker version` shows both Client and Server information.
+With pip, create and activate a virtual environment, then run `python -m pip install roller-agent`.
+
+Write the example tasks and configuration templates into the working directory. The rest of this guide runs from this directory:
+
+```bash
+roller init
+```
+
+`roller init` creates `examples/tasks`, `examples/config` and `examples/env`, and leaves files that already exist untouched.
+
+Install Roller from source if you want the latest changes or plan to contribute. A clone already contains `examples/`, so `roller init` is not needed there:
+
+```bash
+git clone https://github.com/Valen-Team/Roller.git
+cd Roller
+uv venv && source .venv/bin/activate
+uv pip install -e ".[test]"
+```
+
+After Docker is installed and started, `docker version` shows both Client and Server information.
 
 On macOS, open **Docker Desktop → Settings → Resources → Network**, enable **Enable host networking**, and restart Docker Desktop. Roller uses host networking so that OpenClaw can reach its local request proxy.
 

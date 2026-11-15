@@ -49,6 +49,7 @@ Roller 提供以下能力：
 
 ## 最新动态
 
+- **2026-11-15**：Roller 已发布至 PyPI，包名为 [`roller-agent`](https://pypi.org/project/roller-agent/)。`roller init` 将示例 task 和配置模板写入工作目录。
 - **2026-11-11**：支持上下文压缩场景下的 SFT 导出。Task Agent 压缩上下文时，每段通过校验的上下文窗口作为独立的 SFT 记录导出至 `sft_segments/`。
 - **2026-11-08**：新增 QwenClawBench 适配，覆盖 8 个领域的 100 个任务，支持自动评分、混合评分和单题多次运行。
 - **2026-11-05**：新增 SkillsBench 与 PinchBench 一键评测；SFT 记录支持图片。
@@ -100,16 +101,34 @@ Roller 以单个宿主机进程运行。Collector 并行调度 rollout，并为�
 环境要求：Python 3.10 及以上版本，以及正在运行的 Docker daemon。
 
 ```bash
-git clone https://github.com/Valen-Team/Roller.git
-cd Roller
-conda create -n roller python=3.11 -y
-conda activate roller
-python -m pip install -e .
+# uv
+uv tool install roller-agent
+
+# pip
+python -m pip install roller-agent
 
 docker pull ghcr.io/openclaw/openclaw:2026.7.1-2
 ```
 
 在 macOS 上使用 Docker Desktop 时，需在 **Settings → Resources → Network** 中启用 **Enable host networking** 并重启 Docker Desktop。如需从 `docker save` 归档离线安装镜像，请使用 `docker load -i <归档文件>` 代替 `docker pull`。
+
+创建工作目录，并将示例 task 和配置模板写入其中。后续步骤均在该目录下执行：
+
+```bash
+mkdir roller-quickstart && cd roller-quickstart
+roller init
+```
+
+`roller init` 创建 `examples/tasks`、`examples/config` 和 `examples/env`，已存在的文件保持不变。
+
+如需使用最新改动或参与开发，请从源码安装。克隆的仓库已包含 `examples/`，无需执行 `roller init`：
+
+```bash
+git clone https://github.com/Valen-Team/Roller.git
+cd Roller
+uv venv && source .venv/bin/activate
+uv pip install -e ".[test]"
+```
 
 ### 2. 配置模型
 

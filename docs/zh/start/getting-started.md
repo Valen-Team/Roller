@@ -13,18 +13,37 @@
 - OpenClaw 镜像。
 - 支持 OpenAI Responses 或 Chat Completions 的模型 API。
 
-建议使用独立的 Python 环境。以下以 Conda 和 Python 3.11 为例，在仓库根目录执行：
+建议使用独立的 Python 环境。以下以 [uv](https://docs.astral.sh/uv/) 和 Python 3.11 为例：
 
 ```bash
-conda create -n roller python=3.11 -y
-conda activate roller
+uv venv --python 3.11
+source .venv/bin/activate
 
-python -m pip install -e .
+uv pip install roller-agent
 roller --version
 docker version
 ```
 
-使用 `python -m pip` 可确保 pip 属于当前激活的 Python 环境。安装并启动 Docker 后，`docker version` 会显示 Client 和 Server 信息。
+使用 pip 时，先创建并激活虚拟环境，再执行 `python -m pip install roller-agent`。
+
+将示例 task 和配置模板写入工作目录，本指南后续步骤均在该目录下执行：
+
+```bash
+roller init
+```
+
+`roller init` 创建 `examples/tasks`、`examples/config` 和 `examples/env`，已存在的文件保持不变。
+
+如需使用最新改动或参与开发，请从源码安装。克隆的仓库已包含 `examples/`，无需执行 `roller init`：
+
+```bash
+git clone https://github.com/Valen-Team/Roller.git
+cd Roller
+uv venv && source .venv/bin/activate
+uv pip install -e ".[test]"
+```
+
+安装并启动 Docker 后，`docker version` 会显示 Client 和 Server 信息。
 
 在 macOS 上使用 Docker Desktop 时，还需在 **Settings → Resources → Network** 中启用 **Enable host networking**，然后重启 Docker Desktop。Roller 默认通过 host network 使 OpenClaw 能够访问本地请求代理。
 

@@ -115,6 +115,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"Roller {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    init = subparsers.add_parser("init", help="write the example tasks and configuration templates")
+    init.add_argument("directory", nargs="?", default=".", help="target directory (default: current directory)")
+
     view = subparsers.add_parser("view", help="browse a Roller run in a local web UI")
     view.add_argument("run_dir", help="Roller run directory containing info.json/samples")
     view.add_argument("--host", default="127.0.0.1", help="listen host (default: loopback)")
@@ -1704,6 +1707,30 @@ def _bench_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _init(args: argparse.Namespace) -> int:
+    """Copy the starter examples to ``<directory>/examples``, keeping existing files."""
+
+    package = Path(__file__).resolve().parent
+    # Wheels ship the examples inside the package; a source checkout keeps them at the repository root.
+    source = package / "examples" if (package / "examples").is_dir() else package.parents[1] / "examples"
+    target = Path(args.directory) / "examples"
+    written = kept = 0
+    for name in ("tasks", "config", "env"):
+        for path in sorted((source / name).rglob("*")):
+            if not path.is_file() or path.suffix == ".env":
+                continue
+            destination = target / path.relative_to(source)
+            if destination.exists():
+                kept += 1
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, destination)
+            written += 1
+    print(f"Wrote {written} files to {target}" + (f" ({kept} existing files kept)" if kept else ""))
+    print(f"Next: cp {target / 'env' / 'api.env.example'} {target / 'env' / 'api.env'} and set the model service URL and API key")
+    return 0
+
+
 def _view(args: argparse.Namespace) -> int:
     return serve_viewer(Path(args.run_dir), host=args.host, port=args.port)
 
@@ -1723,6 +1750,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             exit_code = _bench(args)
         elif args.command == "view":
             exit_code = _view(args)
+        elif args.command == "init":
+            exit_code = _init(args)
         else:
             parser.error(f"unsupported command: {args.command}")
             return

@@ -24,6 +24,7 @@ Choose the command for the job first, then add that command's flags.
 | Command | Purpose |
 | --- | --- |
 | `roller collect [OPTIONS]` | Reads tasks, runs a Harness, and collects trajectories |
+| `roller init [DIRECTORY]` | Writes the example tasks and configuration templates to `DIRECTORY/examples` (default: the current directory); existing files are kept |
 | `roller view RUN_DIR` | Opens an existing run in the Viewer |
 | `roller bench ...` | Lists, exports, or summarizes benchmarks, with collection flags in section 8 |
 | `roller --version` | Shows the installed Roller version |
