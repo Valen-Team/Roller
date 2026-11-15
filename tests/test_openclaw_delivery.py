@@ -652,6 +652,22 @@ class OpenClawDeliveryTests(unittest.TestCase):
                 )
                 self.assertEqual(len(actf["steps"]), 3)
 
+    def test_delivery_copy_of_a_fragmented_completions_reply_is_removed(self) -> None:
+        provider = _reply(
+            "openai-completions",
+            content=[
+                {"type": "text", "text": "RO"},
+                {"type": "thinking", "thinking": "."},
+                {"type": "text", "text": "OT_DONE"},
+            ],
+        )
+        actf, sft, usage = self._project(
+            [_user(), provider, _reply("cli", "ROOT_DONE")]
+        )
+        self.assertEqual(len(actf["steps"]), 1)
+        self.assertEqual(sft["messages"][-1]["content"], "ROOT_DONE")
+        self.assertEqual(usage["request_count"], 1)
+
     def test_matching_an_earlier_reply_does_not_erase_new_final_text(self) -> None:
         actf, sft, usage = self._project(
             [

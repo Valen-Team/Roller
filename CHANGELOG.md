@@ -31,6 +31,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 ### Fixed
 
 - OpenClaw subagent samples collected over Chat Completions were excluded from SFT (#110).
+- An OpenClaw reply over Chat Completions whose text was interrupted by reasoning was stored with a line break inserted at the interruption.
 - The task JSON Schema listed three of the seven Harnesses and rejected several fields the loader accepts (#107).
 - The test suite failed on macOS (#111).
 

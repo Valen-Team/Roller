@@ -239,7 +239,13 @@ def _tool_call(block: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _assistant_parts(content: Any) -> tuple[str, str, list[dict[str, Any]]]:
+def _assistant_parts(
+    content: Any, separator: str = "\n"
+) -> tuple[str, str, list[dict[str, Any]]]:
+    """Visible text, reasoning and tool calls of one assistant message.
+
+    ``separator`` joins the text blocks and, separately, the reasoning blocks.
+    """
     if isinstance(content, str):
         return content, "", []
     if not isinstance(content, list):
@@ -262,7 +268,7 @@ def _assistant_parts(content: Any) -> tuple[str, str, list[dict[str, Any]]]:
                 reasoning.append(value)
         elif block_type in {"toolCall", "tool_call"}:
             calls.append(_tool_call(block))
-    return "\n".join(visible), "\n".join(reasoning), calls
+    return separator.join(visible), separator.join(reasoning), calls
 
 
 def _observation(
@@ -492,7 +498,13 @@ def openclaw_events_to_actf(
                 # skipping it before finish_current keeps the real step's
                 # finished_at derived from genuine conversation events only.
                 continue
-            content, reasoning, tool_calls = _assistant_parts(message.get("content"))
+            # A Chat Completions reply has one content string and one reasoning
+            # string. When their deltas interleave, OpenClaw stores each run as
+            # its own block, so the blocks are fragments and join without a gap.
+            content, reasoning, tool_calls = _assistant_parts(
+                message.get("content"),
+                "" if message.get("api") == "openai-completions" else "\n",
+            )
             stop_reason = message.get("stopReason", message.get("stop_reason", ""))
             tool_call_namespace = (
                 f"session-{session_index}" if multiple_sessions else None
