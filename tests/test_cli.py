@@ -9,7 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from roller.cli import _build_parser, _collect, _docker_preflight, _jsonl_equivalent, _validate_thinking_requests
+from roller.cli import _build_parser, _collect, _docker_preflight, _init, _jsonl_equivalent, _validate_thinking_requests
+from roller.tasks import load_tasks
 from roller.models import RunRequest, Task, UserSimulatorSpec
 from roller.thinking_capabilities import ThinkingCapabilities, ThinkingCapability
 from roller.harnesses.codex import codex_effort
@@ -18,6 +19,25 @@ from test_gateway_ports import isolate_gateway_ports
 
 
 class CliTests(unittest.TestCase):
+    def test_init_writes_examples_and_keeps_existing_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            models = root / "examples" / "config" / "openclaw" / "models.json"
+            models.parent.mkdir(parents=True)
+            models.write_text("edited")
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(_init(_build_parser().parse_args(["init", str(root)])), 0)
+            self.assertEqual(models.read_text(), "edited")
+            self.assertTrue((root / "examples" / "tasks" / "tasks.jsonl").is_file())
+            self.assertTrue((root / "examples" / "env" / "api.env.example").is_file())
+            self.assertEqual(list((root / "examples").rglob("*.env")), [])
+            self.assertIn("1 existing files kept", output.getvalue())
+            args = _build_parser().parse_args([
+                "collect", "--tasks", str(root / "examples" / "tasks" / "tasks.jsonl"),
+                "--model", "provider/model", "--dry-run",
+            ])
+            self.assertEqual(len(load_tasks(Path(args.tasks))), 4)
+
     def test_review_preflight_matrix_uses_runtime_endpoint_and_codex_rules(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
