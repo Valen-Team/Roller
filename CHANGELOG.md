@@ -4,6 +4,10 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ## Unreleased
 
+### Added
+
+- Prebuilt `linux/amd64` images of the Codex, Hermes, OpenCode, DeepSeek and Pi Harnesses at `ghcr.io/valen-team`. Claude Code is built locally because its licence does not allow redistribution.
+
 ### Changed
 
 - The project status is Beta, in the package classifiers and the documentation.

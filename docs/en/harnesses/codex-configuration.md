@@ -19,6 +19,15 @@ An endpoint that only supports Chat Completions cannot be used directly. Task me
 
 ## 2. Image preparation
 
+Pull the prebuilt image and give it the name Roller uses by default:
+
+```bash
+docker pull ghcr.io/valen-team/roller-codex:0.149.0
+docker tag ghcr.io/valen-team/roller-codex:0.149.0 roller-codex:0.149.0
+```
+
+The prebuilt image is `linux/amd64`. The rest of this section describes building it yourself.
+
 Roller uses [`docker/codex/Dockerfile`](../../../docker/codex/Dockerfile). The base image is
 `node:22-bookworm-slim`, and the default pinned install is `@openai/codex@0.149.0`. The image also includes Git, ripgrep,
 Python, curl, jq, an SSH client, and other common task tools.

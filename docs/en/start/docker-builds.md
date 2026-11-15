@@ -4,6 +4,8 @@ This page describes how to select package repositories, base images, and proxies
 
 The quickstart with OpenClaw usually does not require the build arguments below. Roller uses a pinned official OpenClaw image directly. See the [OpenClaw Harness guide](../harnesses/openclaw-configuration.md) for image preparation and overrides.
 
+Prebuilt `linux/amd64` images of Codex, Hermes, OpenCode, DeepSeek, and Pi are published at `ghcr.io/valen-team`; each Harness guide gives the `docker pull` command, and pulling one avoids the build entirely. Claude Code has no prebuilt image and is always built locally.
+
 Codex, Claude Code, Hermes, OpenCode, DeepSeek, and Pi use Dockerfiles in this repository. When the public package services are reachable, follow the default build command in the corresponding Harness guide. Continue with this page only when downloads are slow, an internal package service is required, a different base image is needed, or the build must use a proxy.
 
 ## 1. Identify the image source first

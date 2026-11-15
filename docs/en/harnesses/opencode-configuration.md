@@ -19,7 +19,14 @@ The OpenCode Harness does not accept images directly in task messages. Account l
 
 ## 2. Image preparation
 
-Build the OpenCode image from the Roller repository root:
+Pull the prebuilt image and give it the name Roller uses by default:
+
+```bash
+docker pull ghcr.io/valen-team/roller-opencode:1.18.30
+docker tag ghcr.io/valen-team/roller-opencode:1.18.30 roller-opencode:1.18.30
+```
+
+The prebuilt image is `linux/amd64`. To build the image yourself instead, run this from the Roller repository root:
 
 ```bash
 docker build -t roller-opencode:1.18.30 docker/opencode

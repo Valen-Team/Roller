@@ -4,6 +4,8 @@
 
 按照快速上手使用 OpenClaw 时，通常无需使用下文的构建参数。Roller 直接使用固定版本的 OpenClaw 官方镜像，镜像准备和替换方法见 [OpenClaw Harness 指南](../harnesses/openclaw-configuration.md)。
 
+Codex、Hermes、OpenCode、DeepSeek 和 Pi 的 `linux/amd64` 预构建镜像发布在 `ghcr.io/valen-team`，各 Harness 指南给出了 `docker pull` 命令，拉取后无需构建。Claude Code 不提供预构建镜像，始终在本地构建。
+
 Codex、Claude Code、Hermes、OpenCode、DeepSeek 和 Pi 使用本仓库中的 Dockerfile 构建镜像。可正常访问公共软件源时，按照各 Harness 指南中的默认命令构建即可。仅在下载缓慢、需要使用内部软件源、更换基础镜像或配置代理时，才需继续阅读本页。
 
 ## 1. 先确认镜像来源

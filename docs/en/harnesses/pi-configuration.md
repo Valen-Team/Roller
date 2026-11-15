@@ -19,7 +19,14 @@ The Pi Agent Harness does not accept images or video directly in task messages. 
 
 ## 2. Image preparation
 
-Build the Pi image from the Roller repository root:
+Pull the prebuilt image and give it the name Roller uses by default:
+
+```bash
+docker pull ghcr.io/valen-team/roller-pi:0.85.1
+docker tag ghcr.io/valen-team/roller-pi:0.85.1 roller-pi:0.85.1
+```
+
+The prebuilt image is `linux/amd64`. To build the image yourself instead, run this from the Roller repository root:
 
 ```bash
 docker build -t roller-pi:0.85.1 docker/pi
