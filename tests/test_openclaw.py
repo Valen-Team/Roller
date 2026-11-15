@@ -600,8 +600,12 @@ class OpenClawHelpersTests(unittest.TestCase):
         self.assertEqual(usage["cache_read_tokens"], 3)
         self.assertEqual(usage["cache_write_tokens"], 1)
 
-    def _run_with_redaction_setting(self, returncode: int):
-        setting = ["openclaw", "config", "set", "logging.redactSensitive", "off"]
+    def _run_with_redaction_setting(
+        self,
+        returncode: int,
+        setting=("openclaw", "config", "set", "logging.redactSensitive", "off"),
+    ):
+        setting = list(setting)
 
         class Runtime(FakeDockerRuntime):
             def run(self, args, timeout=None):
@@ -632,6 +636,21 @@ class OpenClawHelpersTests(unittest.TestCase):
             result, _, _ = self._run_with_redaction_setting(1)
         self.assertEqual(result.status, "ok")
         self.assertIn("logging.redactSensitive", logs.output[0])
+
+    HEARTBEAT_OFF = ("openclaw", "config", "set", "agents.defaults.heartbeat.every", "0m")
+
+    def test_heartbeat_polls_are_disabled_before_the_gateway_starts(self) -> None:
+        result, setting, gateway = self._run_with_redaction_setting(0, self.HEARTBEAT_OFF)
+        self.assertEqual(result.status, "ok")
+        self.assertLess(setting, gateway)
+        with self.assertRaisesRegex(ValueError, "Roller sets itself"):
+            OpenClawConfig(config_set=(("agents.defaults.heartbeat.every", "30m"),))
+
+    def test_openclaw_that_rejects_the_heartbeat_setting_still_runs(self) -> None:
+        with self.assertLogs("roller.harnesses.openclaw", "WARNING") as logs:
+            result, _, _ = self._run_with_redaction_setting(1, self.HEARTBEAT_OFF)
+        self.assertEqual(result.status, "ok")
+        self.assertIn("heartbeat", logs.output[0])
 
     def test_attached_images_mark_the_first_message_and_stay_out_of_the_prompts(self) -> None:
         task = Task(

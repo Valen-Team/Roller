@@ -215,6 +215,7 @@ ROLLER_MANAGED_OPENCLAW_CONFIG: dict[str, str] = {
     "tools.web.search.provider": "use --search-provider",
     "diagnostics.cacheTrace": "use --cache-trace / --no-cache-trace",
     "logging.redactSensitive": "Roller keeps task text verbatim in session transcripts",
+    "agents.defaults.heartbeat": "Roller turns off heartbeat polls, which are model calls outside the task",
 }
 
 
@@ -783,6 +784,22 @@ exec node --input-type=module -e "$1"
             logger.warning(
                 "[%s] OpenClaw %s kept logging.redactSensitive; its session transcript "
                 "may abbreviate credential-shaped task text: %s",
+                request.task.id,
+                version,
+                exc,
+            )
+        # OpenClaw polls its main session on a timer and when a sub-agent
+        # finishes. Each poll is a model call outside the task, and its
+        # session shows up as a second root participant in the capture.
+        try:
+            self._checked(
+                ["exec", container, "openclaw", "config", "set", "agents.defaults.heartbeat.every", "0m"],
+                "heartbeat setup",
+            )
+        except RuntimeError as exc:
+            logger.warning(
+                "[%s] OpenClaw %s kept its heartbeat polls; they add model calls "
+                "outside the task: %s",
                 request.task.id,
                 version,
                 exc,
