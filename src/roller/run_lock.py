@@ -238,12 +238,14 @@ def ensure_run_lock(
     *,
     resume: bool,
     existing_run: bool,
+    compatible_expected: Sequence[Mapping[str, Any]] = (),
 ) -> RunLockDecision:
     """Write a new lock or reject resume against a different resolved run.
 
     Legacy runs without a lock are adopted, but their old samples are not
     reused on that first adoption because their execution configuration cannot
-    be proven equivalent.
+    be proven equivalent. ``compatible_expected`` contains exact historical
+    encodings that may be accepted for Resume but are never written for new runs.
     """
 
     expected_row = dict(expected)
@@ -256,11 +258,14 @@ def ensure_run_lock(
                 f"existing run lock cannot be parsed; refusing to overwrite {path}: {exc}"
             ) from exc
         recorded_comparison = _comparable_lock(recorded)
-        expected_comparison = _comparable_lock(expected_row)
-        if recorded_comparison != expected_comparison:
+        expected_comparisons = [
+            _comparable_lock(candidate)
+            for candidate in (expected_row, *compatible_expected)
+        ]
+        if recorded_comparison not in expected_comparisons:
             details = "\n".join(
                 f"- {row}"
-                for row in _differences(recorded_comparison, expected_comparison)
+                for row in _differences(recorded_comparison, expected_comparisons[0])
             )
             raise FileExistsError(
                 "run directory cannot be resumed with different resolved inputs; "

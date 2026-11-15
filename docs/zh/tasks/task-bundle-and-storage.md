@@ -298,6 +298,8 @@ task/model、usage、时间戳或其他运行 metadata。Run 根目录的 `sft.j
 语义的选项。`--parallel`、`--retries`、gateway 端口/启动超时、路径位置和 bundle 大小
 上限属于执行调度或约束，不影响已成功 sample 的语义，因此可以在 Resume 时调整。
 
+每个 rollout 会再次检查镜像 ID。镜像 tag 解析出的 ID 与 preflight 时不同时，Roller 记一条 warning，并在 sample provenance 中记录 rollout 时的实际 ID。
+
 credential 与 pass-through environment 的值不会保存到锁，也不会触发不一致。若这些
 值除认证外还会改变模型或服务的实际行为，应使用新的 `--run-name`。
 
@@ -308,8 +310,8 @@ credential 与 pass-through environment 的值不会保存到锁，也不会触�
 3. `trace.jsonl` 含有效 message；通常还要求 ACTF schema 正确且 step ID 从 1 连续。
 4. 通常 `trace_SFT.json` 与当前 ACTF 的 canonical SFT 投影完全一致。存在结构化 `trajectory_conversion` 降级时可以缺少 ACTF/SFT 或仅缺少 SFT；Resume 会校验所有已保留层以及该显式标记。
 5. 当前 Task Bundle digest 与旧 sample 一致，且 Context 没有使用 `capture=none`。
-6. 已记录的输出文件仍位于 `results/` 内，文件存在且大小一致。保存的 SHA-256 仍可用于
-   深度审计；Resume 为避免重新读取大文件，只做路径、存在性和大小检查。
+6. 已记录的输出文件仍位于 `results/` 内，文件存在且大小一致。保存的 SHA-256 在文件复制到
+   `results/` 的同时计算，可用于深度审计；Resume 为避免重新读取大文件，只做路径、存在性和大小检查。
 7. User Simulator task 还必须有有效的 `conversation.json`、participant info 和 Simulator
    raw/ACTF/SFT。
 8. `--wire-trace full` 还要求双方的 `wire_trace.jsonl` 存在；同时启用 cache trace 时，

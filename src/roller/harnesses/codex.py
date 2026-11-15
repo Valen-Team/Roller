@@ -124,6 +124,7 @@ class CodexConfig:
     keep_thinking: bool = True
     keep_container_on_error: bool = False
     docker_binary: str = "docker"
+    preflight_image_digest: str | None = None
     # Extra ``codex exec -c KEY=VALUE`` overrides, after Roller's own.
     config_set: tuple[ConfigAssignment, ...] = ()
 

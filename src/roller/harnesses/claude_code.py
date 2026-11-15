@@ -113,7 +113,7 @@ class ClaudeCodeConfig:
     network: str | None = "host"
     workspace_container_path: str = "/roller/workspace"
     settings_path: Path | None = None
-    settings_fingerprint: str | None = None
+    config_sha256: str | None = None
     api_base: str | None = None
     api_key_env: str = "ANTHROPIC_API_KEY"
     pass_env: tuple[str, ...] = COMMON_ENV_NAMES
@@ -125,6 +125,7 @@ class ClaudeCodeConfig:
     keep_thinking: bool = True
     keep_container_on_error: bool = False
     docker_binary: str = "docker"
+    preflight_image_digest: str | None = None
     capture_calls: bool = False
     capture_debug: str = "on-error"
 
@@ -829,7 +830,7 @@ class ClaudeCodeSession(InteractiveSession):
                 "permission_mode": config.permission_mode,
                 "wire_trace": config.wire_trace_mode,
                 "keep_thinking": config.keep_thinking,
-                "settings_fingerprint": config.settings_fingerprint,
+                "config_sha256": config.config_sha256,
                 "output_collection": output_collection_metadata(artifact_result, self.request, self.output_dir),
                 "output_copy_error": output_copy_error,
                 "attempt": self.attempt,

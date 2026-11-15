@@ -32,7 +32,7 @@ from roller.harnesses.container import (
     docker_run_args,
     output_collection_metadata,
 )
-from roller.harnesses.docker import DockerRuntime, remove_container
+from roller.harnesses.docker import DockerRuntime, remove_container, warn_if_image_changed
 from roller.models import HarnessResult, RunRequest
 from roller.storage import atomic_write_json
 from roller.thinking import resolve_thinking
@@ -238,6 +238,7 @@ class BridgeSession(InteractiveSession):
         environment.update(self.harness_environment(api_base))
         self.environment = environment
         self.image_digest = self.checked(["image", "inspect", config.docker_image, "--format", "{{.Id}}"], f"{self.label} image inspection").stdout.strip()
+        warn_if_image_changed(logger, config.docker_image, config.preflight_image_digest, self.image_digest)
         args = docker_run_args(self.harness.name, self.container, config, environment, self.request)
         args += ["--entrypoint", "/bin/bash", config.docker_image, "-c", "tail -f /dev/null"]
         # Mark before run: a timed-out Docker client may already have created it.

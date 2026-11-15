@@ -1,6 +1,7 @@
 """Pieces shared by every Harness that runs a task in a disposable Docker container."""
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import subprocess
@@ -9,9 +10,11 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from roller.artifacts import ArtifactCollectionResult, collect_output_directory
-from roller.harnesses.docker import DockerRuntime
+from roller.harnesses.docker import DockerRuntime, warn_if_image_changed
 from roller.models import RunRequest
 from roller.version import __version__
+
+logger = logging.getLogger(__name__)
 
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PROXY_ENV_NAMES = ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy")
@@ -203,4 +206,8 @@ class ContainerCommands:
         result = self.runtime.run(
             ["image", "inspect", self.config.docker_image, "--format", "{{.Id}}"]
         )
-        return (result.stdout.strip() or None) if result.returncode == 0 else None
+        digest = (result.stdout.strip() or None) if result.returncode == 0 else None
+        warn_if_image_changed(
+            logger, self.config.docker_image, self.config.preflight_image_digest, digest
+        )
+        return digest

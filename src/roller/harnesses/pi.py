@@ -47,6 +47,7 @@ class PiConfig:
     keep_thinking: bool = True
     keep_container_on_error: bool = False
     docker_binary: str = "docker"
+    preflight_image_digest: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "reasoning_effort", pi_effort(self.reasoning_effort) or "off")

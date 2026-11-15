@@ -111,7 +111,7 @@ This table lists Claude Code-specific runtime flags only. See section 3 for API 
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `--docker-image` / `--claude-code-image` | `ROLLER_CLAUDE_CODE_IMAGE` or `roller-claude-code:2.1.222` | Override the Claude Code image |
-| `--claude-settings` | None | Inject a native `settings.json` into the isolated container |
+| `--claude-settings` | None | Inject a native `settings.json` into the isolated container. The run lock stores its SHA-256, and locks that hold the earlier BLAKE2b fingerprint remain resumable |
 | `--claude-max-turns` | None | Limit agent turns for each predefined user message |
 | `--claude-max-thinking-tokens` | None | Set `MAX_THINKING_TOKENS` for Claude Code |
 | `--claude-permission-mode` | `bypassPermissions` | Select the Claude Code permission mode |

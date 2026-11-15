@@ -242,6 +242,7 @@ class OpenClawConfig:
     keep_container_on_error: bool = False
     set_image_model: bool = True
     docker_binary: str = "docker"
+    preflight_image_digest: str | None = None
     # Extra ``openclaw config set`` calls, applied after Roller's own settings.
     config_set: tuple[ConfigAssignment, ...] = ()
 

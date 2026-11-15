@@ -297,6 +297,8 @@ reports the difference and stops without mixing samples from different configura
 order, timeout, Task Bundle digest, model configuration, image ID, thinking, and trajectory policy, all of which affect the collected sample. `--parallel`, `--retries`, gateway port/startup timeout, path locations, and bundle size
 limits are scheduling or constraint settings and do not change the semantics of already-successful samples, so they may be adjusted on Resume.
 
+Each rollout inspects the image ID again. If an image tag resolves to a different ID than it did during preflight, Roller logs a warning and records the rollout-time ID in the sample provenance.
+
 Credential and pass-through environment values are not stored in the lock and do not trigger a mismatch. If these
 values are used for more than authentication and change the model or service behavior, use a new `--run-name`.
 
@@ -307,8 +309,8 @@ After the run lock matches, only samples that meet all of the following conditio
 3. `trace.jsonl` contains a valid message. Normally, the ACTF schema is also correct and step IDs are consecutive from 1.
 4. Normally, `trace_SFT.json` matches the current ACTF's canonical SFT projection exactly. A structured `trajectory_conversion` downgrade may instead omit ACTF/SFT or only SFT; Resume validates every retained layer and the explicit marker.
 5. The current Task Bundle digest matches the old sample, and Context did not use `capture=none`.
-6. Recorded output files are still under `results/`, exist, and have the same size. The stored SHA-256 can still be used for
-   deep audit; Resume checks only path, existence, and size so that large files are not reread.
+6. Recorded output files are still under `results/`, exist, and have the same size. The stored SHA-256 is computed while
+   the bytes are copied into `results/` and can be used for deep audit; Resume checks only path, existence, and size so that large files are not reread.
 7. A User Simulator task must also have a valid `conversation.json`, participant info, and Simulator
    raw/ACTF/SFT.
 8. `--wire-trace full` also requires the `wire_trace.jsonl` of both participants to exist. When cache trace is enabled,

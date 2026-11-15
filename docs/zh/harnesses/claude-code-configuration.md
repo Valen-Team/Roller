@@ -111,7 +111,7 @@ roller collect \
 | 参数 | 默认值 | 用途 |
 | --- | --- | --- |
 | `--docker-image` / `--claude-code-image` | `ROLLER_CLAUDE_CODE_IMAGE` 或 `roller-claude-code:2.1.222` | 覆盖 Claude Code 镜像 |
-| `--claude-settings` | 无 | 向隔离容器注入原生 `settings.json` |
+| `--claude-settings` | 无 | 向隔离容器注入原生 `settings.json`。运行锁保存其 SHA-256，含旧 BLAKE2b 指纹的 lock 仍可 Resume |
 | `--claude-max-turns` | 无 | 每条预定义用户消息的 Agent 执行轮数上限 |
 | `--claude-max-thinking-tokens` | 无 | 设置传给 Claude Code 的 `MAX_THINKING_TOKENS` |
 | `--claude-permission-mode` | `bypassPermissions` | 选择 Claude Code permission mode |
