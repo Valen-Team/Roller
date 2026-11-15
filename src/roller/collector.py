@@ -4,9 +4,11 @@ import fnmatch
 import json
 import inspect
 import logging
+import math
 import queue
 import re
 import shutil
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -15,9 +17,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from roller.harnesses.base import Harness
-from roller.capture import read_jsonl, recover_capture_retention, validate_capture
+from roller.capture import _safe_file, read_jsonl, recover_capture_retention, validate_capture
+from roller.compaction_sft import SFT_SEGMENTS_DIR, export_compaction_segments, has_main_compaction
+from roller.harness_registry import allows_raw_only_actf
 from roller.integrity import (
     has_legacy_claude_sidechain,
+    keeps_thinking,
     trajectory_conversion_unavailable,
     validate_resumable_sample,
 )
@@ -25,7 +30,7 @@ from roller.models import HarnessResult, RunRequest
 from roller.sft import SFTConversionError, validate_sft_record, write_sft
 from roller.storage import atomic_write_json, safe_component, write_jsonl
 from roller.trajectory_audit import (
-    record_training_audits, sft_exclusion_reason, training_summary,
+    SEGMENTED_SFT_REASON, record_training_audits, sft_exclusion_reason, training_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,6 +39,14 @@ logger = logging.getLogger(__name__)
 HarnessFactory = Callable[..., Harness]
 RUN_CHECKPOINT_RESULT_INTERVAL = 25
 RUN_CHECKPOINT_TIME_INTERVAL_SECONDS = 30.0
+
+
+def _clear_sft_segments(sample_dir: Path) -> None:
+    path = sample_dir / SFT_SEGMENTS_DIR
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
 
 
 def _now() -> str:
@@ -119,12 +132,45 @@ class CollectionConfig:
     keep_aux_traces: bool = False
     capture_cache_trace: bool = True
     keep_thinking: bool = True
+    # Minimum seconds between two rollout launches across all workers.
+    launch_interval: float = 0.0
 
     def __post_init__(self) -> None:
         if self.parallel < 1:
             raise ValueError("parallel must be at least 1")
         if self.retries < 0:
             raise ValueError("retries cannot be negative")
+        if not math.isfinite(self.launch_interval) or self.launch_interval < 0:
+            raise ValueError("launch_interval must be a finite number of seconds >= 0")
+
+
+class LaunchCancelled(Exception):
+    """A rollout was waiting for its launch turn when the run was interrupted."""
+
+
+class _LaunchGate:
+    """Space rollout launches ``interval`` seconds apart, first come first served.
+
+    Starting every worker at once stacks their start-up peaks: an OpenClaw
+    gateway needs about twice its steady memory while it boots.
+    """
+
+    def __init__(self, interval: float) -> None:
+        self._interval = interval
+        self._lock = threading.Lock()
+        self._next_launch = 0.0
+        self._cancelled = threading.Event()
+
+    def wait_turn(self) -> bool:
+        """Block until this launch may start; False once the run is interrupted."""
+
+        with self._lock:
+            launch = max(time.monotonic(), self._next_launch)
+            self._next_launch = launch + self._interval
+        return not self._cancelled.wait(max(0.0, launch - time.monotonic()))
+
+    def cancel(self) -> None:
+        self._cancelled.set()
 
 
 class Collector:
@@ -232,6 +278,7 @@ class Collector:
             "trace.jsonl",
             "trace_ACTF.json",
             "trace_SFT.json",
+            SFT_SEGMENTS_DIR,
             "tools_capture.jsonl",  # Exact Codex Responses tool snapshots.
             "signature_recovery.jsonl",  # Preserve historical artifacts; never generated now.
             "info.json",
@@ -282,6 +329,8 @@ class Collector:
         trace_path = sample_dir / "trace.jsonl"
         actf_path = sample_dir / "trace_ACTF.json"
         sft_path = sample_dir / "trace_SFT.json"
+        sft_segments: list[dict[str, Any]] = []
+        _clear_sft_segments(sample_dir)
         if trace_source is None and final.status == "ok":
             final.status = "error"
             final.error = "harness finished but no raw trace was found"
@@ -289,7 +338,7 @@ class Collector:
             trajectory_source is None
             and final.status == "ok"
             and not (
-                harness_name in {"opencode", "openclaw"}
+                allows_raw_only_actf(harness_name)
                 and trajectory_conversion_unavailable(metadata) == "actf"
             )
         ):
@@ -309,7 +358,22 @@ class Collector:
                 if not isinstance(trajectory, dict):
                     raise ValueError("canonical ACTF trajectory must be a JSON object")
                 if final.status == "ok":
-                    write_sft(sft_path, trajectory)
+                    if trajectory_conversion_unavailable(metadata) == "sft":
+                        raise SFTConversionError(metadata["trajectory_conversion"]["error"])
+                    capture = metadata.get("capture") or {}
+                    manifest = capture.get("manifest") if isinstance(capture, dict) else None
+                    if isinstance(manifest, str):
+                        sft_segments = export_compaction_segments(
+                            sample_dir, harness_name, manifest,
+                            keep_thinking=keeps_thinking(metadata))
+                        if sft_segments:
+                            sft_path.unlink(missing_ok=True)
+                        else:
+                            write_sft(sft_path, trajectory)
+                    elif has_main_compaction(trace_path, harness_name):
+                        raise SFTConversionError("context reset SFT requires captured Calls")
+                    else:
+                        write_sft(sft_path, trajectory)
             except SFTConversionError as exc:
                 logger.warning(
                     "[%s | %s] SFT export unavailable: %s",
@@ -335,6 +399,8 @@ class Collector:
         # Also remove stale exports left by an earlier attempt or failed write.
         if final.status != "ok":
             sft_path.unlink(missing_ok=True)
+            _clear_sft_segments(sample_dir)
+            sft_segments = []
         record_training_audits(
             metadata, trajectory if isinstance(trajectory, dict) else None,
             sample_dir / "wire_trace.jsonl",
@@ -381,6 +447,7 @@ class Collector:
                 "actf": "trace_ACTF.json" if actf_path.is_file() else None,
                 "actf_schema": "ACTF_v1.0" if actf_path.is_file() else None,
                 "sft": "trace_SFT.json" if sft_path.is_file() else None,
+                **({"sft_segments": sft_segments} if sft_segments else {}),
             },
             "conversation": metadata.get("conversation"),
             "output_collection": metadata.get("output_collection"),
@@ -417,6 +484,10 @@ class Collector:
             logger.info("[%s | %s] already complete; skipping", request.task.id, request.model)
             return resumed
 
+        # Wait before touching the sample directory, so a rollout cancelled
+        # here leaves nothing behind, like a request that never left the queue.
+        if not self._launch_gate.wait_turn():
+            raise LaunchCancelled(f"{request.task.id}: run interrupted before launch")
         if sample_dir.exists():
             shutil.rmtree(sample_dir)
         sample_dir.mkdir(parents=True, exist_ok=True)
@@ -425,6 +496,22 @@ class Collector:
         final = HarnessResult.error_result("harness did not run")
         harness_name = "unknown"
         for attempt in range(1, self.config.retries + 2):
+            if attempt > 1:
+                if not self._launch_gate.wait_turn():
+                    # Interrupted between attempts: keep the last failure.
+                    logger.warning(
+                        "[%s | %s] interrupted; not retrying after attempt %d",
+                        request.task.id,
+                        request.model,
+                        attempt - 1,
+                    )
+                    break
+                logger.warning(
+                    "[%s | %s] attempt %d failed; retrying",
+                    request.task.id,
+                    request.model,
+                    attempt - 1,
+                )
             harness = self._make_harness(worker_slot, request)
             harness_name = getattr(harness, "name", "unknown")
             attempt_start = time.perf_counter()
@@ -443,13 +530,6 @@ class Collector:
             )
             if final.status == "ok":
                 break
-            if attempt <= self.config.retries:
-                logger.warning(
-                    "[%s | %s] attempt %d failed; retrying",
-                    request.task.id,
-                    request.model,
-                    attempt,
-                )
 
         return self._finalize_sample(
             request, sample_dir, harness_name, final, attempt_rows, started_at
@@ -546,28 +626,54 @@ class Collector:
         atomic_write_json(info_path, info)
 
     def _write_sft_dataset(self, results: list[dict[str, Any]]) -> None:
-        def rows() -> Iterator[dict[str, Any]]:
+        def rows(segmented: bool) -> Iterator[dict[str, Any]]:
             for result in results:
-                if sft_exclusion_reason(result) is not None:
+                reason = sft_exclusion_reason(result)
+                if reason is not None and reason != SEGMENTED_SFT_REASON:
                     continue
-                path = self._sample_dir_from_result(result) / "trace_SFT.json"
-                try:
-                    row = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError) as exc:
-                    raise RuntimeError(
-                        f"cannot aggregate SFT sample {path}: {exc}"
-                    ) from exc
-                if not isinstance(row, dict):
-                    raise RuntimeError(f"invalid SFT sample shape: {path}")
-                try:
-                    validate_sft_record(row)
-                except ValueError as exc:
-                    raise RuntimeError(
-                        f"invalid SFT sample shape ({exc}): {path}"
-                    ) from exc
-                yield row
+                trajectory = result.get("trajectory") or {}
+                segments = trajectory.get("sft_segments") or []
+                sample_dir = self._sample_dir_from_result(result)
+                paths = []
+                for item in segments:
+                    relative = item.get("path") if isinstance(item, dict) else None
+                    parts = Path(relative).parts if isinstance(relative, str) else ()
+                    if len(parts) != 2 or parts[0] != SFT_SEGMENTS_DIR or not parts[1].endswith(".json"):
+                        raise RuntimeError(f"invalid SFT segment path: {relative!r}")
+                    try:
+                        paths.append(_safe_file(sample_dir, relative))
+                    except ValueError as exc:
+                        raise RuntimeError(f"cannot aggregate SFT segment {relative}: {exc}") from exc
+                if not paths:
+                    paths = [sample_dir / "trace_SFT.json"]
+                for path in paths:
+                    try:
+                        row = json.loads(path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError) as exc:
+                        raise RuntimeError(
+                            f"cannot aggregate SFT sample {path}: {exc}"
+                        ) from exc
+                    if not isinstance(row, dict):
+                        raise RuntimeError(f"invalid SFT sample shape: {path}")
+                    try:
+                        validate_sft_record(row)
+                    except ValueError as exc:
+                        raise RuntimeError(
+                            f"invalid SFT sample shape ({exc}): {path}"
+                        ) from exc
+                    # Keep masked segments separate from legacy linear records.
+                    if bool(segments) == segmented:
+                        if not segmented and "target_start_index" in row:
+                            raise RuntimeError(f"legacy SFT record has a target mask: {path}")
+                        yield row
 
-        write_jsonl(self.run_dir / "sft.jsonl", rows())
+        write_jsonl(self.run_dir / "sft.jsonl", rows(False))
+        segment_dataset = self.run_dir / "sft_segments.jsonl"
+        if any(isinstance(r.get("trajectory"), dict) and
+               r["trajectory"].get("sft_segments") for r in results):
+            write_jsonl(segment_dataset, rows(True))
+        else:
+            segment_dataset.unlink(missing_ok=True)
         def calls() -> Iterator[dict[str, Any]]:
             for result in results:
                 if result.get("status") not in {"ok", "skipped"}:
@@ -596,6 +702,8 @@ class Collector:
         self._write_run_info(
             [], total_requests=total_requests, state="running"
         )
+        # Rebuilt per collect(): an interrupt cancels the gate for good.
+        self._launch_gate = _LaunchGate(self.config.launch_interval)
         slots: queue.Queue[int] = queue.Queue()
         for slot in range(self.config.parallel):
             slots.put(slot)
@@ -682,9 +790,12 @@ class Collector:
                         checkpoint("running")
                 except BaseException:
                     # Queued requests never start; running ones still finalize.
+                    # Workers still waiting for a launch turn give it up.
+                    self._launch_gate.cancel()
                     cancelled = sum(future.cancel() for future in futures)
                     logger.warning(
-                        "interrupted: cancelled %d queued request(s); "
+                        "interrupted: cancelled %d queued request(s) and any "
+                        "rollouts waiting for a launch turn; "
                         "waiting for running samples to finish",
                         cancelled,
                     )

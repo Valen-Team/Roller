@@ -1,12 +1,12 @@
 # CLI reference
 
-Use this page to look up Roller command-line flags. If this is your first run, complete [Getting started](getting-started.md) first. Return here when you need to change tasks, concurrency, output paths, or Harness behavior.
+This page lists the Roller command-line flags. Before the first run, complete [Getting started](getting-started.md). Return to this page to change tasks, concurrency, output paths, or Harness behavior.
 
-For a first pass, remember four things:
+On a first reading, note the following four points:
 
 - `--tasks` selects what Roller will run.
 - `--model` and `--harness` select the model and Agent runtime.
-- `--output` and `--run-name` decide where results are saved.
+- `--output` and `--run-name` determine where results are saved.
 - `--dry-run` checks the configuration without starting containers.
 
 The command output from the Roller version currently in use is always authoritative:
@@ -24,11 +24,12 @@ Choose the command for the job first, then add that command's flags.
 | Command | Purpose |
 | --- | --- |
 | `roller collect [OPTIONS]` | Reads tasks, runs a Harness, and collects trajectories |
+| `roller init [DIRECTORY]` | Writes the example tasks and configuration templates to `DIRECTORY/examples` (default: the current directory); existing files are kept |
 | `roller view RUN_DIR` | Opens an existing run in the Viewer |
 | `roller bench ...` | Lists, exports, or summarizes benchmarks, with collection flags in section 8 |
 | `roller --version` | Shows the installed Roller version |
 
-The smallest collect command needs a task list. Set the model with `--model` or in each task's `model` field.
+A minimal collect command requires a task list. Set the model with `--model` or in each task's `model` field.
 
 ```bash
 roller collect --tasks tasks.jsonl --model provider/model
@@ -40,20 +41,20 @@ The same setting can appear in both a task and the command line. Roller uses the
 
 | Setting | Final value |
 | --- | --- |
-| Model | Command-line `--model` values win when present, otherwise use each task's `model` |
-| Thinking | task `runtime.thinking` wins, followed by `--thinking`, then the Harness or model default |
-| Workspace | task `workspace` wins, otherwise use the global `--workspace` |
-| User Simulator model | `user_simulator.model` wins, otherwise follow the current task Agent model |
+| Model | Command-line `--model` values take precedence when present, otherwise each task's `model` is used |
+| Thinking | task `runtime.thinking` takes precedence, followed by `--thinking`, then the Harness or model default |
+| Workspace | task `workspace` takes precedence, otherwise the global `--workspace` is used |
+| User Simulator model | `user_simulator.model` takes precedence, otherwise the current task Agent model is used |
 
-Roller removes duplicate `--model` values. When you specify multiple models, every selected task runs once for each model. `--start-index` and `--limit` select tasks before Roller expands those model combinations.
+Roller removes duplicate `--model` values. When multiple models are specified, every selected task runs once for each model. `--start-index` and `--limit` select tasks before Roller expands those model combinations.
 
 ## 3. Shared collection flags
 
-These flags decide which tasks to run, how many runs to create, and where to save the results. They work with every Harness.
+These flags determine which tasks run, how many runs are created, and where the results are saved. They apply to every Harness.
 
 ### 3.1 Inputs and runtime selection
 
-These flags tell Roller where to read tasks and which model and Harness should execute them.
+These flags specify where Roller reads tasks and which model and Harness execute them.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
@@ -69,6 +70,7 @@ These flags control concurrency, repetitions, retries, and which part of the tas
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `--parallel N` | `1` | Sets the maximum number of concurrent rollouts |
+| `--launch-interval SECONDS` | `0` | Sets the minimum gap between two rollout launches, see below |
 | `--grader-parallel N` | `--parallel` | Limits concurrent graders separately to avoid overloading a judge service |
 | `--samples N` | `3` for SkillsBench, otherwise `1` | Creates N independent samples for each task/model pair |
 | `--retries N` | `0` | Sets additional attempts after the first failure |
@@ -76,6 +78,17 @@ These flags control concurrency, repetitions, retries, and which part of the tas
 | `--task-timeouts` | Off | Prefers each task's `timeout_seconds` and falls back to `--timeout` |
 | `--start-index N` | `0` | Starts at task N in the normalized task list |
 | `--limit N` | Unlimited | Selects at most N tasks |
+
+By default, a run starts `--parallel` rollouts at once. Start-up requires much more memory than steady-state operation (roughly twice as much for an OpenClaw container); therefore the memory peaks of rollouts that start together add up. `--launch-interval` separates consecutive launches, including retries, by at least the specified number of seconds:
+
+```bash
+roller collect ... --parallel 24 --launch-interval 8
+```
+
+- The interval applies to the whole run, including launches after the first wave. N launches take at least (N − 1) × `--launch-interval` seconds. When rollouts are shorter than about `--parallel × --launch-interval`, fewer than `--parallel` rollouts run at once.
+- Samples skipped by `--resume` do not take a launch turn.
+- On interruption, rollouts still waiting for their launch turn are cancelled and leave no sample directory. Pending retries are also cancelled, regardless of the interval; the sample keeps its last failure, and `--resume` reruns it.
+- The value is recorded in `info.json` and not in `lock.json`; therefore it can be changed on `--resume`.
 
 ### 3.3 Output, validation, and continuation
 
@@ -196,7 +209,7 @@ Wire trace controls whether Roller records the actual HTTP requests sent to the 
 
 ## 5. Harness-specific flag index
 
-When a flag belongs to one Harness, look it up in that Harness guide. Each guide owns its image, API, key, execution limit, and native configuration flags.
+Flags that belong to one Harness are documented in that Harness guide. Each guide documents its image, API, key, execution limit, and native configuration flags.
 
 | Harness | Flag and configuration guide |
 | --- | --- |
@@ -238,7 +251,7 @@ roller view RUN_DIR [--host HOST] [--port PORT]
 | --- | --- | --- |
 | `RUN_DIR` | Required | Selects a Roller run containing `info.json` and `samples/` |
 | `--host` | `127.0.0.1` | Sets the listen address |
-| `--port` | `8765` | Sets the listen port |
+| `--port` | `17865` | Sets the listen port; when omitted and the default is busy, a free port is used |
 
 Listening on `0.0.0.0` exposes trajectory contents to the network. For remote access, keep the default address and use SSH port forwarding.
 

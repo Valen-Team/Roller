@@ -536,7 +536,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             primary_files = [
                 path
                 for path in staging_root.rglob("*.jsonl")
-                if "subagents" not in path.parts and path.is_file()
+                if "subagents" not in path.relative_to(staging_root).parts and path.is_file()
             ]
             if not primary_files:
                 return None
@@ -653,9 +653,11 @@ class ClaudeCodeSession(InteractiveSession):
             "wire_trace.jsonl",
         ):
             (self.output_dir / relative).unlink(missing_ok=True)
+        self.harness.deadline = self.started_monotonic + self.request.timeout_seconds
         self.harness._start_wire_proxy(self.output_dir, self.attempt)
-        self.environment = self.harness._start_container(self.container, self.request)
+        # Mark before run: a timed-out Docker client may already have created it.
         self.container_started = True
+        self.environment = self.harness._start_container(self.container, self.request)
         self.harness._prepare_workspace(self.container, self.request)
         self.harness._prepare_context_and_setup(self.container, self.request)
         self.harness._prepare_settings(self.container)
