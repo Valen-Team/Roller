@@ -112,6 +112,7 @@ roller collect ... --retries 3 --retry-backoff 30
 | `--run-name NAME` | UTC 时间名 | 设置本次 run 的目录名 |
 | `--dry-run` | 关闭 | 检查 task、文件和运行计划，不启动 Docker，也不写入任何文件。每条计划中的 rollout 会列出正式运行将记录的 bundle digest |
 | `--resume` | 关闭 | 继续同一个 run，并跳过产物完整的成功 sample，详见第 6 节 |
+| `--resume-verify-outputs` | 关闭 | 与 `--resume` 一起使用，重新读取每个已记录的输出文件，内容与 SHA-256 不一致的 sample 会重跑。不加时 Resume 只比较路径和大小 |
 
 ### 3.4 兼容与调试
 

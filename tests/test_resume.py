@@ -18,6 +18,7 @@ from roller.collector import CollectionConfig, Collector
 from roller.conversation import ConversationManager
 from roller.harness_registry import HARNESS_NAMES as HARNESSES
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
+from roller.integrity import _validate_output_files, validate_resumable_sample
 from roller.models import HarnessResult, RunRequest, Task, UserSimulatorSpec
 
 
@@ -161,6 +162,47 @@ class CliResumeCompatibilityTests(unittest.TestCase):
         ]
         self.assertEqual(self.invoke(args), 0)
         return args, self.root / "runs" / name
+
+    def test_resume_can_verify_output_digests(self):
+        args, _ = self.seed("verify-outputs", "codex")
+        with self.assertRaisesRegex(ValueError, "requires --resume"):
+            self.invoke([*args, "--resume-verify-outputs"])
+        for flags, expected in (((), False), (("--resume-verify-outputs",), True)):
+            with (
+                self.subTest(flags=flags),
+                patch(
+                    "roller.collector.validate_resumable_sample",
+                    wraps=validate_resumable_sample,
+                ) as validate,
+            ):
+                self.assertEqual(self.invoke([*args, *flags], resume=True), 0)
+                self.assertEqual(
+                    validate.call_args.kwargs["verify_output_sha256"], expected
+                )
+
+    def test_output_digest_check_catches_a_same_size_change(self):
+        sample = self.root / "sample"
+        (sample / "results").mkdir(parents=True)
+        output = sample / "results" / "answer.txt"
+        output.write_bytes(b"right")
+        info = {
+            "output_collection": {
+                "passed": True,
+                "files": [
+                    {
+                        "path": "answer.txt",
+                        "size": 5,
+                        "sha256": hashlib.sha256(b"right").hexdigest(),
+                    }
+                ],
+            }
+        }
+        _validate_output_files(sample, info, verify_sha256=True)
+        output.write_bytes(b"wrong")
+        # Path and size still match, so the default check accepts the file.
+        _validate_output_files(sample, info)
+        with self.assertRaisesRegex(ValueError, "content changed: results/answer.txt"):
+            _validate_output_files(sample, info, verify_sha256=True)
 
     @staticmethod
     def snapshot(root):

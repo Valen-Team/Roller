@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from pathlib import Path
@@ -95,7 +96,17 @@ def _has_json_event(path: Path) -> bool:
     return False
 
 
-def _validate_output_files(sample_dir: Path, info: Mapping[str, Any]) -> None:
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _validate_output_files(
+    sample_dir: Path, info: Mapping[str, Any], *, verify_sha256: bool = False
+) -> None:
     output = info.get("output_collection")
     if not isinstance(output, Mapping) or not output.get("passed"):
         return
@@ -144,6 +155,18 @@ def _validate_output_files(sample_dir: Path, info: Mapping[str, Any]) -> None:
             if actual_size != expected_size:
                 raise ValueError(
                     f"recorded output file size changed: results/{relative}"
+                )
+        expected_sha256 = row.get("sha256")
+        if verify_sha256 and isinstance(expected_sha256, str):
+            try:
+                actual_sha256 = _file_sha256(candidate)
+            except OSError as exc:
+                raise ValueError(
+                    f"recorded output file cannot be read: results/{relative}"
+                ) from exc
+            if actual_sha256 != expected_sha256:
+                raise ValueError(
+                    f"recorded output file content changed: results/{relative}"
                 )
 
 
@@ -313,8 +336,12 @@ def validate_resumable_sample(
     *,
     require_wire_trace: bool = False,
     require_cache_trace: bool = False,
+    verify_output_sha256: bool = False,
 ) -> None:
     """Raise ``ValueError`` when a finalized sample is unsafe to reuse.
+
+    Output files are checked by path and size. ``verify_output_sha256`` also
+    rereads each file and compares it with the recorded digest.
 
     Cache-trace requirements are resolved separately for each participant's
     recorded harness; wire-trace requirements apply to every harness.
@@ -346,7 +373,7 @@ def validate_resumable_sample(
         require_wire_trace=require_wire_trace,
         require_cache_trace=require_cache_trace,
     )
-    _validate_output_files(sample_dir, info)
+    _validate_output_files(sample_dir, info, verify_sha256=verify_output_sha256)
 
     if request.task.user_simulator is None:
         return
