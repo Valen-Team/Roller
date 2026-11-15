@@ -134,6 +134,8 @@ class CollectionConfig:
     keep_thinking: bool = True
     # Minimum seconds between two rollout launches across all workers.
     launch_interval: float = 0.0
+    # Seconds to wait before the first retry of a sample; doubles per retry.
+    retry_backoff: float = 0.0
 
     def __post_init__(self) -> None:
         if self.parallel < 1:
@@ -142,6 +144,8 @@ class CollectionConfig:
             raise ValueError("retries cannot be negative")
         if not math.isfinite(self.launch_interval) or self.launch_interval < 0:
             raise ValueError("launch_interval must be a finite number of seconds >= 0")
+        if not math.isfinite(self.retry_backoff) or self.retry_backoff < 0:
+            raise ValueError("retry_backoff must be a finite number of seconds >= 0")
 
 
 class LaunchCancelled(Exception):
@@ -168,6 +172,11 @@ class _LaunchGate:
             launch = max(time.monotonic(), self._next_launch)
             self._next_launch = launch + self._interval
         return not self._cancelled.wait(max(0.0, launch - time.monotonic()))
+
+    def pause(self, seconds: float) -> bool:
+        """Sleep without holding a launch turn; False once the run is interrupted."""
+
+        return not self._cancelled.wait(seconds)
 
     def cancel(self) -> None:
         self._cancelled.set()
@@ -497,7 +506,21 @@ class Collector:
         harness_name = "unknown"
         for attempt in range(1, self.config.retries + 2):
             if attempt > 1:
-                if not self._launch_gate.wait_turn():
+                backoff = self.config.retry_backoff * 2 ** (attempt - 2)
+                if backoff:
+                    logger.warning(
+                        "[%s | %s] attempt %d failed; waiting %gs before retrying",
+                        request.task.id,
+                        request.model,
+                        attempt - 1,
+                        backoff,
+                    )
+                # The backoff runs first, so the launch turn is taken when the
+                # retry is ready to start and no other launch waits behind it.
+                if not (
+                    self._launch_gate.pause(backoff)
+                    and self._launch_gate.wait_turn()
+                ):
                     # Interrupted between attempts: keep the last failure.
                     logger.warning(
                         "[%s | %s] interrupted; not retrying after attempt %d",
