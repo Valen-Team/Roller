@@ -23,6 +23,10 @@
 </p>
 
 <p align="center">
+  Valen Team 的更多项目：<a href="https://github.com/Valen-Team/Valen/blob/main/README_zh.md">Valen-Decision</a>，多模态 System One 决策模型
+</p>
+
+<p align="center">
   <a href="#news">最新动态</a> · <a href="#architecture">架构</a> · <a href="#highlights">主要特性</a> · <a href="#quick-start">快速开始</a> · <a href="#harnesses">Harness</a> · <a href="#outputs">产物</a> · <a href="#benchmarks">Benchmark</a> · <a href="#documentation">文档</a> · <a href="#contributing">参与贡献</a>
 </p>
 
@@ -394,6 +398,14 @@ ruff format --check
   </tr>
 </table>
 
+<a id="more-from-valen-team"></a>
+
+## Valen Team 的更多项目
+
+Roller 是 [Valen Team · 万澜](https://github.com/Valen-Team)的开源项目之一。组织关注快速决策模型、递归自我改进（RSI）与 Agent 智能体。
+
+[Valen-Decision](https://github.com/Valen-Team/Valen/blob/main/README_zh.md) 是多模态 System One 决策模型：输入文本、图像和视频，输出结构化决策概率。覆盖 0.8B 到 27B 五个尺寸，支持 bbox 问题，并提供[在线体验和免费 API](https://valen-team.github.io/zh-Hans/)。
+
 <a id="license-and-acknowledgements"></a>
 
 ## 许可与致谢
@@ -401,3 +413,20 @@ ruff format --check
 Roller 基于 [Apache License 2.0](LICENSE) 发布。
 
 Roller 调用以下第三方 Agent 运行时和 Benchmark：OpenClaw、Codex、Claude Code、Hermes Agent、OpenCode、DeepSeek Harness、Pi Agent、WildClawBench、SkillsBench、PinchBench、QwenClawBench 和 SWE-Bench Pro。上述项目的镜像、代码和数据遵循其各自的许可证。感谢这些项目的作者。
+
+<a id="citation"></a>
+
+## 引用
+
+如果你在工作中使用 Roller，请引用本仓库：
+
+```bibtex
+@misc{roller,
+  author       = {{Valen Team}},
+  title        = {Roller},
+  howpublished = {GitHub - Valen-Team/Roller: Agent trajectory collection across models and Harnesses.},
+  note         = {GitHub repository},
+  year         = {2026},
+  url          = {https://github.com/Valen-Team/Roller}
+}
+```
