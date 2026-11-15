@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 from roller.models import ContextFile, InputFile, RunRequest, Task, TaskBundle
-from roller.storage import safe_component
+from roller.storage import atomic_write_json, safe_component
 
 
 class BundleError(ValueError):
@@ -530,10 +530,54 @@ class TaskBundleStore:
             context_manifest_digest=context_manifest_digest,
             legacy_workspace=task.legacy_workspace,
             resume_safe=context_manifest["resume_safe"],
+            context_manifest=context_manifest,
         )
 
     def prepare_all(self, tasks: Iterable[Task]) -> dict[str, TaskBundle]:
         return {task.id: self.prepare(task) for task in tasks}
+
+    def persist_full_context(
+        self, bundles: Iterable[TaskBundle], run_dir: Path
+    ) -> None:
+        """Keep ``capture=full`` Context source in the run, addressed by content.
+
+        Samples record ``context_manifest_digest``; the manifest written here maps
+        that digest to the files the Agent saw. Runtime digests are not affected.
+        """
+
+        blobs = run_dir / "context" / "sha256"
+        manifests = run_dir / "context" / "manifests"
+        for bundle in bundles:
+            declarations = []
+            for declaration in bundle.context_manifest.get("declarations", ()):
+                if declaration["capture"] != "full" or not declaration["present"]:
+                    continue
+                files = []
+                for record in declaration["files"]:
+                    digest = record["sha256"]
+                    blob = blobs / digest
+                    if not blob.exists():
+                        # Source may have been private; keep the archive owner-only.
+                        blobs.mkdir(parents=True, exist_ok=True)
+                        for directory in (blobs.parent, blobs):
+                            directory.chmod(0o700)
+                        fd, temporary = tempfile.mkstemp(prefix=f".{digest}.", dir=blob.parent)
+                        os.close(fd)
+                        shutil.copyfile(bundle.context_root / record["logical_path"], temporary)
+                        os.chmod(temporary, 0o400)
+                        os.replace(temporary, blob)
+                    files.append({**record, "blob": f"context/sha256/{digest}"})
+                declarations.append({**declaration, "files": files})
+            manifest_path = manifests / f"{bundle.context_manifest_digest}.json"
+            if declarations and not manifest_path.exists():
+                atomic_write_json(
+                    manifest_path,
+                    {
+                        "schema_version": "roller.context-archive/v1",
+                        "context_manifest_digest": bundle.context_manifest_digest,
+                        "declarations": declarations,
+                    },
+                )
 
     def attach(
         self, requests: Iterable[RunRequest], bundles: dict[str, TaskBundle]
