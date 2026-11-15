@@ -51,6 +51,20 @@ def _text(message: dict[str, Any], *, plain_only: bool) -> str | None:
     return "\n".join(parts).strip()
 
 
+def _visible_text(message: dict[str, Any]) -> str:
+    """Text blocks of a provider row, ignoring its reasoning and tool calls."""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        block["text"] for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+        and isinstance(block.get("text"), str)
+    ).strip()
+
+
 @dataclass
 class _ProviderRecord:
     message: dict[str, Any]
@@ -129,12 +143,18 @@ class OpenClawDeliveryTracker:
     Matched gap fills keep new text and update the delivered text, while their
     usage/cost stays attached to the matched provider calls. Cost never decides
     a match. Unknown CLI replies (including CLI-only backends) are retained.
+
+    A turn that ends with ``sessions_yield`` has no final provider reply: the
+    CLI then delivers the text the turn already produced, with the turn's
+    total usage. That copy is removed like a same-content copy of a reply.
     """
 
     def __init__(self) -> None:
         self._providers: list[_ProviderRecord] = []
         self._latest: dict[str, Any] | None = None
         self._delivered_text: str | None = None
+        # Visible text of this turn's provider rows, in order.
+        self._turn_texts: list[str] = []
 
     def _invalidate_delivery(self) -> None:
         self._latest = None
@@ -142,7 +162,19 @@ class OpenClawDeliveryTracker:
 
     def _reset(self) -> None:
         self._providers.clear()
+        self._turn_texts.clear()
         self._invalidate_delivery()
+
+    def _delivers_yielded_turn(self, latest: dict[str, Any], visible: str) -> bool:
+        content = latest.get("content")
+        yielded = isinstance(content, list) and any(
+            isinstance(block, dict) and block.get("type") == "toolCall"
+            and block.get("name") == "sessions_yield"
+            for block in content
+        )
+        return yielded and visible in {
+            separator.join(self._turn_texts) for separator in ("\n", "\n\n")
+        }
 
     def observe(self, event: dict[str, Any]) -> DeliveryDecision:
         if event.get("type") in {"session", "compaction"}:
@@ -167,6 +199,9 @@ class OpenClawDeliveryTracker:
                 _text(message, plain_only=False)
                 if _stop_reason(message) in {None, "stop", "end_turn"} else None
             )
+            emitted = _visible_text(message)
+            if emitted:
+                self._turn_texts.append(emitted)
             return DeliveryDecision()
 
         latest = self._latest
@@ -186,7 +221,10 @@ class OpenClawDeliveryTracker:
         ]
         usage = OpenClawUsage.parse(message.get("usage"))
         scope = _match_usage(usage, source_rows)
-        same_text = bool(visible and visible == self._delivered_text)
+        same_text = bool(visible) and (
+            visible == self._delivered_text
+            or (scope == "turn_total" and self._delivers_yielded_turn(latest, visible))
+        )
         no_usage = message.get("usage") is None or (
             usage is not None and usage.matchable and not any(usage.counts)
         )

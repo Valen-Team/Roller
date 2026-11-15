@@ -415,6 +415,45 @@ class OpenClawDeliveryTests(unittest.TestCase):
         self.assertEqual(len(actf["steps"]), 1)
         self.assertEqual(usage["request_count"], 1)
 
+    def test_delivery_of_a_yielded_turn_is_not_an_extra_step(self) -> None:
+        def call(name: str, call_id: str, text: str | None = None) -> dict:
+            blocks = [{"type": "text", "text": text}] if text else []
+            blocks.append({"type": "toolCall", "id": call_id, "name": name, "arguments": {}})
+            return _reply("openai-completions", stopReason="toolUse", content=blocks)
+
+        def result(name: str, call_id: str) -> dict:
+            return {"type": "message", "message": {
+                "role": "toolResult", "toolCallId": call_id, "toolName": name,
+                "content": [{"type": "text", "text": "ok"}],
+            }}
+
+        tools = [{"type": "function", "function": {"name": name, "parameters": {"type": "object"}}}
+                 for name in ("sessions_spawn", "sessions_yield", "read")]
+        turn_total = {"input": 20, "output": 4, "cacheRead": 6, "cacheWrite": 2, "totalTokens": 16}
+        spawn = [_user(), call("sessions_spawn", "c1", "Starting the child."), result("sessions_spawn", "c1")]
+
+        actf, sft, usage = self._project(
+            [*spawn, call("sessions_yield", "c2"), result("sessions_yield", "c2"),
+             _reply("cli", "Starting the child.", usage=turn_total)],
+            tools=tools,
+        )
+        self.assertEqual(len(actf["steps"]), 2)
+        self.assertEqual(
+            [message["role"] for message in sft["messages"]],
+            ["system", "user", "assistant", "tool", "assistant", "tool"],
+        )
+        self.assertEqual(usage["request_count"], 2)
+
+        # New text, or a turn that did not yield, is still a reply of its own.
+        for last_tool, text in (("sessions_yield", "A different reply."), ("read", "Starting the child.")):
+            with self.subTest(last_tool=last_tool, text=text):
+                actf, _, _ = self._project(
+                    [*spawn, call(last_tool, "c2"), result(last_tool, "c2"),
+                     _reply("cli", text, usage=turn_total)],
+                    tools=tools,
+                )
+                self.assertEqual(len(actf["steps"]), 3)
+
     def test_matching_an_earlier_reply_does_not_erase_new_final_text(self) -> None:
         actf, sft, usage = self._project([
             _user(), _reply("openai-completions", "earlier"),
