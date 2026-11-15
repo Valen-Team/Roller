@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="#harnesses"><img src="https://img.shields.io/badge/Harnesses-7-00866F?style=flat&amp;labelColor=4B5563" alt="7 Harnesses"></a>
-  <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-4-00866F?style=flat&amp;labelColor=4B5563" alt="4 benchmark adapters"></a>
+  <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-5-00866F?style=flat&amp;labelColor=4B5563" alt="5 benchmark adapters"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-6B7280?style=flat&amp;labelColor=4B5563" alt="License: Apache 2.0"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.10%2B-6B7280?style=flat&amp;logo=python&amp;logoColor=FFD43B&amp;labelColor=4B5563" alt="Python 3.10+"></a>
 </p>
@@ -28,7 +28,7 @@
 
 ## Introduction
 
-Roller is infrastructure for agent runtimes that provides agent rollout and evaluation services. Users supply tasks and custom environments; Roller runs the agent in an isolated Docker container, collects the complete agent trajectory and evaluates the task result. Roller currently supports seven mainstream Harnesses, including OpenClaw, Codex and Claude Code, and four benchmarks, including WildClawBench and SkillsBench.
+Roller is infrastructure for agent runtimes that provides agent rollout and evaluation services. Users supply tasks and custom environments; Roller runs the agent in an isolated Docker container, collects the complete agent trajectory and evaluates the task result. Roller currently supports seven mainstream Harnesses, including OpenClaw, Codex and Claude Code, and five benchmarks, including WildClawBench and SkillsBench.
 
 Roller provides the following capabilities:
 
@@ -282,6 +282,7 @@ Bench adapters convert benchmark tasks into Roller tasks and grade each sample i
 | [SkillsBench](docs/en/benches/skillsbench.md) | `opencode` | One built environment per task; with-skill and no-skill runs scored by official verifiers |
 | [PinchBench](docs/en/benches/pinchbench.md) | `openclaw` | Automated, LLM-judge, hybrid and multi-session tasks |
 | [QwenClawBench](docs/en/benches/qwenclawbench.md) | `openclaw` | 100 tasks in 8 domains, with repeated runs per task |
+| [SWE-Bench Pro](docs/en/benches/swebench-pro.md) | `openclaw` | 731 software-engineering tasks in 11 repositories, scored by hidden tests in official instance images |
 
 The following example runs WildClawBench. With the upstream repository checked out and its `.env` loaded, one command converts the tasks, collects trajectories, grades every sample and writes `tasks.jsonl` and `bench-report.json` to the run directory:
 
@@ -388,4 +389,4 @@ python -m pytest
 
 Roller is licensed under the [Apache License 2.0](LICENSE).
 
-Roller invokes the following third-party agent runtimes and benchmarks: OpenClaw, Codex, Claude Code, Hermes Agent, OpenCode, DeepSeek Harness, Pi Agent, WildClawBench, SkillsBench, PinchBench and QwenClawBench. Their images, code and data are subject to their respective licenses. We thank the authors of these projects.
+Roller invokes the following third-party agent runtimes and benchmarks: OpenClaw, Codex, Claude Code, Hermes Agent, OpenCode, DeepSeek Harness, Pi Agent, WildClawBench, SkillsBench, PinchBench, QwenClawBench and SWE-Bench Pro. Their images, code and data are subject to their respective licenses. We thank the authors of these projects.
