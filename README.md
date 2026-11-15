@@ -100,7 +100,7 @@ The following procedure collects a first batch of trajectories with OpenClaw, th
 Requirements: Python 3.10 or later and a running Docker daemon.
 
 ```bash
-git clone https://github.com/Liuziyu77/Roller.git
+git clone https://github.com/Valen-Team/Roller.git
 cd Roller
 conda create -n roller python=3.11 -y
 conda activate roller
@@ -313,7 +313,7 @@ The complete rules are specified in [Security and privacy boundaries](docs/en/ta
 
 ## Contributing
 
-Report defects through [Issues](https://github.com/Liuziyu77/Roller/issues). New Harnesses, new benches and documentation improvements are accepted as [Pull Requests](https://github.com/Liuziyu77/Roller/pulls). The code is organized as follows:
+Report defects through [Issues](https://github.com/Valen-Team/Roller/issues). New Harnesses, new benches and documentation improvements are accepted as [Pull Requests](https://github.com/Valen-Team/Roller/pulls). The code is organized as follows:
 
 | Area | Location |
 | --- | --- |
@@ -325,7 +325,8 @@ Report defects through [Issues](https://github.com/Liuziyu77/Roller/issues). New
 Run the test suite before submitting a pull request:
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -v
+python -m pip install -e ".[test]"
+python -m pytest
 ```
 
 ### Contributors

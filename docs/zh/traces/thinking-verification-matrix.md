@@ -1,6 +1,6 @@
 # Thinking 回归检查矩阵
 
-本矩阵用于复核 [issue #51](https://github.com/Liuziyu77/Roller/issues/51)
+本矩阵用于复核 [issue #51](https://github.com/Valen-Team/Roller/issues/51)
 与 PR #64 的能力预检、请求审计、轨迹保存和训练过滤。每个检查项保存
 输入配置、实际出站证据、响应证据、ACTF/SFT、过滤原因和判定。
 真实服务的结果仅适用于当次 Roller、Harness、网关和模型路由的组合。

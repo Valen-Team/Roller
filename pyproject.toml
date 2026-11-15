@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [{name = "Roller contributors"}]
+keywords = ["agents", "agent-trajectories", "docker", "evaluation", "sft"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: Apache Software License",
@@ -19,6 +20,14 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
 ]
 dependencies = ["PyYAML>=6.0,<7"]
+
+[project.optional-dependencies]
+test = ["pytest", "tomli; python_version < '3.11'"]
+
+[project.urls]
+Homepage = "https://github.com/Valen-Team/Roller"
+Documentation = "https://github.com/Valen-Team/Roller/blob/main/docs/en/index.md"
+Issues = "https://github.com/Valen-Team/Roller/issues"
 
 [project.scripts]
 roller = "roller.cli:main"
