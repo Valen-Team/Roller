@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from roller.cli import _build_parser, _collect
+from roller.harnesses.container import PROXY_ENV_NAMES
 from roller.harnesses.opencode import (
     RUNNER_PATH,
     OpenCodeConfig,
@@ -536,6 +537,9 @@ class OpenCodeHarnessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ, {"LOCAL_TEST_KEY": "test-secret"}
         ):
+            # A proxy configured on the host would replace the defaults checked below.
+            for name in PROXY_ENV_NAMES:
+                os.environ.pop(name, None)
             harness.run(
                 RunRequest(0, Task("test", ("one",), 0), "model", 60),
                 Path(tmp),

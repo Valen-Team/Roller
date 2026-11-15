@@ -88,6 +88,16 @@ class NodeCertificateTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 42, result.stderr)
 
 
+def _gnu_sed() -> bool:
+    try:
+        version = subprocess.run(["sed", "--version"], capture_output=True, text=True, timeout=5)
+    except OSError:
+        return False
+    return version.returncode == 0 and "GNU" in version.stdout
+
+
+# The images are Debian based, so the Dockerfiles call GNU sed (-i -E).
+@unittest.skipUnless(_gnu_sed(), "the Dockerfile mirror rewrite needs GNU sed")
 class DebianMirrorTests(unittest.TestCase):
     def rewrite(self, harness, text, settings, filename="sources.list.d/debian.sources"):
         commands = instructions(harness)
@@ -239,7 +249,7 @@ class CodexApplyPatchTests(unittest.TestCase):
                     )
                     if executable:
                         self.assertEqual(result.returncode, 0, result.stderr)
-                        self.assertEqual(alias.resolve(), native)
+                        self.assertEqual(alias.resolve(), native.resolve())
                         self.assertEqual(subprocess.check_output([str(alias)], text=True, timeout=5), "alias-ok\n")
                     else:
                         self.assertNotEqual(result.returncode, 0)

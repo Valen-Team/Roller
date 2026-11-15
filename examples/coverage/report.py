@@ -35,7 +35,8 @@ def evaluate(info_path, coverage, task, requirements):
     try:
         request = RunRequest(info['request_index'], task, info['model'], 180)
         validate_resumable_sample(sample, request, info, **requirements)
-        actf, sft = read(sample / 'trace_ACTF.json'), read(sample / 'trace_SFT.json')
+        read(sample / 'trace_ACTF.json')  # Must parse.
+        sft = read(sample / 'trace_SFT.json')
         user_turns = sum(m['role'] == 'user' for m in sft['messages'])
         row['user_turns'] = user_turns
         if user_turns != expect['user_turns']:

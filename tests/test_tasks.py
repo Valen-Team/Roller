@@ -206,7 +206,8 @@ class TaskLoadingTests(unittest.TestCase):
 
     def test_resolves_sources_against_task_file_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            project = Path(temporary) / "project"
+            # The loader resolves symlinks; macOS temporary directories sit behind one.
+            project = Path(temporary).resolve() / "project"
             manifests = project / "manifests"
             files = project / "files"
             manifests.mkdir(parents=True)
@@ -284,7 +285,7 @@ class TaskLoadingTests(unittest.TestCase):
 
     def test_accepts_renamed_and_inline_inputs_but_rejects_output_declarations(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             (root / "input.txt").write_text("input", encoding="utf-8")
             task_file = root / "tasks.json"
             task_file.write_text(
