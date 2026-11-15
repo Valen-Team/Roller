@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections import Counter
 import json
+import stat
 import tempfile
 import tracemalloc
 import unittest
@@ -86,6 +87,106 @@ class TaskBundleTests(unittest.TestCase):
 
             store.cleanup_runtime()
             self.assertFalse((root / "run" / ".runtime").exists())
+
+    def test_persists_only_full_context_with_an_audit_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "skills" / "nested").mkdir(parents=True)
+            (root / "skills" / "a.md").write_text("shared full", encoding="utf-8")
+            (root / "skills" / "nested" / "b.md").write_text(
+                "shared full", encoding="utf-8"
+            )
+            (root / "USER.md").write_text("hash only", encoding="utf-8")
+            (root / "SECRET.md").write_text("not captured", encoding="utf-8")
+            for path in (
+                root / "skills" / "a.md",
+                root / "skills" / "nested" / "b.md",
+                root / "USER.md",
+                root / "SECRET.md",
+            ):
+                path.chmod(0o640)
+            task = load_tasks(
+                self._write_task(
+                    root,
+                    {
+                        "id": "context-archive",
+                        "prompt": "read context",
+                        "files": {
+                            "context": [
+                                {
+                                    "role": "skill",
+                                    "source": "skills",
+                                    "target": "skills/demo",
+                                    "capture": "full",
+                                },
+                                {
+                                    "role": "user",
+                                    "source": "USER.md",
+                                    "capture": "hash",
+                                },
+                                {
+                                    "role": "custom",
+                                    "source": "SECRET.md",
+                                    "target": "SECRET.md",
+                                    "capture": "none",
+                                },
+                            ]
+                        },
+                    },
+                )
+            )[0]
+            store = TaskBundleStore(root / "bundle")
+            bundle = store.prepare(task)
+            runtime_manifest = json.dumps(bundle.context_manifest, sort_keys=True)
+            self.assertEqual(
+                bundle.context_manifest_digest,
+                "e862fef694a6c064af66fdab13d9da0435d1f33d25999278787fe28a4ca721bb",
+            )
+            destination = root / "saved-run"
+
+            store.persist_full_context([bundle], destination)
+
+            full_digest = hashlib.sha256(b"shared full").hexdigest()
+            hash_digest = hashlib.sha256(b"hash only").hexdigest()
+            none_digest = hashlib.sha256(b"not captured").hexdigest()
+            blob = destination / "context" / "sha256" / full_digest
+            self.assertEqual(blob.read_text(encoding="utf-8"), "shared full")
+            self.assertEqual(stat.S_IMODE(blob.stat().st_mode), 0o400)
+            self.assertEqual(stat.S_IMODE(blob.parent.stat().st_mode), 0o700)
+            self.assertEqual(
+                sorted(path.name for path in blob.parent.iterdir()), [full_digest]
+            )
+            self.assertFalse((blob.parent / hash_digest).exists())
+            self.assertFalse((blob.parent / none_digest).exists())
+
+            archive_path = (
+                destination
+                / "context"
+                / "manifests"
+                / f"{bundle.context_manifest_digest}.json"
+            )
+            archive = json.loads(archive_path.read_text(encoding="utf-8"))
+            self.assertEqual(archive["schema_version"], "roller.context-archive/v1")
+            self.assertEqual(
+                archive["context_manifest_digest"], bundle.context_manifest_digest
+            )
+            self.assertEqual(
+                [declaration["role"] for declaration in archive["declarations"]],
+                ["skill"],
+            )
+            self.assertEqual(
+                {record["blob"] for record in archive["declarations"][0]["files"]},
+                {f"context/sha256/{full_digest}"},
+            )
+            self.assertEqual(
+                json.dumps(bundle.context_manifest, sort_keys=True), runtime_manifest
+            )
+
+            mtimes = (blob.stat().st_mtime_ns, archive_path.stat().st_mtime_ns)
+            store.persist_full_context([bundle], destination)
+            self.assertEqual(
+                (blob.stat().st_mtime_ns, archive_path.stat().st_mtime_ns), mtimes
+            )
 
     def test_reuses_same_input_tree_between_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
