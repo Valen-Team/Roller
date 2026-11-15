@@ -12,6 +12,7 @@ from roller.benches import BenchFormatError, binding_from_task_row
 from roller.benches.base import BenchBinding, GradeSpec
 from roller.benches.grading import GradedHarness, prepare_benchmark_workspace
 from roller.benches.pinchbench import PinchBenchAdapter
+from roller.benches.wildclaw import WildClawBenchAdapter
 from roller.benches.skillsbench import (
     SkillsBenchAdapter,
     _portable_heredocs,
@@ -485,6 +486,53 @@ class SkillsBenchAdapterTests(unittest.TestCase):
         self.assertEqual(outcome.scores["overall_score"], 0.0)
         self.assertFalse(outcome.scores["score_eligible"])
         self.assertIn("grading skipped", outcome.error)
+
+    def test_agent_failure_is_graded_when_the_bench_opts_in(self) -> None:
+        binding = BenchBinding(
+            "wildclawbench",
+            grade=GradeSpec(
+                "def grade(workspace_path): return {'overall_score': 1}",
+                grade_on_agent_failure=True,
+            ),
+        )
+        inner = mock.Mock(spec=InteractiveHarness)
+        inner.name = "openclaw"
+        harness = GradedHarness(inner, binding)
+        session = mock.Mock()
+        session.container_started = True
+        session.container = "live"
+        request = RunRequest(0, Task("demo", ("do it",), 0), "model", 30)
+        graded = mock.Mock(scores={"overall_score": 0.5}, error=None)
+
+        with mock.patch(
+            "roller.benches.grading.ContainerGrader.grade", return_value=graded
+        ) as grade:
+            outcome = harness._grade(session, request, "timeout")
+
+        grade.assert_called_once()
+        self.assertIs(outcome, graded)
+
+    def test_wildclaw_rows_grade_after_agent_failure_in_the_upstream_workspace(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "tasks").mkdir()
+            (root / "tasks" / "01_Productivity_Flow_task_1_demo.md").write_text(
+                "---\nid: demo\ntimeout_seconds: 300\n---\n\n"
+                "## Prompt\n\nWrite /tmp_workspace/results/answer.txt.\n\n"
+                "## Automated Checks\n\n```python\n"
+                "def grade(transcript, workspace_path):\n"
+                "    return {'overall_score': 1.0}\n```\n",
+                encoding="utf-8",
+            )
+
+            (row,) = WildClawBenchAdapter(timeout_multiplier=1.0).load(root)
+
+        self.assertEqual(row["runtime"]["workspace_path"], "/tmp_workspace")
+        grade = binding_from_task_row(row).grade
+        self.assertTrue(grade.grade_on_agent_failure)
+        self.assertEqual(grade.workspace_path, "/tmp_workspace")
 
     def test_grade_spec_round_trips_agent_failure_policy(self) -> None:
         spec = GradeSpec(
