@@ -41,6 +41,7 @@ Roller 提供以下能力：
 - **Benchmark 集成。** 一条命令完成 Benchmark 任务转换、轨迹采集，并在各 sample 的运行容器内完成评分。
 - **批量采集。** 跨 task 与模型并行执行 rollout，失败的尝试可自动重试，中断的运行可通过 Resume 继续。
 - **SFT 数据导出。** 每个成功的 rollout 生成一条 `messages` + `tools` 训练记录；发生上下文压缩的 rollout 以分段记录的形式单独导出。
+- **ATIF 导出。** `roller export` 把一次 run 的轨迹转换为 [Harbor](https://github.com/harbor-framework/harbor) 的轨迹格式 ATIF。Harbor 可以校验这些文件，其 Claude Code 和 Codex Agent 可以把它们加载为会话历史。
 - **多轮对话与 User Simulator。** 用户消息可在 task 中预先定义，也可由扮演用户的另一个模型生成。
 - **Viewer。** 内置只读 Web 界面，用于浏览 task、对比模型和查看每个 step。
 
@@ -55,6 +56,7 @@ Roller 提供以下能力：
 
 ## 最新动态
 
+- **2026-11-16**：[ATIF 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#atif-export)。`roller export RUN_DIR` 把一次 run 的全部轨迹转换为 [Harbor](https://github.com/harbor-framework/harbor) 读取的格式。
 - **2026-11-15**：Roller 已发布至 PyPI，包名为 [`roller-agent`](https://pypi.org/project/roller-agent/)。`roller init` 将示例 task 和配置模板写入工作目录。
 - **2026-11-11**：支持上下文压缩场景下的 SFT 导出。Task Agent 压缩上下文时，每段通过校验的上下文窗口作为独立的 SFT 记录导出至 `sft_segments/`。
 - **2026-11-08**：新增 QwenClawBench 适配，覆盖 8 个领域的 100 个任务，支持自动评分、混合评分和单题多次运行。
@@ -348,6 +350,7 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
 | Harness 适配器 | `src/roller/harnesses/`，轨迹转换位于 `src/roller/*_actf.py` |
 | Bench 适配器 | `src/roller/benches/` |
 | SFT 导出 | `src/roller/sft.py`、`src/roller/compaction_sft.py` |
+| ATIF 导出 | `src/roller/atif.py` |
 | Viewer | `src/roller/viewer/` |
 
 提交 Pull Request 前请运行检查：

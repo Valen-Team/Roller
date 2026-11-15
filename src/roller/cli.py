@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from roller.atif import export_run
 from roller.benches import (
     binding_from_task_row,
     format_report,
@@ -157,6 +158,22 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help=f"listen port (default: {VIEWER_DEFAULT_PORT}, or a free port when it is busy)",
+    )
+
+    export = subparsers.add_parser(
+        "export", help="export the trajectories of a Roller run to another format"
+    )
+    export.add_argument(
+        "run_dir", help="Roller run directory containing info.json/samples"
+    )
+    export.add_argument(
+        "--format",
+        choices=("atif",),
+        default="atif",
+        help="target format (default: atif, the trajectory format Harbor reads)",
+    )
+    export.add_argument(
+        "--output", "-o", help="directory to write (default: RUN_DIR/<format>)"
     )
 
     bench = subparsers.add_parser("bench", help="work with benchmark adapters")
@@ -2340,6 +2357,20 @@ def _view(args: argparse.Namespace) -> int:
     return serve_viewer(Path(args.run_dir), host=args.host, port=args.port)
 
 
+def _export(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir)
+    if not (run_dir / "samples").is_dir():
+        raise FileNotFoundError(f"{run_dir} has no samples directory")
+    output = Path(args.output) if args.output else run_dir / args.format
+    written, skipped = export_run(run_dir, output)
+    print(f"Exported {len(written)} ATIF trajectories to {output}")
+    if skipped:
+        print(f"Skipped {len(skipped)} samples:")
+        for sample, reason in skipped.items():
+            print(f"  {sample}: {reason}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -2355,6 +2386,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             exit_code = _bench(args)
         elif args.command == "view":
             exit_code = _view(args)
+        elif args.command == "export":
+            exit_code = _export(args)
         elif args.command == "init":
             exit_code = _init(args)
         else:
