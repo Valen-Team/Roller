@@ -13,18 +13,18 @@
       "description": "Task workspace root for relative input/context sources and output_dir; itself relative to the task-list directory"
     },
     "harness": {
-      "enum": ["openclaw", "codex", "claude-code"],
+      "$ref": "#/$defs/harness",
       "default": "openclaw",
       "description": "Harness used by the Task Agent; --harness can override it for a collection run"
     },
     "agent_harness": {
-      "enum": ["openclaw", "codex", "claude-code"],
+      "$ref": "#/$defs/harness",
       "description": "Explicit alias for the Task Agent harness"
     },
     "task_agent": {
       "type": "object",
       "properties": {
-        "harness": {"enum": ["openclaw", "codex", "claude-code"]},
+        "harness": {"$ref": "#/$defs/harness"},
         "model": {"type": "string", "minLength": 1}
       },
       "additionalProperties": true,
@@ -33,7 +33,7 @@
     "agent": {
       "type": "object",
       "properties": {
-        "harness": {"enum": ["openclaw", "codex", "claude-code"]},
+        "harness": {"$ref": "#/$defs/harness"},
         "model": {"type": "string", "minLength": 1}
       },
       "additionalProperties": true,
@@ -52,7 +52,12 @@
             "required": ["role", "content"],
             "properties": {
               "role": {"const": "user"},
-              "content": {"type": "string", "minLength": 1}
+              "content": {"type": "string", "minLength": 1},
+              "new_session": {
+                "type": "boolean",
+                "default": false,
+                "description": "Start a fresh Harness session before this message; not allowed on the first message"
+              }
             },
             "additionalProperties": false
           }
@@ -68,7 +73,7 @@
           "minLength": 1,
           "description": "Fixed persona and goal prompt given to the User Simulator on every turn"
         },
-        "harness": {"enum": ["openclaw", "codex", "claude-code"], "default": "openclaw"},
+        "harness": {"$ref": "#/$defs/harness", "default": "openclaw"},
         "model": {
           "type": "string",
           "minLength": 1,
@@ -103,16 +108,40 @@
               {"$ref": "#/$defs/relativePath"},
               {
                 "type": "object",
-                "required": ["source"],
                 "properties": {
                   "source": {"$ref": "#/$defs/relativePath"},
+                  "content": {
+                    "type": "string",
+                    "description": "Inline file content; mutually exclusive with source"
+                  },
+                  "target": {
+                    "$ref": "#/$defs/relativePath",
+                    "description": "Path inside the workspace; defaults to source"
+                  },
+                  "path": {
+                    "$ref": "#/$defs/relativePath",
+                    "description": "Alias for target"
+                  },
                   "required": {"type": "boolean", "default": true},
                   "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
                 },
+                "oneOf": [
+                  {"required": ["source"], "not": {"required": ["content"]}},
+                  {
+                    "required": ["content"],
+                    "not": {"required": ["source"]},
+                    "anyOf": [{"required": ["target"]}, {"required": ["path"]}]
+                  }
+                ],
                 "additionalProperties": false
               }
             ]
           }
+        },
+        "input_mode": {
+          "enum": ["mount", "copy"],
+          "default": "mount",
+          "description": "Mount the inputs read-only or copy them into the workspace"
         },
         "attach_images": {
           "type": "array",
@@ -155,8 +184,43 @@
         },
         "thinking": {
           "enum": ["off", "none", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max", "ultra"]
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Docker image for this task; overrides the Harness image"
+        },
+        "image_build": {
+          "type": "object",
+          "required": ["base_image", "context", "dockerfile", "harness"],
+          "properties": {
+            "base_image": {"type": "string", "minLength": 1},
+            "context": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Build context directory, absolute or relative to file_root"
+            },
+            "dockerfile": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Dockerfile source text"
+            },
+            "harness": {"$ref": "#/$defs/harness"},
+            "args": {
+              "type": "object",
+              "additionalProperties": {"type": ["string", "number", "boolean"]}
+            },
+            "timeout_seconds": {"type": "integer", "minimum": 1, "default": 3600}
+          },
+          "description": "Build runtime.image before the run; requires runtime.image"
+        },
+        "workspace_path": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Absolute workspace path inside the container"
         }
       },
+      "dependentRequired": {"image_build": ["image"]},
       "additionalProperties": false
     }
   },
@@ -181,6 +245,9 @@
     }
   ],
   "$defs": {
+    "harness": {
+      "enum": ["openclaw", "codex", "claude-code", "hermes", "opencode", "deepseek", "pi"]
+    },
     "relativePath": {
       "type": "string",
       "minLength": 1,

@@ -11,6 +11,7 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 import yaml
+from jsonschema import Draft202012Validator
 
 from roller.benches import BENCHES
 from roller.benches.run_config import load_bench_run_plan
@@ -231,6 +232,97 @@ class ExampleFilesTests(unittest.TestCase):
             set(schema["properties"]["harness"]["properties"]["id"]["enum"]),
             set(HARNESS_NAMES),
         )
+
+    def _task_schema(self) -> dict:
+        return json.loads(
+            (self.project_root / "schemas" / "task.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    def test_task_schema_tracks_registered_harnesses(self) -> None:
+        schema = self._task_schema()
+        self.assertEqual(schema["$defs"]["harness"]["enum"], list(HARNESS_NAMES))
+
+        def harness_enums(node, path=""):
+            if isinstance(node, dict):
+                if path != "/$defs/harness" and "openclaw" in node.get("enum", ()):
+                    yield path
+                for key, value in node.items():
+                    yield from harness_enums(value, f"{path}/{key}")
+            elif isinstance(node, list):
+                for index, value in enumerate(node):
+                    yield from harness_enums(value, f"{path}/{index}")
+
+        # Every Harness field refers to the shared definition.
+        self.assertEqual(list(harness_enums(schema)), [])
+
+    def test_task_schema_accepts_the_tasks_the_loader_accepts(self) -> None:
+        validator = Draft202012Validator(self._task_schema())
+        rows = [
+            json.loads(line)
+            for name in ("tasks.jsonl", "user-simulator.jsonl")
+            for line in (self.examples_root / "tasks" / name).read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        ]
+        rows += json.loads(
+            (self.examples_root / "coverage" / "all_tasks.json").read_text(
+                encoding="utf-8"
+            )
+        )["tasks"]
+        base = {"schema_version": "roller.task/v1", "id": "t", "prompt": "p"}
+        rows += [{**base, "harness": name} for name in HARNESS_NAMES]
+        rows += [
+            {
+                **base,
+                "files": {
+                    "inputs": [
+                        {"source": "source.txt", "target": "renamed.txt"},
+                        {"path": "nested/config.yaml", "content": "a: 1\n"},
+                    ],
+                    "input_mode": "copy",
+                },
+            },
+            {
+                "schema_version": "roller.task/v1",
+                "id": "sessions",
+                "messages": [
+                    {"role": "user", "content": "first"},
+                    {"role": "user", "content": "second", "new_session": True},
+                ],
+            },
+            {
+                **base,
+                "runtime": {
+                    "image": "task:1",
+                    "workspace_path": "/app",
+                    "image_build": {
+                        "base_image": "python:3.12",
+                        "context": "build",
+                        "dockerfile": "FROM python:3.12\n",
+                        "harness": "pi",
+                        "args": {"VERSION": 3},
+                    },
+                },
+            },
+        ]
+        for row in rows:
+            errors = [error.message for error in validator.iter_errors(row)]
+            self.assertEqual(errors, [], row.get("id"))
+
+        rejected = [
+            {**base, "harness": "unknown"},
+            {**base, "files": {"inputs": [{"source": "a.txt", "content": "x"}]}},
+            {**base, "files": {"inputs": [{"content": "x"}]}},
+            {**base, "files": {"input_mode": "link"}},
+            {**base, "runtime": {"image_build": {"base_image": "b", "context": "c", "dockerfile": "d", "harness": "pi"}}},
+            {**base, "runtime": {"workspace_path": "relative"}},
+        ]
+        for row in rejected:
+            with self.subTest(row=row):
+                self.assertFalse(validator.is_valid(row))
 
     def test_every_benchmark_example_names_a_registered_bench(self) -> None:
         named = set()
