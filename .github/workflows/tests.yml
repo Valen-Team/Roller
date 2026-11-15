@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 jobs:
-  unittest:
+  pytest:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -20,3 +20,21 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -e '.[test]'
       - run: python -m pytest
+  quickstart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install build
+      - run: python -m build --outdir dist
+      - run: python -m pip install dist/*.whl
+      - name: Run the quick start from the installed wheel
+        working-directory: ${{ runner.temp }}
+        env:
+          MY_PROXY_BASE_URL: http://127.0.0.1:9/v1
+          MY_PROXY_API_KEY: placeholder
+        run: |
+          roller init
+          roller collect --tasks examples/tasks/tasks.jsonl --model my-openai-proxy/my-model --model-config examples/config/openclaw/models.json --dry-run
