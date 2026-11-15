@@ -193,4 +193,4 @@ roller bench report /tmp/qcb-runs/local-qwen --output /tmp/qcb-report.json
 
 ## 7. 评测报告
 
-- [DeepSeek V4 Flash 与 GLM-5.2 审计评测（2026-09-17 至 2026-09-18，英文）](../../en/benches/qwenclawbench-evaluation-2026-09-17.md)
+- [DeepSeek V4 Flash 与 GLM-5.2 审计评测（2026-09-17 至 2026-09-18，英文）](https://github.com/Valen-Team/Roller/blob/main/docs/en/benches/qwenclawbench-evaluation-2026-09-17.md)

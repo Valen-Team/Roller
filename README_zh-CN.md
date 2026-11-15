@@ -344,12 +344,15 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
 | SFT 导出 | `src/roller/sft.py`、`src/roller/compaction_sft.py` |
 | Viewer | `src/roller/viewer/` |
 
-提交 Pull Request 前请运行测试：
+提交 Pull Request 前请运行检查：
 
 ```bash
-python -m pip install -e ".[test]"
+python -m pip install -e ".[test]" ruff
 python -m pytest
+ruff check
 ```
+
+测试、文档和运行锁的约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，各版本的变更见 [CHANGELOG.md](CHANGELOG.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 的方式报告。
 
 ### 贡献者
 
