@@ -676,6 +676,46 @@ class CompactImageRecordingTests(unittest.TestCase):
         self.assertNotIn("private prompt", json.dumps(entry))
 
 
+    def test_actf_mode_writes_each_image_once_across_requests(self) -> None:
+        image = "data:image/png;base64," + "QUJD" * 64
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look"},
+                    {"type": "image_url", "image_url": {"url": image}},
+                ],
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wire.jsonl"
+            handler = MagicMock()
+            handler.server.proxy = WireTraceProxy(
+                "http://example.test/v1", path, mode="tools"
+            )
+            handler.headers = {}
+            handler.path = "/v1/chat/completions"
+            handler.command = "POST"
+            for turn in range(3):
+                _ProxyHandler._record(
+                    handler,
+                    json.dumps({"model": "vision-model", "messages": messages}).encode(),
+                )
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": f"reply {turn}"},
+                    {"role": "user", "content": f"next {turn}"},
+                ]
+            written = path.read_text()
+            requests = extract_wire_image_requests(path)
+
+        self.assertEqual(written.count(image), 1)
+        self.assertEqual(
+            [request["images"] for request in requests],
+            [[{"type": "image", "data": image}]] * 3,
+        )
+
+
 class TraceRedactionTests(unittest.TestCase):
     def test_redacts_nested_credentials_without_mutating_input(self) -> None:
         original = {
