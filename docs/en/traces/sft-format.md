@@ -90,8 +90,8 @@ compacted sample unavailable rather than silently changing the model input.
 
 ### 1.1 Multimodal records
 
-When a tool result carries an image that the ACTF layer captured losslessly as
-base64 bytes, the record additionally has a top-level `images` list. The image
+When a user message or tool result carries an image that the ACTF layer captured
+losslessly as base64 bytes, the record additionally has a top-level `images` list. The image
 is not kept inline: its position in the message text is replaced by the reserved
 placeholder `<image>`, and the normalized data URI is appended to `images`:
 
@@ -159,7 +159,7 @@ The following rules apply:
 | ACTF | SFT |
 | --- | --- |
 | `system_prompt` | First system message |
-| `steps[*].user_content` | user message (when non-empty) |
+| `steps[*].user_content` | user message (when non-empty); image blocks become `<image>` plus top-level `images` entries |
 | `steps[*].assistant_content` | assistant message |
 | `steps[*].observation` | tool message |
 | `steps[*].observation[*].content[*]` image block | `<image>` placeholder in the tool message plus one top-level `images` entry |
@@ -178,8 +178,8 @@ The exporter requires:
 - Every call has exactly one matching tool result in the same step;
 - The call's tool name exists in the top-level tools schema;
 - Function arguments can be encoded as a JSON object; Codex custom input remains a string;
-- Tool results contain only strings, text blocks, or image blocks with
-  embedded base64 bytes.
+- User content and tool results contain only strings, text blocks, or image
+  blocks with embedded base64 bytes.
 
 Image blocks are accepted in the base64 `source` form (Claude Code), the flat
 `data` + `mimeType` form (OpenClaw/Pi native), and the inline data-URI form.
@@ -207,7 +207,7 @@ Harness can invoke vision at runtime. Image tool results are handled as follows:
 
 | Harness | Runtime image path | ACTF/SFT image preservation |
 | --- | --- | --- |
-| OpenClaw | Image-capable model and image tool | Preserved |
+| OpenClaw | Prompt attachment, `read`, or `image` auxiliary model call | Preserved; `--wire-trace off` cannot recover `image` tool inputs |
 | Codex | `view_image` through Responses | Preserved |
 | Claude Code | `Read` image result | Preserved |
 | OpenCode | `read` attachment with an inline data URL | Preserved; non-image attachments retain bounded audit metadata |
