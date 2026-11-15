@@ -352,7 +352,7 @@ python -m pytest
 ruff check
 ```
 
-测试、文档和运行锁的约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，各版本的变更见 [CHANGELOG.md](CHANGELOG.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 的方式报告。
+测试、文档和运行锁的约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，各版本的变更见 [CHANGELOG.md](CHANGELOG.md)。安全漏洞请按 [SECURITY.md](SECURITY.md) 的方式报告。参与本项目须遵守[行为准则](CODE_OF_CONDUCT.md)。
 
 ### 贡献者
 
