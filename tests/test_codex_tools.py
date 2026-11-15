@@ -223,6 +223,70 @@ class CodexToolsProxyTests(unittest.TestCase):
         # Transport restrictions apply only when an HTTP capture proxy is used.
         CodexConfig(api_base="http://example.test/v1", wire_trace_mode="off", network="bridge")
 
+    def test_image_detail_needs_the_request_proxy(self) -> None:
+        CodexConfig(api_base="http://example.test/v1", responses_image_detail="high")
+        with self.assertRaisesRegex(ValueError, "auto\\|low\\|high\\|original"):
+            CodexConfig(api_base="http://example.test/v1", responses_image_detail="medium")
+        for options in (
+            {},
+            {"api_base": "http://example.test/v1", "wire_trace_mode": "off"},
+            {"api_base": "http://example.test/v1", "supports_websockets": True},
+            {"api_base": "http://example.test/v1", "wire_trace_mode": "off", "network": "bridge"},
+        ):
+            with self.subTest(options=options), self.assertRaisesRegex(ValueError, "image detail requires"):
+                CodexConfig(responses_image_detail="high", **options)
+
+    def test_image_detail_is_filled_only_where_codex_omitted_it(self) -> None:
+        image = {"type": "input_image", "image_url": "data:image/png;base64,AA=="}
+        body = {"model": "m", "tools": TOOLS, "input": [
+            {"role": "user", "content": [{"type": "input_text", "text": "look"}, dict(image)]},
+            {"role": "user", "content": [{**image, "detail": "low"}]},
+            {"type": "function_call_output", "call_id": "c1", "output": [dict(image)]},
+            {"type": "function_call_output", "call_id": "c2", "output": "text"},
+            {"role": "assistant", "content": "plain"},
+        ]}
+        expected = deepcopy(body)
+        expected["input"][0]["content"][1]["detail"] = "high"
+        expected["input"][2]["output"][0]["detail"] = "high"
+        untouched = json.dumps({"model": "m", "input": [{"role": "user", "content": "no image"}]}, indent=1).encode()
+
+        def forward(proxy, raw: bytes, path: str = "/v1/responses") -> bytes:
+            handler = MagicMock()
+            handler.server.proxy = proxy
+            handler.headers = {"Content-Length": str(len(raw))}
+            handler.rfile = io.BytesIO(raw)
+            handler.path, handler.command = path, "POST"
+            handler._record.side_effect = lambda data: _ProxyHandler._record(handler, data)
+            response = MagicMock(status=200, headers={})
+            response.read.return_value = b""
+            with patch("roller.wire_trace.urllib_request.urlopen", return_value=response) as send:
+                _ProxyHandler._handle(handler)
+            return send.call_args.args[0].data
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            harness = CodexHarness(CodexConfig(
+                api_base="http://example.test/v1", wire_trace_mode="full", responses_image_detail="high",
+            ), 0)
+            with patch.object(WireTraceProxy, "start"), patch.object(WireTraceProxy, "stop"):
+                harness._start_wire_proxy(root)
+                proxy = harness._wire_proxy
+                self.assertEqual(json.loads(forward(proxy, json.dumps(body).encode())), expected)
+                # Without an image to fill, the request keeps its original bytes.
+                self.assertEqual(forward(proxy, untouched), untouched)
+                raw = json.dumps(body).encode()
+                self.assertEqual(forward(proxy, raw, "/v1/chat/completions"), raw)
+                harness._stop_wire_proxy()
+            recorded = json.loads((root / "wire_trace.jsonl").read_text().splitlines()[0])
+            self.assertEqual(recorded["body"]["input"], expected["input"])
+
+            plain = CodexHarness(CodexConfig(api_base="http://example.test/v1"), 0)
+            with patch.object(WireTraceProxy, "start"), patch.object(WireTraceProxy, "stop"):
+                plain._start_wire_proxy(root)
+                raw = json.dumps(body).encode()
+                self.assertEqual(forward(plain._wire_proxy, raw), raw)
+                plain._stop_wire_proxy()
+
     def test_unparseable_request_marks_capture_invalid_but_is_forwarded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

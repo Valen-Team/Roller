@@ -233,6 +233,12 @@ Flags that belong to one Harness are documented in that Harness guide. Each guid
 | DeepSeek | {ref}`DeepSeek Harness guide <deepseek-cli-flags>` |
 | Pi Agent | {ref}`Pi Agent Harness guide <pi-cli-flags>` |
 
+The following Harness flags adapt the traffic of an OpenAI- or Anthropic-compatible endpoint. Both depend on the request recording proxy, and both are recorded in `lock.json` only when they are set:
+
+| Flag | Harness | Purpose |
+| --- | --- | --- |
+| `--codex-image-detail auto\|low\|high\|original` | Codex | Sets `detail` on Responses image inputs that Codex sends without one |
+
 To inspect the complete flag set supported by the Roller version currently in use, run:
 
 ```bash

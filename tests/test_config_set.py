@@ -185,6 +185,29 @@ class CliConfigSetTests(unittest.TestCase):
                 "--codex-config-set", "model_verbosity=\"high\"", harness="codex", resume=True
             )
 
+    def test_codex_image_detail_is_locked_only_when_set(self) -> None:
+        self.invoke(harness="codex")
+        self.assertNotIn("responses_image_detail", self.lock()["execution"]["codex"])
+        self.assertIsNone(self.configs[0].responses_image_detail)
+        self.invoke(harness="codex", resume=True)
+        with self.assertRaisesRegex(FileExistsError, "lock mismatch"):
+            self.invoke(
+                "--codex-image-detail", "high", "--api-base", "http://example.test/v1",
+                harness="codex", resume=True,
+            )
+
+    def test_codex_image_detail_reaches_the_harness_and_the_lock(self) -> None:
+        self.invoke(
+            "--codex-image-detail", "high", "--api-base", "http://example.test/v1",
+            harness="codex",
+        )
+        self.assertEqual(self.configs[0].responses_image_detail, "high")
+        self.assertEqual(self.lock()["execution"]["codex"]["responses_image_detail"], "high")
+        info = json.loads((self.root / "runs" / "run" / "info.json").read_text())
+        self.assertEqual(info["configuration"]["codex"]["responses_image_detail"], "high")
+        with self.assertRaisesRegex(ValueError, "image detail requires"):
+            self.invoke("--codex-image-detail", "high", harness="codex")
+
     def test_setting_for_an_unselected_harness_is_an_error(self) -> None:
         with self.assertRaisesRegex(ValueError, "--codex-config-set is only valid"):
             self.invoke("--codex-config-set", "model_verbosity=1", harness="openclaw")

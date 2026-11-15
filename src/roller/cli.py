@@ -92,6 +92,7 @@ from roller.thinking_capabilities import (
 from roller.version import __version__
 from roller.viewer import DEFAULT_PORT as VIEWER_DEFAULT_PORT
 from roller.viewer import serve as serve_viewer
+from roller.wire_trace import RESPONSES_IMAGE_DETAILS
 
 logger = logging.getLogger(__name__)
 
@@ -547,6 +548,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "allow the custom Codex provider to use Responses WebSockets; "
             "disabled by default for OpenAI-compatible HTTP proxies"
+        ),
+    )
+    codex.add_argument(
+        "--codex-image-detail",
+        choices=RESPONSES_IMAGE_DETAILS,
+        help=(
+            "set this detail on Responses input_image blocks that Codex sends "
+            "without one; needs the request recording proxy"
         ),
     )
 
@@ -1040,6 +1049,7 @@ def _collect(args: argparse.Namespace) -> int:
             reasoning_summary=args.reasoning_summary,
             web_search=args.codex_web_search,
             supports_websockets=args.codex_websockets,
+            responses_image_detail=args.codex_image_detail,
             wire_trace_mode=args.wire_trace,
             capture_calls=args.capture_calls, capture_debug=args.capture_debug,
             keep_thinking=args.keep_thinking,
@@ -1259,6 +1269,7 @@ def _collect(args: argparse.Namespace) -> int:
             "pass_env_names": list(codex_config.pass_env),
             **({"capture_calls": True, "capture_debug": args.capture_debug} if codex_config.capture_calls else {}),
             **({"config_set": recorded_config_assignments(codex_config.config_set)} if codex_config.config_set else {}),
+            **({"responses_image_detail": codex_config.responses_image_detail} if codex_config.responses_image_detail else {}),
         }
     if claude_code_config is not None:
         harness_configurations["claude-code"] = {

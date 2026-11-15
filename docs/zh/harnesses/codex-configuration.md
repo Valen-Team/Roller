@@ -130,6 +130,7 @@ roller collect \
 | `--reasoning-summary` | Codex 默认值 | `auto`、`concise`、`detailed` 或 `none` |
 | `--codex-web-search` | `disabled` | `disabled`、`cached` 或 `live` |
 | `--codex-websockets` / `--no-codex-websockets` | 关闭 | 自定义 provider 是否使用 Responses WebSocket |
+| `--codex-image-detail` | 无 | `auto`、`low`、`high` 或 `original`。Codex 发出的 Responses 图片输入未带 `detail` 时，补上该值 |
 
 单一 Codex 运行可使用通用参数形式。混合 Harness 运行应使用 `--codex-image`、`--codex-api-base` 和 `--codex-api-key-env` 等专属形式，以避免将设置应用到其他参与者。
 
@@ -160,6 +161,16 @@ roller collect ... \
 Codex Harness 同时支持纯文本模型和具备视觉能力的 Responses 模型。图片通过 `files.inputs` 进入工作区，Codex 可使用原生 `view_image` 工具打开本地图片。图片工具结果会保留到原生轨迹、ACTF 和多模态 SFT，其中 SFT 使用 `<image>` 占位符和顶层 `images` 字段保存图片。
 
 视觉 task 还要求 Codex 版本、所选模型和 Responses API 服务均支持图片输入。Task 的 `messages[].content` 当前只支持字符串，不能直接写入图片内容块。如需随首条用户消息发送输入图片，请在 [`files.attach_images`](../tasks/task-format.md) 中列出。纯文本模型仍可处理文本和普通文件，但不能完成需要理解图片内容的 task。
+
+Codex 发出的 Responses `input_image` 内容块不带 `detail` 字段。如果端点要求该字段，可将 `--codex-image-detail` 设为 `auto`、`low`、`high` 或 `original`：
+
+```bash
+roller collect ... --harness codex --api-base https://example.test/v1 --codex-image-detail high
+```
+
+- 请求记录代理为每个没有 `detail` 的图片输入补上该值，包括用户消息和工具输出中的图片。已带 `detail` 的内容块和不含此类图片的请求原样转发。
+- 该参数依赖请求记录代理，要求同时使用 `--api-base`、默认的 `--network host`、`--no-codex-websockets`，以及 `--wire-trace actf` 或 `full`。
+- 设置后，该值写入 `lock.json` 和 `info.json`。修改后请使用新的 `--run-name`。
 
 ## 6. Thinking 配置
 

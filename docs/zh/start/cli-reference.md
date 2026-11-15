@@ -229,6 +229,12 @@ Wire trace 用于决定是否记录模型服务的实际 HTTP 请求，常规采
 | DeepSeek | {ref}`DeepSeek Harness 指南 <deepseek-cli-flags>` |
 | Pi Agent | {ref}`Pi Agent Harness 指南 <pi-cli-flags>` |
 
+以下 Harness 参数用于适配 OpenAI 或 Anthropic 兼容端点的请求和响应。这些参数都依赖请求记录代理，且仅在设置后才写入 `lock.json`：
+
+| 参数 | Harness | 用途 |
+| --- | --- | --- |
+| `--codex-image-detail auto\|low\|high\|original` | Codex | Codex 发出的 Responses 图片输入未带 `detail` 时，补上该值 |
+
 如需核对当前使用的 Roller 版本支持的完整参数列表，请运行：
 
 ```bash

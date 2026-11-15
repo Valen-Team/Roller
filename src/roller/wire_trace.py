@@ -151,6 +151,32 @@ def strip_thinking_from_body(body: Any) -> Any:
     return body
 
 
+RESPONSES_IMAGE_DETAILS = ("auto", "low", "high", "original")
+
+
+def fill_responses_image_detail(body: Any, detail: str) -> bool:
+    """Set ``detail`` on Responses ``input_image`` blocks that omit it.
+
+    Covers message content and tool outputs in ``input``. Returns whether
+    the body changed; blocks that already carry a detail are left alone.
+    """
+    items = body.get("input") if isinstance(body, dict) else None
+    changed = False
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        for blocks in (item.get("content"), item.get("output")):
+            for block in blocks if isinstance(blocks, list) else []:
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "input_image"
+                    and "detail" not in block
+                ):
+                    block["detail"] = detail
+                    changed = True
+    return changed
+
+
 def _normalized_key(value: Any) -> str:
     return "".join(character for character in str(value).lower() if character.isalnum())
 
@@ -464,6 +490,19 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 body = json.dumps(parsed, ensure_ascii=False).encode("utf-8")
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
+        if (
+            body
+            and proxy.responses_image_detail
+            and self.command == "POST"
+            and urlsplit(self.path).path.rstrip("/").endswith("/responses")
+        ):
+            try:
+                parsed = json.loads(body)
+                # Requests without such an image keep their original bytes.
+                if fill_responses_image_detail(parsed, proxy.responses_image_detail):
+                    body = json.dumps(parsed, ensure_ascii=False).encode("utf-8")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
         request_seq = None
         try:
             request_seq = self._record(body)
@@ -632,9 +671,12 @@ class WireTraceProxy:
         capture_identity_header: str | None = None,
         capture_run_header: str | None = None,
         encrypted_content_retries: int = 0,
+        responses_image_detail: str | None = None,
     ) -> None:
         if mode not in ("tools", "full"):
             raise ValueError(f"unknown wire trace mode: {mode}")
+        if responses_image_detail is not None and responses_image_detail not in RESPONSES_IMAGE_DETAILS:
+            raise ValueError(f"unknown Responses image detail: {responses_image_detail}")
         if encrypted_content_retries < 0:
             raise ValueError("encrypted content retries must be non-negative")
         parts = urlsplit(upstream_base_url)
@@ -661,6 +703,7 @@ class WireTraceProxy:
             self.drop_request_headers |= {capture_run_header.lower()}
         self.timeout_seconds = timeout_seconds
         self.encrypted_content_retries = encrypted_content_retries
+        self.responses_image_detail = responses_image_detail
         self._lock = threading.Lock()
         self._stopping = threading.Event()
         self._seq = 0
