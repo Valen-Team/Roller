@@ -19,7 +19,7 @@
 
 <p align="center">
   <strong>English</strong> · <a href="README_zh-CN.md">简体中文</a><br>
-  <a href="https://valen-team.github.io/roller/">Documentation</a> · <a href="https://valen-team.github.io/roller/start/getting-started/">Getting started</a> · <a href="https://valen-team.github.io/roller/start/cli-reference/">CLI reference</a> · <a href="examples/README.md">Examples</a>
+  <a href="https://valen-team.github.io/roller/">Documentation</a> · <a href="https://valen-team.github.io/roller/start/getting-started/">Getting started</a> · <a href="https://valen-team.github.io/roller/start/cli-reference/">CLI reference</a> · <a href="https://valen-team.github.io/roller/cookbook/">Cookbook</a> · <a href="examples/README.md">Examples</a>
 </p>
 
 <p align="center">
@@ -56,6 +56,7 @@ Roller provides the following capabilities:
 
 ## News
 
+- **2026-11-16**: [Hugging Face export](https://valen-team.github.io/roller/traces/trajectory-outputs/#hugging-face-export). `roller export RUN_DIR --format hf` packages a run as a dataset folder that the Hub opens in its trace viewer, with the model endpoints, host paths and credential values of the run replaced. The first dataset is [Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories), and a [cookbook recipe](https://valen-team.github.io/roller/cookbook/wildclawbench-open-models/) follows the run behind it.
 - **2026-11-16**: [ATIF export](https://valen-team.github.io/roller/traces/trajectory-outputs/#atif-export). `roller export RUN_DIR` converts every trajectory of a run to the format that [Harbor](https://github.com/harbor-framework/harbor) reads.
 - **2026-11-15**: Roller is on PyPI as [`roller-agent`](https://pypi.org/project/roller-agent/). `roller init` writes the example tasks and configuration templates into the working directory.
 - **2026-11-11**: SFT export for compacted context. When the Task Agent compacts its context, each verified context window is exported as a separate SFT record under `sft_segments/`.

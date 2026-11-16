@@ -1,0 +1,6 @@
+{
+  "replace": [
+    {"pattern": "/data/model-cache", "with": "<model-cache>"}
+  ],
+  "forbid": ["/data/model-cache"]
+}

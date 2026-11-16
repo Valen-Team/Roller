@@ -1,0 +1,30 @@
+{
+  "mode": "merge",
+  "providers": {
+    "vllm": {
+      "baseUrl": "${ROLLER_INFER_BASE_URL}",
+      "apiKey": "${ROLLER_INFER_API_KEY}",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "glm-5.3-flash",
+          "name": "glm-5.3-flash",
+          "input": ["text", "image"],
+          "reasoning": true,
+          "maxTokens": 32768,
+          "contextWindow": 98304,
+          "compat": {"supportsReasoningEffort": false}
+        },
+        {
+          "id": "deepseek-v4.1-flash-1017",
+          "name": "deepseek-v4.1-flash-1017",
+          "input": ["text", "image"],
+          "reasoning": true,
+          "maxTokens": 32768,
+          "contextWindow": 1048576,
+          "compat": {"supportsReasoningEffort": false}
+        }
+      ]
+    }
+  }
+}

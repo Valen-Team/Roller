@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="README.md">English</a> · <strong>简体中文</strong><br>
-  <a href="https://valen-team.github.io/zh-Hans/roller/">文档</a> · <a href="https://valen-team.github.io/zh-Hans/roller/start/getting-started/">快速上手</a> · <a href="https://valen-team.github.io/zh-Hans/roller/start/cli-reference/">CLI 参数</a> · <a href="examples/README.md">示例</a>
+  <a href="https://valen-team.github.io/zh-Hans/roller/">文档</a> · <a href="https://valen-team.github.io/zh-Hans/roller/start/getting-started/">快速上手</a> · <a href="https://valen-team.github.io/zh-Hans/roller/start/cli-reference/">CLI 参数</a> · <a href="https://valen-team.github.io/zh-Hans/roller/cookbook/">Cookbook</a> · <a href="examples/README.md">示例</a>
 </p>
 
 <p align="center">
@@ -56,6 +56,7 @@ Roller 提供以下能力：
 
 ## 最新动态
 
+- **2026-11-16**：[Hugging Face 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#hugging-face-export)。`roller export RUN_DIR --format hf` 把一次 run 打包成数据集目录，Hub 用轨迹查看器直接打开，run 的模型端点、主机路径和凭据取值在导出时已替换。首个数据集是 [Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories)，[Cookbook](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/) 记录了它背后的完整运行。
 - **2026-11-16**：[ATIF 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#atif-export)。`roller export RUN_DIR` 把一次 run 的全部轨迹转换为 [Harbor](https://github.com/harbor-framework/harbor) 读取的格式。
 - **2026-11-15**：Roller 已发布至 PyPI，包名为 [`roller-agent`](https://pypi.org/project/roller-agent/)。`roller init` 将示例 task 和配置模板写入工作目录。
 - **2026-11-11**：支持上下文压缩场景下的 SFT 导出。Task Agent 压缩上下文时，每段通过校验的上下文窗口作为独立的 SFT 记录导出至 `sft_segments/`。
