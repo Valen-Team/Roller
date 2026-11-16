@@ -4,6 +4,16 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-16
+
+Roller 0.4.0 exports a run for publishing. `roller export` writes ATIF, the trajectory format of Harbor, and with `--format hf` a Hugging Face dataset folder that the Hub opens in its trace viewer, with the endpoints, host names, host paths and credentials of the collection environment replaced. Five Harness images are prebuilt at `ghcr.io/valen-team`.
+
+```bash
+uv tool install roller-agent    # or: python -m pip install roller-agent
+```
+
+One change affects existing setups: OpenClaw runs in `/root/.openclaw/workspace` instead of `/tmp_workspace`. It is described under Changed.
+
 ### Added
 
 - Prebuilt `linux/amd64` images of the Codex, Hermes, OpenCode, DeepSeek and Pi Harnesses at `ghcr.io/valen-team`. Claude Code is built locally because its licence does not allow redistribution.
