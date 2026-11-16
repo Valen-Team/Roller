@@ -8,6 +8,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 - Prebuilt `linux/amd64` images of the Codex, Hermes, OpenCode, DeepSeek and Pi Harnesses at `ghcr.io/valen-team`. Claude Code is built locally because its licence does not allow redistribution.
 - `roller export RUN_DIR` converts the trajectories of a run to ATIF-v1.7, the trajectory format of [Harbor](https://github.com/harbor-framework/harbor). Each sample becomes a `trajectory.json` with its images stored as files.
+- `roller export RUN_DIR --format hf` packages a run as a Hugging Face dataset folder: a dataset card with the statistics of each model, the agent session of every sample, which the Hub opens in its trace viewer, a table with one row per sample, and a Roller run directory that `roller view` opens. A run is written as one part per Harness and model, named `<harness>-<model>`, so further runs can be exported into the same folder. The exported files are redacted by default: the model endpoints, host paths, and credential values of the run are replaced with placeholders, and `--no-redact` turns this off. `--redact-rules FILE` adds rules that replace text, leave out files, or stop the export on a forbidden pattern.
 
 ### Changed
 

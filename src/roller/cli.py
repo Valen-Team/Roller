@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from roller import hf_dataset
 from roller.atif import export_run
 from roller.benches import (
     binding_from_task_row,
@@ -168,12 +169,31 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     export.add_argument(
         "--format",
-        choices=("atif",),
+        choices=("atif", "hf"),
         default="atif",
-        help="target format (default: atif, the trajectory format Harbor reads)",
+        help=(
+            "target format: atif, the trajectory format Harbor reads (default), "
+            "or hf, a Hugging Face dataset folder"
+        ),
     )
     export.add_argument(
         "--output", "-o", help="directory to write (default: RUN_DIR/<format>)"
+    )
+    export.add_argument(
+        "--redact",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "with --format hf, replace the model endpoints, host paths and "
+            "credential values of the run in the exported files (default: on)"
+        ),
+    )
+    export.add_argument(
+        "--redact-rules",
+        help=(
+            "JSON file of further replace/exclude/forbid rules for --format hf, "
+            "applied whether or not --redact is on"
+        ),
     )
 
     bench = subparsers.add_parser("bench", help="work with benchmark adapters")
@@ -2362,6 +2382,21 @@ def _export(args: argparse.Namespace) -> int:
     if not (run_dir / "samples").is_dir():
         raise FileNotFoundError(f"{run_dir} has no samples directory")
     output = Path(args.output) if args.output else run_dir / args.format
+    if args.format == "hf":
+        rules = (
+            hf_dataset.load_rules(Path(args.redact_rules))
+            if args.redact_rules
+            else None
+        )
+        rows, redaction = hf_dataset.export_run(
+            run_dir, output, rules, redact=args.redact
+        )
+        print(f"Exported {len(rows)} samples as a Hugging Face dataset to {output}")
+        for line in redaction.lines():
+            print(line)
+        return 0
+    if args.redact_rules:
+        raise ValueError("--redact-rules applies to --format hf")
     written, skipped = export_run(run_dir, output)
     print(f"Exported {len(written)} ATIF trajectories to {output}")
     if skipped:
