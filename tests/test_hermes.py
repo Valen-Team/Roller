@@ -92,7 +92,15 @@ class HermesTraceTests(unittest.TestCase):
         trajectory = hermes_events_to_actf(sample_events())
         self.assertEqual(trajectory["system_prompt"], "Actual Hermes prompt")
         self.assertEqual(trajectory["tools"], [TOOL])
-        self.assertEqual(trajectory["steps"][0]["metric"]["prompt_tokens_len"], 10)
+        metric = trajectory["steps"][0]["metric"]
+        self.assertEqual(
+            (
+                metric["prompt_tokens_len"],
+                metric["cache_read_tokens"],
+                metric["cache_write_tokens"],
+            ),
+            (10, 4, 0),
+        )
         self.assertEqual(
             trajectory["steps"][0]["assistant_content"]["reasoning_content"],
             "Read the file.",

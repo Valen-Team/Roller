@@ -545,6 +545,9 @@ def openclaw_events_to_actf(
                 if delivery is not None and delivery.skip_usage
                 else OpenClawUsage.parse(message.get("usage"))
             )
+            input_tokens, output_tokens, cache_read, cache_write = (
+                parsed.counts[:4] if parsed else (0, 0, 0, 0)
+            )
             started_at = (
                 first_time or pending_user_time or message_time
                 if not steps
@@ -559,11 +562,15 @@ def openclaw_events_to_actf(
                     "tool_calls": deepcopy(tool_calls),
                 },
                 "metric": {
-                    "prompt_tokens_len": int(parsed.counts[0]) if parsed else 0,
-                    "completion_tokens_len": int(parsed.counts[1]) if parsed else 0,
+                    # The native input count excludes cache reads and writes;
+                    # the prompt length covers all three.
+                    "prompt_tokens_len": int(input_tokens + cache_read + cache_write),
+                    "completion_tokens_len": int(output_tokens),
                     "llm_infer_ms": None,
                     "env_action_ms": None,
                     "stop_reason": stop_reason,
+                    "cache_read_tokens": int(cache_read),
+                    "cache_write_tokens": int(cache_write),
                 },
                 "user_content": deepcopy(pending_user),
                 "tools": deepcopy(tool_calls),

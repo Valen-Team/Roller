@@ -405,6 +405,15 @@ class DeepSeekTraceTests(unittest.TestCase):
         actf = deepseek_events_to_actf(events)
         self.assertEqual(actf["tools"], [TOOL])
         self.assertEqual(actf["system_prompt"], "Actual DeepSeek system prompt")
+        metric = actf["steps"][0]["metric"]
+        self.assertEqual(
+            (
+                metric["prompt_tokens_len"],
+                metric["cache_read_tokens"],
+                metric["cache_write_tokens"],
+            ),
+            (14, 4, 0),
+        )
         sft = actf_to_sft(actf)
         self.assertEqual(
             [m["role"] for m in sft["messages"]],

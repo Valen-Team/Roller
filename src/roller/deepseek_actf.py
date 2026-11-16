@@ -206,15 +206,10 @@ def deepseek_events_to_actf(
                     "role": "user" if kind == "user/message" else "assistant",
                     "content": content,
                     "usage": {
-                        "input": sum(
-                            tokens.get(k, 0)
-                            for k in (
-                                "inputTokens",
-                                "cacheReadTokens",
-                                "cacheWriteTokens",
-                            )
-                        ),
+                        "input": tokens.get("inputTokens", 0),
                         "output": tokens.get("outputTokens", 0),
+                        "cacheRead": tokens.get("cacheReadTokens", 0),
+                        "cacheWrite": tokens.get("cacheWriteTokens", 0),
                     },
                     "stopReason": "tool_calls"
                     if any(b["type"] == "toolCall" for b in content)

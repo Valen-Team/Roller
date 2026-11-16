@@ -120,12 +120,17 @@ def hermes_events_to_actf(
                     }
                 )
             usage = event.get("usage") or {}
+            # OpenAI prompt_tokens already includes the cached part.
+            cached = (usage.get("prompt_tokens_details") or {}).get(
+                "cached_tokens"
+            ) or 0
             message = {
                 "role": "assistant",
                 "content": content,
                 "usage": {
-                    "input": usage.get("prompt_tokens", 0),
+                    "input": (usage.get("prompt_tokens") or 0) - cached,
                     "output": usage.get("completion_tokens", 0),
+                    "cacheRead": cached,
                 },
                 "stopReason": event.get("finish_reason", ""),
             }
