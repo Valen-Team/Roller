@@ -1,0 +1,7 @@
+{
+  "replace": [
+    {"pattern": "[A-Za-z0-9-]+\\.cluster\\.internal", "with": "collection-host.example"},
+    {"pattern": "/data/model-cache", "with": "<model-cache>"}
+  ],
+  "forbid": ["cluster\\.internal", "/data/model-cache"]
+}
