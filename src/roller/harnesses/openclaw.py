@@ -56,6 +56,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_OPENCLAW_IMAGE = "ghcr.io/openclaw/openclaw:2026.7.1-2"
 OPENCLAW_STATE_CONTAINER_PATH = "/tmp/roller-openclaw-state"
+# The workspace of an OpenClaw install. Roller links it to the task workspace
+# and runs the agent in it, so a session records the working directory that
+# OpenClaw sessions have everywhere else.
+OPENCLAW_WORKSPACE_LINK = "/root/.openclaw/workspace"
 # OpenClaw diagnostics.cacheTrace output; records the assembled system prompt
 # (and full request messages) for every LLM call made by the agent.
 CACHE_TRACE_CONTAINER_PATH = "/tmp/roller-cache-trace.jsonl"
@@ -680,8 +684,8 @@ exec node --input-type=module -e "$1"
             f"mkdir -p {OPENCLAW_STATE_CONTAINER_PATH} /root/.openclaw && "
             f"rm -rf {OPENCLAW_STATE_CONTAINER_PATH}/workspace && "
             f"ln -s {workspace} {OPENCLAW_STATE_CONTAINER_PATH}/workspace && "
-            "rm -rf /root/.openclaw/workspace && "
-            f"ln -s {workspace} /root/.openclaw/workspace"
+            f"rm -rf {OPENCLAW_WORKSPACE_LINK} && "
+            f"ln -s {workspace} {OPENCLAW_WORKSPACE_LINK}"
         )
         self._checked(
             ["exec", container, "/bin/bash", "-c", link_script],
@@ -793,7 +797,7 @@ exec node --input-type=module -e "$1"
                 "config",
                 "set",
                 "agents.defaults.workspace",
-                self.config.workspace_container_path,
+                OPENCLAW_WORKSPACE_LINK,
             ],
             "OpenClaw workspace setup",
         )

@@ -1376,10 +1376,18 @@ class OpenClawHelpersTests(unittest.TestCase):
                     for command in flattened_commands
                 )
             )
+            # The agent runs in OpenClaw's own workspace path, which is a link
+            # to the task workspace, so the session records that path.
             self.assertTrue(
                 any(
-                    "openclaw config set agents.defaults.workspace /tmp_workspace"
-                    in command
+                    "ln -s /tmp_workspace /root/.openclaw/workspace" in command
+                    for command in flattened_commands
+                )
+            )
+            self.assertTrue(
+                any(
+                    "openclaw config set agents.defaults.workspace "
+                    "/root/.openclaw/workspace" in command
                     for command in flattened_commands
                 )
             )
