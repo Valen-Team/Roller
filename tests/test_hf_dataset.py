@@ -178,6 +178,7 @@ def _sample(
                 "BRAVE_API_KEY",
                 "JUDGE_MODEL",
                 "LOCAL_API_KEY",
+                "NO_PROXY",
                 "OPENROUTER_API_KEY",
             ],
         },
@@ -254,10 +255,12 @@ def _run(root: Path, name: str = "collected-run") -> Path:
     return run_dir
 
 
-def _export(run_dir: Path, output: Path, rules: Rules | None = None) -> list[dict]:
-    """Export with no credential value in the environment."""
+def _export(
+    run_dir: Path, output: Path, rules: Rules | None = None, runs: bool = False
+) -> list[dict]:
+    """Export with no credential value in the environment and no machine name."""
 
-    return export_run(run_dir, output, rules, environ={})[0]
+    return export_run(run_dir, output, rules, environ={}, runs=runs, machine="")[0]
 
 
 def _rows(output: Path, part: str) -> list[dict]:
@@ -281,9 +284,10 @@ class HuggingFaceExportTests(unittest.TestCase):
                 sorted(path.name for path in (output / "data").iterdir()),
                 [f"{PART_A}.jsonl", f"{PART_B}.jsonl"],
             )
+            # The folder holds what is published: the card, the tables, the sessions.
             self.assertEqual(
-                sorted(path.name for path in (output / "runs").iterdir()),
-                [PART_A, PART_B],
+                sorted(path.name for path in output.iterdir()),
+                ["README.md", "data", "traces"],
             )
             first = _rows(output, PART_A)[0]
             self.assertEqual(first["run"], PART_A)
@@ -322,12 +326,17 @@ class HuggingFaceExportTests(unittest.TestCase):
             self.assertIsNone(failed["messages"])
             self.assertEqual(failed["steps"], 0)
 
-    def test_each_part_is_a_run_of_its_own_samples(self) -> None:
+    def test_run_directories_are_written_on_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "dataset"
 
-            _export(_run(Path(tmp)), output)
+            rows = _export(_run(Path(tmp)), output, runs=True)
 
+            self.assertEqual(
+                sorted(path.name for path in (output / "runs").iterdir()),
+                [PART_A, PART_B],
+            )
+            self.assertEqual(rows[0]["files"], ["answer.md", "chart.png"])
             part = output / "runs" / PART_B
             info = json.loads((part / "info.json").read_text(encoding="utf-8"))
             self.assertEqual(
@@ -609,7 +618,19 @@ class HuggingFaceExportTests(unittest.TestCase):
             card = (output / "README.md").read_text(encoding="utf-8")
             self.assertIn(f"| `{PART_A}` | openclaw | `model-a` | 1 |", card)
             self.assertIn("| `codex-model-c` | codex | `model-c` | 1 |", card)
-            self.assertTrue((output / "runs" / "codex-model-c" / "info.json").is_file())
+            self.assertTrue((output / "traces" / "codex-model-c").is_dir())
+
+    def test_export_without_run_directories_replaces_an_earlier_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _run(Path(tmp))
+            output = Path(tmp) / "dataset"
+
+            _export(run_dir, output, runs=True)
+            self.assertIn("runs/", (output / "README.md").read_text("utf-8"))
+            _export(run_dir, output)
+
+            self.assertFalse((output / "runs").exists())
+            self.assertEqual(len(_rows(output, PART_A) + _rows(output, PART_B)), 5)
 
     def test_parts_that_share_a_model_id_are_named_after_the_reference(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -646,6 +667,8 @@ class HuggingFaceExportTests(unittest.TestCase):
                 text,
             )
 
+            self.assertNotIn("runs/", text)
+
             card.write_text(
                 text.replace("# collected-run", "# My dataset"), encoding="utf-8"
             )
@@ -661,6 +684,24 @@ class HuggingFaceExportTests(unittest.TestCase):
             self.assertEqual(text.count(STATS_START), 1)
             self.assertEqual(text.count(STATS_END), 1)
 
+    def test_card_has_no_token_column_for_a_run_without_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _run(Path(tmp))
+            for path in run_dir.glob("samples/*/*/info.json"):
+                info = json.loads(path.read_text(encoding="utf-8"))
+                info["usage"] = {"input_tokens": 0, "output_tokens": 0}
+                _write(path, info)
+            output = Path(tmp) / "dataset"
+
+            _export(run_dir, output)
+
+            text = (output / "README.md").read_text(encoding="utf-8")
+            self.assertIn("| Scored | Mean score | Mean steps |\n", text)
+            self.assertIn(
+                f"| `{PART_A}` | openclaw | `model-a` | 2 | 2 | 2 | 0.750 | 2.0 |\n",
+                text,
+            )
+
     def test_export_redacts_what_the_run_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = _run(Path(tmp))
@@ -672,12 +713,15 @@ class HuggingFaceExportTests(unittest.TestCase):
                 "LOCAL_API_KEY": "local",
             }
 
-            _, redaction = export_run(run_dir, output, environ=environ)
+            _, redaction = export_run(
+                run_dir, output, environ=environ, runs=True, machine=""
+            )
 
             self.assertEqual(redaction.endpoints, (f"{SECRET_HOST}:8000",))
             self.assertEqual(
                 redaction.paths,
                 (
+                    str(run_dir.resolve()),
                     "/data/alice/WildClawBench",
                     "/data/alice/runs/collected-run",
                     "/data/alice/configs",
@@ -688,7 +732,7 @@ class HuggingFaceExportTests(unittest.TestCase):
             self.assertEqual(
                 redaction.lines(),
                 [
-                    "Redacted: 1 endpoints, 3 host paths, "
+                    "Redacted: 1 endpoints, 4 host paths, "
                     "the values of OPENROUTER_API_KEY",
                     "Not set in this environment, so their values were not "
                     "searched for: BRAVE_API_KEY",
@@ -732,13 +776,80 @@ class HuggingFaceExportTests(unittest.TestCase):
             source = run_dir / "samples" / DIR_A / "00000000_chat__run_01/info.json"
             self.assertIn(SECRET_HOST, source.read_text("utf-8"))
 
+    def test_export_redacts_proxy_exceptions_machine_name_and_run_directory(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _run(Path(tmp))
+            machine = "devbox.alice.team-ns.svc.corp.local"
+            no_proxy = (
+                "localhost,127.0.0.1,10.0.0.0/8,.svc,.corp.example.cn,"
+                f"{SECRET_HOST},100.102.47.241,10.140.52.0/24"
+            )
+            seen = [
+                f"NO_PROXY={no_proxy}",
+                "Could not resolve mirror.corp.example.cn (100.102.47.241)",
+                "public address 1100.102.47.2410 stays",
+                f"Author: root <root@{machine}>",
+                "search alice.team-ns.svc.corp.local svc.corp.local",
+                "Runtime: host=devbox | os=Linux",
+                "homepage https://devbox.github.io and devbox-2 stay",
+                f"wrote {run_dir.resolve()}/samples/log.txt",
+            ]
+            trace = run_dir / "samples" / DIR_A / "00000000_chat__run_01/trace.jsonl"
+            with trace.open("a", encoding="utf-8") as writer:
+                for text in seen:
+                    row = {
+                        "type": "message",
+                        "message": {"role": "user", "content": text},
+                    }
+                    writer.write(json.dumps(row) + "\n")
+            output = Path(tmp) / "dataset"
+
+            _, redaction = export_run(
+                run_dir, output, environ={"NO_PROXY": no_proxy}, machine=machine
+            )
+
+            self.assertEqual(
+                redaction.hosts,
+                ("10.140.52.0/24", "100.102.47.241", "corp.example.cn"),
+            )
+            self.assertEqual(redaction.machine, machine)
+            self.assertEqual(
+                redaction.lines()[0],
+                "Redacted: 1 endpoints, 3 NO_PROXY hosts, the name of this machine, "
+                "4 host paths",
+            )
+            exported = _lines(
+                output / "traces" / PART_A / "00000000_chat__run_01.jsonl"
+            )
+            self.assertEqual(
+                [row["message"]["content"] for row in exported[-len(seen) :]],
+                [
+                    "NO_PROXY=localhost,127.0.0.1,10.0.0.0/8,.svc,"
+                    ".internal-3.example,endpoint-1.example,internal-2.example,"
+                    "internal-1.example",
+                    "Could not resolve mirror.internal-3.example (internal-2.example)",
+                    "public address 1100.102.47.2410 stays",
+                    "Author: root <root@collection-host.example>",
+                    "search collection-domain.example svc.corp.local",
+                    "Runtime: host=collection-host | os=Linux",
+                    "homepage https://devbox.github.io and devbox-2 stay",
+                    "wrote <run-dir>/samples/log.txt",
+                ],
+            )
+
     def test_redaction_can_be_turned_off(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = _run(Path(tmp))
             output = Path(tmp) / "dataset"
 
             _, redaction = export_run(
-                run_dir, output, environ={"OPENROUTER_API_KEY": KEY}, redact=False
+                run_dir,
+                output,
+                environ={"OPENROUTER_API_KEY": KEY},
+                redact=False,
+                runs=True,
             )
 
             self.assertEqual(redaction.lines(), [])
@@ -753,7 +864,16 @@ class HuggingFaceExportTests(unittest.TestCase):
 
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit):
-                main(["export", str(run_dir), "--format", "hf", "--no-redact"])
+                main(
+                    [
+                        "export",
+                        str(run_dir),
+                        "--format",
+                        "hf",
+                        "--no-redact",
+                        "--include-runs",
+                    ]
+                )
             self.assertEqual(len(stdout.getvalue().splitlines()), 1)
             configuration = json.loads(
                 (run_dir / "hf" / "runs" / PART_A / "info.json").read_text("utf-8")
@@ -778,7 +898,7 @@ class HuggingFaceExportTests(unittest.TestCase):
                 },
             )
 
-            _export(run_dir, output, load_rules(rules_path))
+            _export(run_dir, output, load_rules(rules_path), runs=True)
 
             sample = output / "runs" / PART_A / "samples" / DIR_A
             sample = sample / "00000000_chat__run_01"
@@ -810,10 +930,11 @@ class HuggingFaceExportTests(unittest.TestCase):
             for _ in range(2):
                 with (
                     mock.patch.dict(os.environ, unset),
+                    mock.patch("roller.hf_dataset.machine_name", return_value=""),
                     contextlib.redirect_stdout(stdout),
                     self.assertRaises(SystemExit) as exit,
                 ):
-                    main(["export", str(run_dir), "--format", "hf"])
+                    main(["export", str(run_dir), "--format", "hf", "--include-runs"])
                 self.assertEqual(exit.exception.code, 0)
 
             output = run_dir / "hf"
@@ -823,7 +944,7 @@ class HuggingFaceExportTests(unittest.TestCase):
             self.assertEqual(
                 printed[0], f"Exported 5 samples as a Hugging Face dataset to {output}"
             )
-            self.assertEqual(printed[1], "Redacted: 1 endpoints, 3 host paths")
+            self.assertEqual(printed[1], "Redacted: 1 endpoints, 4 host paths")
             self.assertEqual(
                 printed[2],
                 "Not set in this environment, so their values were not searched "
