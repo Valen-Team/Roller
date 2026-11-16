@@ -1,14 +1,16 @@
 """Package a Roller run as a Hugging Face dataset folder.
 
 A run is written as one part per Harness and model, named ``<harness>-<model>``.
-Each part holds a Roller run directory with the samples of that model, so
-``roller view`` opens it after a download, the session of every sample for the
-trace viewer of the Hub, and one JSON Lines table with a row per sample. Every
-part has its own paths, so further runs can be exported into the same folder.
+Each part holds the session of every sample for the trace viewer of the Hub and
+one JSON Lines table with a row per sample. On request it also holds a Roller
+run directory with the samples of that model, which ``roller view`` opens after
+a download. Every part has its own paths, so further runs can be exported into
+the same folder.
 
 The export replaces what is private to the collection environment: the model
-endpoints the run recorded, the host paths of its configuration, and the values
-of the credentials it passed to its containers.
+endpoints the run recorded, the hosts its ``NO_PROXY`` named, the name of the
+machine, the host paths of the run, and the values of the credentials it passed
+to its containers.
 """
 
 from __future__ import annotations
@@ -16,10 +18,13 @@ from __future__ import annotations
 import contextlib
 import fnmatch
 import io
+import ipaddress
 import json
 import os
 import re
 import shutil
+import socket
+import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
@@ -29,7 +34,7 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlsplit
 
-from roller.benches.report import read_scores, sample_score
+from roller.benches.report import SCORE_FILE, read_scores, sample_score
 from roller.collector import CollectionConfig, Collector
 from roller.redaction import REDACTED
 from roller.sft import SFTConversionError, _image_data_uri
@@ -90,6 +95,17 @@ rows = load_dataset("OWNER/NAME", "trajectories", split="train")
 messages = json.loads(rows[0]["messages"])
 ```
 
+Replace `OWNER/NAME` with the id of this dataset repository.
+{browse}
+## Files
+
+| Path | Content |
+| --- | --- |
+| `{traces_dir}/<harness>-<model>/<index>_<task>.jsonl` | Agent session of one sample, which the Hub opens in its [trace viewer](https://huggingface.co/docs/hub/agent-traces) |
+| `{data_dir}/<harness>-<model>.jsonl` | One row per sample: task, model, status, score, steps, tokens, `messages`, `tools` |
+{run_files}"""
+
+_CARD_BROWSE = """
 ## Browse the trajectories
 
 `runs/{part}/` is a Roller run directory. Download it and open it in the Roller
@@ -99,15 +115,9 @@ Viewer to read every step of a sample:
 hf download OWNER/NAME --repo-type dataset --include "runs/{part}/*" --local-dir {name}
 uvx --from roller-agent roller view {name}/runs/{part}
 ```
+"""
 
-Replace `OWNER/NAME` with the id of this dataset repository.
-
-## Files
-
-| Path | Content |
-| --- | --- |
-| `{traces_dir}/<harness>-<model>/<index>_<task>.jsonl` | Agent session of one sample, which the Hub opens in its [trace viewer](https://huggingface.co/docs/hub/agent-traces) |
-| `{data_dir}/<harness>-<model>.jsonl` | One row per sample: task, model, status, score, steps, tokens, `messages`, `tools` |
+_CARD_RUN_FILES = """\
 | `runs/<harness>-<model>/info.json` | Run configuration, progress and total usage |
 | `runs/<harness>-<model>/sft.jsonl` | SFT records of the successful samples |
 | `runs/<harness>-<model>/samples/<model>/<index>_<task>/` | Native session, unified trajectory, SFT record, scores and output files of one sample |
@@ -115,6 +125,15 @@ Replace `OWNER/NAME` with the id of this dataset repository.
 The files of a sample are described in the
 [trajectory outputs guide](https://valen-team.github.io/roller/traces/trajectory-outputs/).
 """
+
+# The files of a sample that its session and its table row are built from.
+_SAMPLE_FILES = (
+    "info.json",
+    SCORE_FILE,
+    "trace.jsonl",
+    "trace_ACTF.json",
+    "trace_SFT.json",
+)
 
 
 @dataclass(frozen=True)
@@ -137,11 +156,17 @@ class Redaction:
     credentials: tuple[str, ...] = ()
     # Credential variables without a value in the exporting environment.
     unset: tuple[str, ...] = ()
+    # Hosts that ``NO_PROXY`` named.
+    hosts: tuple[str, ...] = ()
+    # The name of the exporting machine, when it was looked for.
+    machine: str = ""
 
     def lines(self) -> list[str]:
         lines = []
         replaced = [
             f"{len(self.endpoints)} endpoints" if self.endpoints else "",
+            f"{len(self.hosts)} NO_PROXY hosts" if self.hosts else "",
+            "the name of this machine" if self.machine else "",
             f"{len(self.paths)} host paths" if self.paths else "",
             f"the values of {', '.join(self.credentials)}" if self.credentials else "",
         ]
@@ -172,6 +197,22 @@ def load_rules(path: Path) -> Rules:
 _CREDENTIAL_LENGTH = 12
 _CREDENTIAL_NAMES = ("key", "token", "secret", "password", "credential")
 _LOOPBACK = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+# Address blocks that every site uses; one in ``NO_PROXY`` names no site.
+_COMMON_NETWORKS = {
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "127.0.0.0/8",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "::1/128",
+    "fc00::/7",
+    "fe80::/10",
+}
+# A machine name that is a default of an OS image, or a few letters, is an
+# ordinary word in the trajectories.
+_COMMON_HOSTNAMES = {"localhost", "ubuntu", "debian"}
+_HOSTNAME_LENGTH = 6
 # Paths of the run configuration: its key, whether it names a file, placeholder.
 _CONFIGURED_PATHS = (
     ("bench", "root", False, "<bench-root>"),
@@ -193,16 +234,75 @@ def _host_path(value: Any, is_file: bool) -> str | None:
     return str(path) if len(path.parts) >= 3 else None
 
 
+def _address(text: str) -> str:
+    """A pattern for an IP address or block that is no part of a longer one."""
+
+    return rf"(?<![\w.]){re.escape(text)}(?![\w]|\.\d)"
+
+
+def _domain(text: str) -> str:
+    """A pattern for a domain, alone or as the end of a longer host name."""
+
+    return rf"(?<![\w-]){re.escape(text)}(?![\w-]|\.\w)"
+
+
+def _name(text: str) -> str:
+    """A pattern for a machine name that is no part of a longer name."""
+
+    return rf"(?<![\w.-]){re.escape(text)}(?![\w-]|\.\w)"
+
+
+def _no_proxy_hosts(value: str) -> dict[str, str]:
+    """The entries of a ``NO_PROXY`` value that name a site, with their patterns.
+
+    Loopback names, the address blocks every site uses and names of one label,
+    such as ``.svc``, are left out.
+    """
+
+    hosts: dict[str, str] = {}
+    for entry in value.split(","):
+        entry = entry.strip().lstrip("*").lstrip(".")
+        if not entry or entry in _LOOPBACK:
+            continue
+        try:
+            network = ipaddress.ip_network(entry, strict=False)
+        except ValueError:
+            host, _, port = entry.rpartition(":")
+            entry = host if host and port.isdigit() else entry
+            if "." in entry and entry not in _LOOPBACK:
+                hosts[entry] = _domain(entry)
+            continue
+        if "/" in entry:
+            if str(network) not in _COMMON_NETWORKS:
+                hosts[entry] = _address(entry)
+        elif not network.network_address.is_loopback:
+            hosts[entry] = _address(entry)
+    return hosts
+
+
+def machine_name() -> str:
+    """The name of this machine, fully qualified when the resolver knows it."""
+
+    name, full = socket.gethostname(), socket.getfqdn()
+    return full if full.startswith(name.split(".")[0] + ".") else name
+
+
 def environment_redaction(
-    run_dir: Path, environ: Mapping[str, str]
+    run_dir: Path, environ: Mapping[str, str], machine: str = ""
 ) -> tuple[Rules, Redaction]:
     """Derive from a run what its export replaces without being told.
 
     The samples record the model endpoints and the names of the variables their
     containers received, and the run records the host paths of its configuration.
-    An endpoint host becomes ``endpoint-<n>.example`` and a path its placeholder.
-    A credential variable that has a value in ``environ`` has that value replaced;
-    one without a value is reported, because the export cannot look for it.
+    An endpoint host becomes ``endpoint-<n>.example`` and a path its placeholder;
+    the run directory becomes ``<run-dir>``. A credential variable that has a
+    value in ``environ`` has that value replaced; one without a value is
+    reported, because the export cannot look for it. The hosts that a passed
+    ``NO_PROXY`` names become ``internal-<n>.example``.
+
+    ``machine`` is the name of the machine the run was collected on. Its fully
+    qualified name becomes ``collection-host.example``, the domain of that name
+    ``collection-domain.example``, and the bare name ``collection-host``.
     """
 
     urls: set[str] = set()
@@ -213,12 +313,17 @@ def environment_redaction(
         names.update(name for name in provenance.get("environment_names") or [] if name)
 
     literals: dict[str, str] = {}
+    # The pattern of a literal that must not match inside a longer word.
+    patterns: dict[str, str] = {}
     credentials: list[str] = []
     unset: list[str] = []
+    no_proxy: dict[str, str] = {}
     for name in sorted(names):
         value = environ.get(name, "")
         if value.startswith(("http://", "https://")):
             urls.add(value)
+        elif name.lower() == "no_proxy":
+            no_proxy.update(_no_proxy_hosts(value))
         elif name.lower().replace("_", "").endswith(_CREDENTIAL_NAMES):
             if not value:
                 unset.append(name)
@@ -242,8 +347,39 @@ def environment_redaction(
         if specific:
             literals.setdefault(host, placeholder)
 
+    hosts: list[str] = []
+    for host, pattern in sorted(no_proxy.items()):
+        if host not in literals:
+            literals[host] = f"internal-{len(hosts) + 1}.example"
+            patterns[host] = pattern
+            hosts.append(host)
+
+    short, _, domain = machine.partition(".")
+    named = False
+    if domain and short.lower() not in _LOOPBACK:
+        literals.setdefault(machine, "collection-host.example")
+        named = True
+        if "." in domain and domain not in literals:
+            literals[domain] = "collection-domain.example"
+            patterns[domain] = _domain(domain)
+    if (
+        short.lower() not in _COMMON_HOSTNAMES
+        and (len(short) >= _HOSTNAME_LENGTH or any(char.isdigit() for char in short))
+        and short not in literals
+    ):
+        literals[short] = "collection-host"
+        patterns[short] = _name(short)
+        named = True
+
     configuration = _json(run_dir / "info.json").get("configuration") or {}
     paths: list[str] = []
+    # The run directory as it was given and as it resolves, counted once.
+    for location in (run_dir.resolve(), run_dir.absolute()):
+        path = _host_path(str(location), False)
+        if path and path not in literals:
+            literals[path] = "<run-dir>"
+            if not paths:
+                paths.append(path)
     for section, key, is_file, placeholder in _CONFIGURED_PATHS:
         blocks = (
             [configuration]
@@ -261,11 +397,21 @@ def environment_redaction(
     if not literals:
         return Rules(), Redaction(unset=tuple(unset))
     pattern = re.compile(
-        "|".join(re.escape(text) for text in sorted(literals, key=len, reverse=True))
+        "|".join(
+            patterns.get(text) or re.escape(text)
+            for text in sorted(literals, key=len, reverse=True)
+        )
     )
     return (
         Rules(replace=((pattern, lambda match: literals[match.group(0)]),)),
-        Redaction(tuple(endpoints), tuple(paths), tuple(credentials), tuple(unset)),
+        Redaction(
+            endpoints=tuple(endpoints),
+            paths=tuple(paths),
+            credentials=tuple(credentials),
+            unset=tuple(unset),
+            hosts=tuple(hosts),
+            machine=machine if named else "",
+        ),
     )
 
 
@@ -574,11 +720,13 @@ def sample_row(
     sample_dir: Path,
     trace_path: Path | None = None,
     root: Path | None = None,
+    results: Path | None = None,
 ) -> dict[str, Any]:
     """Describe one sample as a table row.
 
     With ``trace_path``, also write the session of the sample there and record
-    the path, relative to ``root``, in the row.
+    the path, relative to ``root``, in the row. ``results`` is the directory
+    whose file names fill ``files``, the ``results`` of the sample by default.
     """
 
     info = _json(sample_dir / "info.json")
@@ -591,7 +739,7 @@ def sample_row(
     task_id = str(info.get("task_id") or sample_dir.name)
     model = info.get("model") or sample_dir.parent.name
     sample = sample_dir.relative_to(run_root).as_posix()
-    results = sample_dir / "results"
+    results = results or sample_dir / "results"
     trace = None
     if trace_path is not None and root is not None:
         header = {
@@ -722,10 +870,12 @@ def stats_table(rows: Iterable[Mapping[str, Any]]) -> str:
         for group in groups.values()
         for row in group
     )
+    # An endpoint that reports no usage leaves every count at zero.
+    metered = any(row["total_tokens"] for group in groups.values() for row in group)
     header = ["Trajectories", "Harness", "Model", "Samples", "Completed"]
     if graded:
         header += ["Scored", "Mean score"]
-    header += ["Mean steps", "Total tokens"]
+    header += ["Mean steps"] + ["Total tokens"] * metered
     lines = [
         "| " + " | ".join(header) + " |",
         "| --- | --- | --- |" + " ---: |" * (len(header) - 3),
@@ -741,10 +891,9 @@ def stats_table(rows: Iterable[Mapping[str, Any]]) -> str:
         ]
         if graded:
             cells += [str(len(scores)), f"{sum(scores) / len(group):.3f}"]
-        cells += [
-            f"{sum(row['steps'] for row in group) / len(group):.1f}",
-            f"{sum(row['total_tokens'] for row in group):,}",
-        ]
+        cells.append(f"{sum(row['steps'] for row in group) / len(group):.1f}")
+        if metered:
+            cells.append(f"{sum(row['total_tokens'] for row in group):,}")
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
@@ -758,14 +907,19 @@ def _tables(output: Path) -> Iterator[dict[str, Any]]:
                 yield json.loads(line)
 
 
-def _write_card(output: Path, name: str, part: str, table: str) -> None:
+def _write_card(output: Path, name: str, part: str, table: str, runs: bool) -> None:
     """Create the dataset card, or refresh the statistics of an existing one."""
 
     card = output / "README.md"
     stats = f"{STATS_START}\n{table}\n{STATS_END}"
     if not card.is_file():
         text = _CARD.format(
-            name=name, part=part, data_dir=DATA_DIR, traces_dir=TRACES_DIR, stats=stats
+            name=name,
+            data_dir=DATA_DIR,
+            traces_dir=TRACES_DIR,
+            stats=stats,
+            browse=_CARD_BROWSE.format(name=name, part=part) if runs else "",
+            run_files=_CARD_RUN_FILES if runs else "",
         )
     else:
         text = card.read_text(encoding="utf-8")
@@ -782,77 +936,111 @@ def export_run(
     rules: Rules | None = None,
     environ: Mapping[str, str] | None = None,
     redact: bool = True,
+    runs: bool = False,
+    machine: str | None = None,
 ) -> tuple[list[dict[str, Any]], Redaction]:
     """Write a run into a dataset folder; return its table rows and what was redacted.
 
     The run is split into one part per Harness and model. A part named
-    ``<harness>-<model>`` gets ``runs/<part>/``, a Roller run directory with the
-    samples of that model, ``traces/<part>/`` and ``data/<part>.jsonl``, so the
-    folder can hold the parts of further runs; exporting a part again replaces
-    these three. The statistics of the card cover every part in the folder.
+    ``<harness>-<model>`` gets ``traces/<part>/`` and ``data/<part>.jsonl``, so
+    the folder can hold the parts of further runs; exporting a part again
+    replaces them. With ``runs``, a part also gets ``runs/<part>/``, a Roller run
+    directory with every file of the samples of that model. The statistics of
+    the card cover every part in the folder.
 
-    With ``redact``, the copied files have the endpoints, host paths and
-    credential values of the collection replaced, see ``environment_redaction``;
-    ``environ`` supplies the credential values, ``os.environ`` by default.
-    ``rules`` are applied in either case.
+    With ``redact``, the exported files have the endpoints, hosts, host paths
+    and credential values of the collection replaced, see
+    ``environment_redaction``; ``environ`` supplies the credential values,
+    ``os.environ`` by default, and ``machine`` the name of the collection
+    machine, the name of this machine by default. ``rules`` are applied in
+    either case.
 
-    Raises ``ValueError`` when a forbidden pattern is left in a copied file.
+    Raises ``ValueError`` when a forbidden pattern is left in an exported file.
     """
 
-    run_dir, output = run_dir.resolve(), output.resolve()
     derived, redaction = (
-        environment_redaction(run_dir, os.environ if environ is None else environ)
+        environment_redaction(
+            run_dir,
+            os.environ if environ is None else environ,
+            machine_name() if machine is None else machine,
+        )
         if redact
         else (Rules(), Redaction())
     )
+    run_dir, output = run_dir.resolve(), output.resolve()
     extra = rules or Rules()
     rules = Rules(derived.replace + extra.replace, extra.exclude, extra.forbid)
     parts = _parts(run_dir)
     shared = [
         path
         for path in sorted(run_dir.rglob("*"))
-        if path.is_file()
+        if runs
+        and path.is_file()
         and output != path
         and output not in path.parents
         and (run_dir / "samples") not in path.parents
     ]
-    found: list[str] = []
-    for name, samples in parts.items():
-        for stale in (output / "runs" / name, output / TRACES_DIR / name):
-            if stale.exists():
-                shutil.rmtree(stale)
-        files = shared + [
-            path
-            for sample in samples
-            for path in sorted(sample.rglob("*"))
-            if path.is_file()
-        ]
-        found += _copy_files(run_dir, files, output / "runs" / name, rules)
-    if found:
-        shown = ", ".join(sorted(set(found))[:20])
-        raise ValueError(f"{len(found)} lines still match a forbidden pattern: {shown}")
-    rows: list[dict[str, Any]] = []
-    for name in parts:
-        destination = output / "runs" / name
-        _rewrite_run_files(destination, (run_dir / "bench-report.json").is_file())
-        part = [
-            sample_row(
-                name,
-                destination,
-                path.parent,
-                output / TRACES_DIR / name / f"{path.parent.name}.jsonl",
-                output,
+    with contextlib.ExitStack() as stack:
+        # The sessions and the tables are built from redacted copies. Without
+        # ``runs`` the copies hold only the files these need and are not kept.
+        copies = (
+            output / "runs"
+            if runs
+            else Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        )
+        found: list[str] = []
+        for name, samples in parts.items():
+            for stale in (output / "runs" / name, output / TRACES_DIR / name):
+                if stale.exists():
+                    shutil.rmtree(stale)
+            files = shared + [
+                path
+                for sample in samples
+                for path in (
+                    sorted(sample.rglob("*"))
+                    if runs
+                    else [sample / file for file in _SAMPLE_FILES]
+                )
+                if path.is_file()
+            ]
+            found += _copy_files(run_dir, files, copies / name, rules)
+        if found:
+            shown = ", ".join(sorted(set(found))[:20])
+            raise ValueError(
+                f"{len(found)} lines still match a forbidden pattern: {shown}"
             )
-            for path in sorted(destination.glob("samples/*/*/info.json"))
-        ]
-        table = output / DATA_DIR / f"{name}.jsonl"
-        table.parent.mkdir(parents=True, exist_ok=True)
-        with table.open("w", encoding="utf-8") as writer:
-            for row in part:
-                writer.write(json.dumps(row, ensure_ascii=False) + "\n")
-        rows += part
+        rows: list[dict[str, Any]] = []
+        for name in parts:
+            destination = copies / name
+            if runs:
+                _rewrite_run_files(
+                    destination, (run_dir / "bench-report.json").is_file()
+                )
+            part = [
+                sample_row(
+                    name,
+                    destination,
+                    path.parent,
+                    output / TRACES_DIR / name / f"{path.parent.name}.jsonl",
+                    output,
+                    None
+                    if runs
+                    else run_dir / path.parent.relative_to(destination) / "results",
+                )
+                for path in sorted(destination.glob("samples/*/*/info.json"))
+            ]
+            table = output / DATA_DIR / f"{name}.jsonl"
+            table.parent.mkdir(parents=True, exist_ok=True)
+            with table.open("w", encoding="utf-8") as writer:
+                for row in part:
+                    writer.write(json.dumps(row, ensure_ascii=False) + "\n")
+            rows += part
+    if not runs:
+        # An earlier export with ``runs`` may have left the directory empty.
+        with contextlib.suppress(OSError):
+            (output / "runs").rmdir()
     if parts:
         _write_card(
-            output, run_dir.name, next(iter(parts)), stats_table(_tables(output))
+            output, run_dir.name, next(iter(parts)), stats_table(_tables(output)), runs
         )
     return rows, redaction

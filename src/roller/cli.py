@@ -184,8 +184,17 @@ def _build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "with --format hf, replace the model endpoints, host paths and "
-            "credential values of the run in the exported files (default: on)"
+            "with --format hf, replace the model endpoints, NO_PROXY hosts, "
+            "machine name, host paths and credential values of the run in the "
+            "exported files (default: on)"
+        ),
+    )
+    export.add_argument(
+        "--include-runs",
+        action="store_true",
+        help=(
+            "with --format hf, also write runs/<harness>-<model>/, a Roller run "
+            "directory with every file of the samples, which `roller view` opens"
         ),
     )
     export.add_argument(
@@ -2389,14 +2398,14 @@ def _export(args: argparse.Namespace) -> int:
             else None
         )
         rows, redaction = hf_dataset.export_run(
-            run_dir, output, rules, redact=args.redact
+            run_dir, output, rules, redact=args.redact, runs=args.include_runs
         )
         print(f"Exported {len(rows)} samples as a Hugging Face dataset to {output}")
         for line in redaction.lines():
             print(line)
         return 0
-    if args.redact_rules:
-        raise ValueError("--redact-rules applies to --format hf")
+    if args.redact_rules or args.include_runs:
+        raise ValueError("--redact-rules and --include-runs apply to --format hf")
     written, skipped = export_run(run_dir, output)
     print(f"Exported {len(written)} ATIF trajectories to {output}")
     if skipped:
