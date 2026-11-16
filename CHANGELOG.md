@@ -11,6 +11,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ### Changed
 
+- OpenClaw runs in `/root/.openclaw/workspace`, the workspace path of an OpenClaw install, which Roller links to the task workspace. A session records this path as its working directory, so tools that recognize OpenClaw sessions by it, such as the trace viewer of the Hugging Face Hub, label them as OpenClaw. It was `/tmp_workspace` before. The task workspace and its files stay at the same paths. WildClawBench upstream runs OpenClaw in the same path.
 - The project status is Beta, in the package classifiers and the documentation.
 - The handbook moved to [valen-team.github.io/roller](https://valen-team.github.io/roller/) and is maintained in the website repository. `docs/` and the Sphinx build are removed from this repository.
 
