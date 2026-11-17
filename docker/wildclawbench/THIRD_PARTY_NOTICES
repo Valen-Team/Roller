@@ -1,0 +1,25 @@
+Roller WildClawBench images
+
+These images derive from internlm/WildClawBench's wildclawbench-ubuntu:v1.3.
+WildClawBench code is MIT licensed. Its copyright and permission notice:
+https://github.com/InternLM/WildClawBench/blob/main/LICENSE
+
+The images contain third-party software under its own licenses. Original
+copyright notices, license files, and installed package metadata remain in
+the image. The benchmark's MIT license does not replace those licenses.
+
+The Miniconda distribution's copyright notice, redistribution conditions,
+and disclaimer are included at /root/miniconda3/LICENSE.txt. Use of Anaconda
+package repositories remains subject to their applicable terms.
+
+The Codex derivative adds OpenAI Codex CLI (Apache-2.0), Node.js (MIT and
+third-party notices), and ripgrep (MIT/Unlicense). Their distribution license
+files are retained in the image and source distributions:
+https://github.com/openai/codex
+https://github.com/nodejs/node
+https://github.com/BurntSushi/ripgrep
+
+Roller code and build scripts are Apache-2.0:
+https://github.com/Valen-Team/Roller/blob/main/LICENSE
+
+No affiliation or endorsement by third-party authors is implied.

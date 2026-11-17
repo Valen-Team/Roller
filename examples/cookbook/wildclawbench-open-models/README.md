@@ -1,63 +1,84 @@
-# 实战案例：用两个自部署模型采集 WildClawBench
+# WildClawBench on OpenClaw and Codex
 
-[教程](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/) · [数据集](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories) · [Examples](../../README.md)
+[English tutorial](https://valen-team.github.io/roller/cookbook/wildclawbench-open-models/) · [中文教程](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/) · [Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories)
 
-本目录是一次完整 Roller 运行的配置和命令：GLM-5.3-Flash 和 DeepSeek-V4.1-Flash 在
-OpenClaw Harness 中各运行 28 个 WildClawBench 任务，每个任务三次，共 168 条轨迹；评分在任务容器内完成，
-run 导出后发布为 Hugging Face 数据集。数据集目前包含前 8 个任务的 44 条轨迹：
+Collect, grade and browse 28 WildClawBench tasks with DeepSeek-V4.1-Flash-1017,
+GLM-5.3-Flash, Kimi K3 and Kimi K3.1 Pro. Each model runs each task three times:
+84 attempts per model, 336 per Harness. The published batches retain successful,
+timed-out and failed attempts. Current results and browsable sessions are on HF.
 
-| 模型 | Sample 数 | 完成 | 已评分 | 平均分 | 平均步数 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `deepseek-v4.1-flash-1017` | 22 | 18 | 22 | 0.306 | 70.5 |
-| `glm-5.3-flash` | 22 | 12 | 22 | 0.277 | 35.5 |
+## Setup
 
-## 文件
-
-| 文件 | 内容 |
-| --- | --- |
-| [`models.json`](models.json) | 两个模型的 OpenClaw 模型配置，地址和 key 由环境变量提供 |
-| [`task-ids.txt`](task-ids.txt) | 选中的 28 个 WildClawBench Task ID，每行一个 |
-| [`collect.sh`](collect.sh) | 设置 judge 环境变量并执行 `roller collect` |
-| [`redact.json`](redact.json) | 导出时追加的脱敏规则：模型权重所在的目录，按自己的环境修改 |
-
-## 运行
-
-准备 Roller、Docker、WildClawBench 检出目录及其镜像，见
-[WildClawBench 指南](https://valen-team.github.io/zh-Hans/roller/benches/wildclawbench/)。
-然后设置模型服务的地址和 key，两个模型由同一个接口提供：
+Install Roller from the current repository (`pip install -e .`), have Docker
+running, and download [WildClawBench](https://github.com/InternLM/WildClawBench)
+with its task assets. The image build instructions are in
+[`docker/wildclawbench`](../../../docker/wildclawbench).
 
 ```bash
 export WILDCLAWBENCH_ROOT=~/WildClawBench
-export ROLLER_INFER_BASE_URL=http://<host>:<port>/v1
-export ROLLER_INFER_API_KEY=<key>
+export OPENROUTER_BASE_URL=http://localhost:8001/v1
+export OPENROUTER_API_KEY=not-required
+export JUDGE_MODEL=glm-5.3-flash
 ```
 
+Use your own model and judge endpoints. For internal services reached through a
+proxy, put their hostnames in `NO_PROXY`. Both agents use the same task list and
+judge; agents and graders have no Roller retries in this example.
+
+## Codex
+
+The endpoint must support the Responses API, including tools and images. Run
+one model per invocation; separate invocations can run simultaneously.
+
 ```bash
-# 检查运行计划，不启动容器，也不调用模型
+export MODEL=glm-5.3-flash
+export OPENAI_BASE_URL=http://localhost:8000/v1
+export OPENAI_API_KEY=not-required
+export MODEL_CONTEXT_WINDOW=98304 # match your serving configuration
+export RUN_NAME=wildclawbench-codex-glm
+./collect-codex.sh --dry-run
+./collect-codex.sh
+roller view runs/wildclawbench-codex-glm
+```
+
+For a backend that drops images from tool outputs, set `TOOL_IMAGES_AS_USER=1`.
+This attaches the same image bytes as a following user image message and keeps
+the associated tool text. The Kimi K3.1 Pro backend used for the Codex batch
+needed this compatibility setting; other backends should leave it off.
+
+## OpenClaw
+
+`models.json` describes the four model IDs behind an OpenAI-compatible Chat
+Completions endpoint. Change the model IDs and context windows to match your
+server, then run:
+
+```bash
+export ROLLER_INFER_BASE_URL=http://localhost:8000/v1
+export ROLLER_INFER_API_KEY=not-required
 ./collect.sh --dry-run
-
-# 采集并评分；中断后用 ./collect.sh --resume 继续
 ./collect.sh
-
-# 查看结果
-roller view runs/wildclawbench-open-models
 ```
 
-换用其他模型时，修改 `models.json` 中的 provider，以及 `collect.sh` 中的两个 `--model`
-和 `JUDGE_MODEL`。
-
-## 发布为数据集
+## Export and append a batch
 
 ```bash
-roller export runs/wildclawbench-open-models \
-  --format hf --output dataset --redact-rules redact.json
-
-hf upload <owner>/<name> dataset . --repo-type dataset
+roller export runs/wildclawbench-codex-glm --format hf --output dataset \
+  --preserve-task-keys --redact-rules redact.json
+hf upload <owner>/<dataset> dataset . --repo-type dataset
 ```
 
-导出目录的 `traces/` 中是每个 sample 的 OpenClaw 原生会话，Hub 会把它们识别为 agent traces，在数据集
-页面上直接用轨迹查看器展示。导出目录里就是要发布的内容：卡片、会话和表格。导出的文件是脱敏后的：模型端点、
-`NO_PROXY` 里的主机、机器名、主机路径和凭据取值会被替换为占位符。`redact.json` 追加 run 没有记录的内容，
-把其中的权重目录换成自己环境的路径；`forbid` 中的模式在替换后仍有匹配时，导出会停下并指出所在的文件和行。
-请在采集所用的机器上执行导出，凭据变量在那里有值。导出目录的结构和脱敏的内容见
-[Hugging Face 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#hugging-face-export)。
+Export other models to the same `dataset` folder to add their parts. Each part
+uses `traces/<harness>-<model>/` and `data/<harness>-<model>.jsonl`. When collecting
+another batch of the same Harness and model, give it a separate folder/name
+before uploading so an earlier batch stays available. Keep a short batch note
+with the date, model settings, task selection and any compatibility settings.
+
+The HF exporter replaces collection endpoints, host paths and known environment
+credentials. `--preserve-task-keys` keeps deliberately planted benchmark keys;
+review the resulting files and add environment-specific replacements to
+`redact.json`. Raw runs stay unchanged. An execution status of `ok` means the
+agent exited normally; consult the score and produced files for task success.
+
+The two Harness batches are an observed comparison under their documented
+settings. Their prompts, tools, context management, software versions and
+backend compatibility behavior differ.

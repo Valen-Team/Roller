@@ -56,6 +56,8 @@ Roller provides the following capabilities:
 
 ## News
 
+- **2026-11-17**: [WildClawBench with OpenClaw and Codex](https://valen-team.github.io/roller/cookbook/wildclawbench-open-models/): four self-hosted models, browsable trajectories and scores, public task images and runnable collection examples. Codex has an optional tool-image compatibility setting; HF export can preserve deliberate benchmark test keys.
+
 - **2026-11-16**: [Hugging Face export](https://valen-team.github.io/roller/traces/trajectory-outputs/#hugging-face-export). `roller export RUN_DIR --format hf` packages a run as a dataset folder that the Hub opens in its trace viewer, with the model endpoints, host paths and credential values of the run replaced. The first dataset is [Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories), and a [cookbook recipe](https://valen-team.github.io/roller/cookbook/wildclawbench-open-models/) follows the run behind it.
 - **2026-11-16**: [ATIF export](https://valen-team.github.io/roller/traces/trajectory-outputs/#atif-export). `roller export RUN_DIR` converts every trajectory of a run to the format that [Harbor](https://github.com/harbor-framework/harbor) reads.
 - **2026-11-15**: Roller is on PyPI as [`roller-agent`](https://pypi.org/project/roller-agent/). `roller init` writes the example tasks and configuration templates into the working directory.
@@ -311,7 +313,7 @@ The following example runs WildClawBench. With the upstream repository checked o
 ```bash
 roller collect --bench wildclawbench --bench-root ~/WildClawBench \
   --model <provider>/<model> --model-config <models.json> \
-  --harness openclaw --openclaw-image wildclawbench-ubuntu:v1.3 \
+  --harness openclaw --openclaw-image ghcr.io/valen-team/roller-wildclaw-base:1.3-clean.1 \
   --parallel 4 --output runs --run-name wildclaw
 ```
 

@@ -1,0 +1,8 @@
+ARG WILDCLAW_SOURCE=roller-wildclaw-clean:1.3
+FROM ${WILDCLAW_SOURCE}
+COPY THIRD_PARTY_NOTICES LICENSE-WildClawBench /usr/share/doc/roller-wildclaw/
+LABEL org.opencontainers.image.source="https://github.com/Valen-Team/Roller" \
+      org.opencontainers.image.version="1.3-clean.1" \
+      org.opencontainers.image.description="WildClawBench task environment with personal builder state removed"
+WORKDIR /tmp_workspace
+CMD ["bash"]

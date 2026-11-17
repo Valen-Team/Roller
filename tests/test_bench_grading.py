@@ -60,6 +60,26 @@ def _row(name: str, *, env=(), metadata=None, grade: bool = True) -> dict:
 
 
 class GraderEnvironmentTests(unittest.TestCase):
+    def test_cidr_bypass_is_expanded_only_for_matching_judge_hosts(self) -> None:
+        spec = GradeSpec(GRADER, env_names=("OPENROUTER_BASE_URL",))
+        for host, matches in [("10.20.30.40", True), ("203.0.113.8", False)]:
+            with (
+                self.subTest(host=host),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "NO_PROXY": "localhost,10.0.0.0/8",
+                        "OPENROUTER_BASE_URL": f"http://{host}:8000/v1",
+                    },
+                    clear=True,
+                ),
+            ):
+                args = grading.ContainerGrader(spec)._env_args()
+                self.assertEqual(
+                    "NO_PROXY=localhost,10.0.0.0/8,10.20.30.40" in args, matches
+                )
+                self.assertEqual(os.environ["NO_PROXY"], "localhost,10.0.0.0/8")
+
     def test_pinchbench_judged_tasks_need_one_of_two_keys(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             rows = PinchBenchAdapter().load(_pinch_root(Path(temporary)))

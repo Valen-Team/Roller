@@ -182,6 +182,60 @@ def fill_responses_image_detail(body: Any, detail: str) -> bool:
     return changed
 
 
+def move_responses_tool_images(body: Any) -> bool:
+    """Attach tool images as user images for backends that ignore them in outputs."""
+    items = body.get("input") if isinstance(body, dict) else None
+    if not isinstance(items, list):
+        return False
+    rewritten = []
+    changed = False
+    for item in items:
+        output = item.get("output") if isinstance(item, dict) else None
+        if not (
+            isinstance(item, dict)
+            and item.get("type") == "function_call_output"
+            and isinstance(output, list)
+        ):
+            rewritten.append(item)
+            continue
+        images = [
+            b for b in output if isinstance(b, dict) and b.get("type") == "input_image"
+        ]
+        if not images:
+            rewritten.append(item)
+            continue
+        remaining = [b for b in output if b not in images]
+        call_id = item["call_id"]
+        notice = (
+            f"Images from tool call {call_id} are attached in the following message."
+        )
+        if all(
+            isinstance(b, dict) and b.get("type") == "input_text" for b in remaining
+        ):
+            tool_output = "\n".join([b["text"] for b in remaining] + [notice])
+        else:
+            tool_output = remaining + [{"type": "input_text", "text": notice}]
+        rewritten.extend(
+            [
+                {**item, "output": tool_output},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"Image output from tool call {call_id}:",
+                        },
+                        *images,
+                    ],
+                },
+            ]
+        )
+        changed = True
+    if changed:
+        body["input"] = rewritten
+    return changed
+
+
 def _normalized_key(value: Any) -> str:
     return "".join(character for character in str(value).lower() if character.isalnum())
 
@@ -520,14 +574,21 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 pass
         if (
             body
-            and proxy.responses_image_detail
+            and (proxy.responses_image_detail or proxy.responses_tool_images_as_user)
             and self.command == "POST"
             and urlsplit(self.path).path.rstrip("/").endswith("/responses")
         ):
             try:
                 parsed = json.loads(body)
                 # Requests without such an image keep their original bytes.
-                if fill_responses_image_detail(parsed, proxy.responses_image_detail):
+                changed = False
+                if proxy.responses_image_detail:
+                    changed = fill_responses_image_detail(
+                        parsed, proxy.responses_image_detail
+                    )
+                if proxy.responses_tool_images_as_user:
+                    changed = move_responses_tool_images(parsed) or changed
+                if changed:
                     body = json.dumps(parsed, ensure_ascii=False).encode("utf-8")
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
@@ -795,6 +856,7 @@ class WireTraceProxy:
         capture_run_header: str | None = None,
         encrypted_content_retries: int = 0,
         responses_image_detail: str | None = None,
+        responses_tool_images_as_user: bool = False,
         tool_id_mappings_path: Path | None = None,
     ) -> None:
         if mode not in ("tools", "full"):
@@ -835,6 +897,7 @@ class WireTraceProxy:
         self.timeout_seconds = timeout_seconds
         self.encrypted_content_retries = encrypted_content_retries
         self.responses_image_detail = responses_image_detail
+        self.responses_tool_images_as_user = responses_tool_images_as_user
         # Set to repair repeated Anthropic tool-use IDs; receives one row per repair.
         self.tool_id_mappings_path = tool_id_mappings_path
         self.tool_ids = ToolIdRegistry()

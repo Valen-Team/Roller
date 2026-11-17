@@ -250,6 +250,22 @@ class CliConfigSetTests(unittest.TestCase):
             info["configuration"]["codex"]["responses_image_detail"], "high"
         )
 
+    def test_codex_tool_image_compatibility_reaches_harness_and_lock(self) -> None:
+        self.invoke(
+            "--codex-tool-images-as-user",
+            "--api-base",
+            "http://example.test/v1",
+            harness="codex",
+        )
+        self.assertTrue(self.configs[0].responses_tool_images_as_user)
+        self.assertTrue(
+            self.lock()["execution"]["codex"]["responses_tool_images_as_user"]
+        )
+        with self.assertRaisesRegex(FileExistsError, "lock mismatch"):
+            self.invoke(
+                "--api-base", "http://example.test/v1", harness="codex", resume=True
+            )
+
     def test_claude_unique_tool_ids_is_locked_only_when_set(self) -> None:
         self.invoke(harness="claude-code")
         self.assertNotIn("unique_tool_ids", self.lock()["execution"]["claude-code"])

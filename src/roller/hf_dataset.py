@@ -961,6 +961,7 @@ def export_run(
     redact: bool = True,
     runs: bool = False,
     machine: str | None = None,
+    preserve_task_keys: bool = False,
 ) -> tuple[list[dict[str, Any]], Redaction]:
     """Write a run into a dataset folder; return its table rows and what was redacted.
 
@@ -978,6 +979,10 @@ def export_run(
     machine, the name of this machine by default. ``rules`` are applied in
     either case.
 
+    ``preserve_task_keys`` skips credential-shape replacements for benchmarks
+    with deliberate key fixtures. Known environment credentials and collection
+    paths are still replaced when ``redact`` is enabled.
+
     Raises ``ValueError`` when a forbidden pattern is left in an exported file.
     """
 
@@ -994,7 +999,7 @@ def export_run(
     extra = rules or Rules()
     rules = Rules(
         derived.replace
-        + (export_audit.replacements() if redact else ())
+        + (export_audit.replacements() if redact and not preserve_task_keys else ())
         + extra.replace,
         extra.exclude,
         extra.forbid,

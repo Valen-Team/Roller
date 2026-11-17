@@ -135,6 +135,7 @@ class CodexConfig:
     config_set: tuple[ConfigAssignment, ...] = ()
     # ``detail`` the proxy sets on Responses ``input_image`` blocks without one.
     responses_image_detail: str | None = None
+    responses_tool_images_as_user: bool = False
 
     def __post_init__(self) -> None:
         managed = ROLLER_MANAGED_CODEX_CONFIG
@@ -217,6 +218,14 @@ class CodexConfig:
                 )
         if self.wire_trace_mode == "full" and not self.api_base:
             raise ValueError("Codex --wire-trace full requires --api-base")
+        if self.responses_tool_images_as_user and (
+            not self.api_base
+            or self.wire_trace_mode == "off"
+            or self.supports_websockets
+        ):
+            raise ValueError(
+                "Codex tool image compatibility requires --api-base, wire tracing and --no-codex-websockets"
+            )
         if self.wire_trace_mode == "full" and self.supports_websockets:
             raise ValueError("Codex tool capture requires --no-codex-websockets")
         if (
@@ -294,6 +303,7 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
             responses_tools_path=tools_path,
             encrypted_content_retries=CODEX_ENCRYPTED_CONTENT_RETRIES,
             responses_image_detail=self.config.responses_image_detail,
+            responses_tool_images_as_user=self.config.responses_tool_images_as_user,
         )
         self._wire_proxy.start()
 
@@ -892,6 +902,11 @@ class CodexSession(InteractiveSession):
                 "keep_thinking": config.keep_thinking,
                 "web_search": config.web_search,
                 "supports_websockets": config.supports_websockets,
+                **(
+                    {"responses_tool_images_as_user": True}
+                    if config.responses_tool_images_as_user
+                    else {}
+                ),
                 **(
                     {"responses_image_detail": config.responses_image_detail}
                     if config.responses_image_detail
