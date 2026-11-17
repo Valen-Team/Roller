@@ -6,6 +6,10 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ### Added
 
+- `--codex-tool-images-as-user` keeps tool text and attaches the original tool-image bytes as a following user message for compatible Responses backends.
+- `--preserve-task-keys` preserves deliberate benchmark key fixtures during HF export while redacting known collection credentials.
+- `docker/wildclawbench` provides cleaned base/Codex image recipes, license notices and collection examples.
+
 - Collection credential preflight, detailed failure summaries, progress, ETA, 60-second heartbeats and `collect.log`; `--max-consecutive-errors` stops dispatch after 10 consecutive errors by default, and `--retry-backoff` spaces sample retries.
 - Grader retries in the live container and `--resume-unscored` to rerun agents whose grading failed. Grading failures now cause a nonzero exit.
 - SFT record indexes and `roller export --format sft --min-score` for score-filtered training data.
@@ -14,6 +18,10 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 - Collector ownership labels, signal cleanup and `roller clean` for leftovers of dead collectors.
 
 ### Fixed
+
+- Grader proxy bypass expands configured CIDR ranges to matching endpoint hosts.
+- HF export rules also apply to generated model group names and sample paths; configured proxy bypass values and URL credentials are redacted.
+- Export review avoids repeated email-pattern backtracking on long image payloads.
 
 - Benchmark reports aggregate each model separately, include failed samples in denominators and use consistent category denominators.
 - Resume accepts task/model supersets and compatible patch upgrades, and rebuilds derived SFT artifacts without rerunning valid samples.

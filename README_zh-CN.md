@@ -56,6 +56,8 @@ Roller 提供以下能力：
 
 ## 最新动态
 
+- **2026-11-17**：[使用 OpenClaw 和 Codex 采集 WildClawBench](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/)：四个自部署模型、可浏览的轨迹与评分、公开任务镜像和可运行的采集示例。Codex 新增可选的工具图片兼容设置；HF 导出支持保留 benchmark 刻意设置的测试 key。
+
 - **2026-11-16**：[Hugging Face 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#hugging-face-export)。`roller export RUN_DIR --format hf` 把一次 run 打包成数据集目录，Hub 用轨迹查看器直接打开，run 的模型端点、主机路径和凭据取值在导出时已替换。首个数据集是 [Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories)，[Cookbook](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/) 记录了它背后的完整运行。
 - **2026-11-16**：[ATIF 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#atif-export)。`roller export RUN_DIR` 把一次 run 的全部轨迹转换为 [Harbor](https://github.com/harbor-framework/harbor) 读取的格式。
 - **2026-11-15**：Roller 已发布至 PyPI，包名为 [`roller-agent`](https://pypi.org/project/roller-agent/)。`roller init` 将示例 task 和配置模板写入工作目录。

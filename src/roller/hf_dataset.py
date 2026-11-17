@@ -320,12 +320,15 @@ def environment_redaction(
     credentials: list[str] = []
     unset: list[str] = []
     no_proxy: dict[str, str] = {}
+    no_proxy_values: set[str] = set()
     for name in sorted(names):
         value = environ.get(name, "")
         if value.startswith(("http://", "https://")):
             urls.add(value)
         elif name.lower() == "no_proxy":
             no_proxy.update(_no_proxy_hosts(value))
+            if "," in value or "/" in value:
+                no_proxy_values.add(value)
         elif name.lower().replace("_", "").endswith(_CREDENTIAL_NAMES):
             if not value:
                 unset.append(name)
@@ -338,9 +341,14 @@ def environment_redaction(
         parts = urlsplit(url)
         host = parts.hostname or ""
         netloc = parts.netloc.rpartition("@")[2]
-        if not host or host in _LOOPBACK or netloc in literals:
+        if not host or host in _LOOPBACK:
             continue
-        placeholder = f"endpoint-{len(endpoints) + 1}.example"
+        placeholder = literals.get(netloc, f"endpoint-{len(endpoints) + 1}.example")
+        if parts.username or parts.password:
+            literals[url] = parts._replace(netloc=placeholder).geturl()
+            literals[parts.netloc] = placeholder
+        if netloc in literals:
+            continue
         specific = "." in host or ":" in host
         if netloc != host or specific:
             literals[netloc] = placeholder
@@ -355,6 +363,8 @@ def environment_redaction(
             literals[host] = f"internal-{len(hosts) + 1}.example"
             patterns[host] = pattern
             hosts.append(host)
+    for value in no_proxy_values:
+        literals[value] = "localhost,127.0.0.1"
 
     short, _, domain = machine.partition(".")
     named = False
@@ -472,8 +482,17 @@ def _copy_files(
         relative = source.relative_to(run_dir).as_posix()
         if any(fnmatch.fnmatch(relative, pattern) for pattern in rules.exclude):
             continue
-        found += _copy_file(source, destination / relative, rules, relative)
+        found += _copy_file(
+            source, destination / _export_path(relative, rules), rules, relative
+        )
     return found
+
+
+def _export_path(relative: str, rules: Rules) -> str:
+    """Apply the same publication rules to paths generated from model aliases."""
+    for pattern, replacement in rules.replace:
+        relative = pattern.sub(replacement, relative)
+    return relative
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -1004,7 +1023,19 @@ def export_run(
         extra.exclude,
         extra.forbid,
     )
-    parts = _parts(run_dir)
+    parts: dict[str, list[Path]] = {}
+    source_samples: dict[str, Path] = {}
+    for name, samples in _parts(run_dir).items():
+        for pattern, replacement in rules.replace:
+            name = pattern.sub(replacement, name)
+        name = safe_component(name)
+        parts[name] = samples
+        source_samples.update(
+            {
+                _export_path(sample.relative_to(run_dir).as_posix(), rules): sample
+                for sample in samples
+            }
+        )
     shared = [
         path
         for path in sorted(run_dir.rglob("*"))
@@ -1061,7 +1092,8 @@ def export_run(
                     output,
                     None
                     if runs
-                    else run_dir / path.parent.relative_to(destination) / "results",
+                    else source_samples[path.parent.relative_to(destination).as_posix()]
+                    / "results",
                 )
                 for path in sorted(destination.glob("samples/*/*/info.json"))
             ]

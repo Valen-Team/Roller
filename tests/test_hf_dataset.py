@@ -273,6 +273,26 @@ def _lines(path: Path) -> list[dict]:
 
 
 class HuggingFaceExportTests(unittest.TestCase):
+    def test_model_alias_rules_also_apply_to_generated_names_and_sample_paths(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = _run(root)
+            rules = Rules(replace=((re.compile("model-a"), "public-model"),))
+            rows, _ = export_run(
+                run, root / "dataset", rules=rules, environ={}, machine=""
+            )
+            selected = [r for r in rows if r["harness"] == "openclaw"]
+            self.assertEqual(len(selected), 2)
+            for row in selected:
+                self.assertEqual(row["run"], "openclaw-public-model")
+                self.assertNotIn("model-a", row["sample"])
+                self.assertTrue(row["files"])
+                trace = root / "dataset" / row["trace"]
+                self.assertTrue(trace.is_file())
+                self.assertNotIn("model-a", trace.read_text())
+
     def test_task_keys_can_survive_export_without_collection_addresses(self) -> None:
         key = "sk-benchmark-fixture-0123456789abcdef"
         with tempfile.TemporaryDirectory() as tmp:
@@ -847,9 +867,7 @@ class HuggingFaceExportTests(unittest.TestCase):
             self.assertEqual(
                 [row["message"]["content"] for row in exported[-len(seen) :]],
                 [
-                    "NO_PROXY=localhost,127.0.0.1,10.0.0.0/8,.svc,"
-                    ".internal-3.example,endpoint-1.example,internal-2.example,"
-                    "internal-1.example",
+                    "NO_PROXY=localhost,127.0.0.1",
                     "Could not resolve mirror.internal-3.example (internal-2.example)",
                     "public address 1100.102.47.2410 stays",
                     "Author: root <root@collection-host.example>",

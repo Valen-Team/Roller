@@ -8,7 +8,7 @@ import re
 import subprocess
 import tarfile
 import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from urllib.parse import urlsplit
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -197,8 +197,6 @@ try:
                 if len(report["removed"]) < 100:
                     report["removed"].append(name)
                 continue
-            if ".." in PurePosixPath(name).parts or name.startswith("/"):
-                raise RuntimeError("Unexpected archive path")
             if not m.isfile():
                 dst.addfile(m)
                 continue
