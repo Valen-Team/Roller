@@ -418,7 +418,10 @@ class HuggingFaceExportTests(unittest.TestCase):
             )
             # Every other line is the native line; only the endpoint is replaced.
             native_lines = [
-                line.replace(SECRET_HOST, "endpoint-1.example") for line in source
+                line.replace(SECRET_HOST, "endpoint-1.example").replace(
+                    KEY, "[REDACTED]"
+                )
+                for line in source
             ]
             self.assertEqual(
                 lines[1:4] + lines[5:], native_lines[1:4] + native_lines[5:]
@@ -874,7 +877,7 @@ class HuggingFaceExportTests(unittest.TestCase):
                         "--include-runs",
                     ]
                 )
-            self.assertEqual(len(stdout.getvalue().splitlines()), 1)
+            self.assertEqual(len(stdout.getvalue().splitlines()), 2)
             configuration = json.loads(
                 (run_dir / "hf" / "runs" / PART_A / "info.json").read_text("utf-8")
             )["configuration"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import tempfile
 import threading
@@ -10,6 +11,7 @@ from unittest import mock
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
+from roller.benches.report import sample_score
 from roller.cli import _build_parser
 from roller.viewer import RollerRun, make_server
 from roller.viewer import app as viewer_app
@@ -22,7 +24,7 @@ def write_json(path: Path, payload: object) -> None:
 
 class ViewerTests(unittest.TestCase):
     def test_inline_image_blocks_preserve_order_and_reject_remote_sources(self):
-        from roller.viewer.app import _observation_view
+        from roller.viewer.app import _blocks_view
 
         content = [
             {"type": "text", "text": "before"},
@@ -30,7 +32,7 @@ class ViewerTests(unittest.TestCase):
             {"type": "text", "text": "between"},
             {"type": "image", "data": "AQ==", "mimeType": "image/jpeg"},
         ]
-        blocks = _observation_view(content, 40000)["blocks"]
+        blocks = _blocks_view(content, 40000)["blocks"]
         self.assertEqual(
             [b["type"] for b in blocks], ["text", "image", "text", "image"]
         )
@@ -43,7 +45,7 @@ class ViewerTests(unittest.TestCase):
             {"type": "image", "data": "AA==", "mimeType": "image/svg+xml"},
             {"type": "image", "data": "not-base64", "mimeType": "image/png"},
         ):
-            self.assertNotIn("blocks", _observation_view([block], 40000))
+            self.assertNotIn("blocks", _blocks_view([block], 40000))
 
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -251,6 +253,148 @@ class ViewerTests(unittest.TestCase):
         self.assertFalse(failed["has_actf"])
         self.assertIsNone(source.rollout_detail(failed["id"])["trajectory"])
 
+    def test_user_message_images_are_served_as_image_blocks(self) -> None:
+        trace_path = self.sample_a / "trace_ACTF.json"
+        trace = json.loads(trace_path.read_text(encoding="utf-8"))
+        trace["steps"][0]["user_content"] = [
+            {"type": "text", "text": "Describe the chart"},
+            {"type": "image", "data": "AA==", "mimeType": "image/png"},
+        ]
+        trace["steps"][0]["assistant_content"] = {"tool_calls": []}
+        write_json(trace_path, trace)
+
+        source = RollerRun(self.root)
+        rollout = source.list_tasks(model="provider/model-a")["items"][0]["rollouts"][0]
+
+        user = source.step_detail(rollout["id"], 0)["user"]
+        self.assertEqual(
+            user["blocks"],
+            [
+                {"type": "text", "text": "Describe the chart"},
+                {"type": "image", "url": "data:image/png;base64,AA=="},
+            ],
+        )
+        self.assertEqual(user["text"], "Describe the chart\n<image>")
+        step = source.rollout_detail(rollout["id"])["trajectory"]["steps"][0]
+        self.assertEqual(step["user_preview"], "Describe the chart <image>")
+
+    def grade(self, sample: Path, **record: object) -> None:
+        info_path = sample / "info.json"
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info["runtime"] = {
+            "bench": {
+                "bench": "wildclawbench",
+                "category": "01_Productivity_Flow",
+                "score_key": "overall_score",
+                "error": None,
+                **record,
+            }
+        }
+        write_json(info_path, info)
+
+    def test_runs_without_bench_data_report_no_scores(self) -> None:
+        source = RollerRun(self.root)
+
+        rollouts = source.list_tasks()["items"][0]["rollouts"]
+        self.assertEqual([item["bench"] for item in rollouts], [None, None])
+        self.assertEqual(source.run_summary()["score_counts"], {})
+        self.assertEqual(source.list_tasks(score="zero")["total"], 0)
+
+    def test_rollout_summary_reports_the_score_of_the_bench_report(self) -> None:
+        sample_c = self.root / "samples/model-a/00000001_other-task"
+        write_json(
+            sample_c / "info.json",
+            {"task_id": "other-task", "model": "provider/model-a", "source_index": 1},
+        )
+        scores = {"overall_score": 0.75, "accuracy": 1.0, "passed": True}
+        self.grade(self.sample_a, scores=scores)
+        skipped = "agent error; benchmark grading skipped"
+        self.grade(
+            self.sample_b,
+            scores={"overall_score": 0.0, "score_eligible": False, "error": skipped},
+            error=skipped,
+        )
+        self.grade(sample_c, scores={"overall_score": 0.0}, category="")
+        source = RollerRun(self.root)
+
+        def rollouts(**filters: str) -> list[dict]:
+            tasks = source.list_tasks(**filters)["items"]
+            return [rollout for task in tasks for rollout in task["rollouts"]]
+
+        self.assertEqual(
+            [item["bench"] for item in rollouts()],
+            [
+                {
+                    "name": "wildclawbench",
+                    "category": "01_Productivity_Flow",
+                    "score": sample_score(scores, "overall_score"),
+                    "error": "",
+                },
+                {
+                    "name": "wildclawbench",
+                    "category": "01_Productivity_Flow",
+                    "score": None,
+                    "error": skipped,
+                },
+                {"name": "wildclawbench", "category": "", "score": 0.0, "error": ""},
+            ],
+        )
+        self.assertEqual(
+            source.run_summary()["score_counts"],
+            {"positive": 1, "unscored": 1, "zero": 1},
+        )
+        for group, task_id in (
+            ("positive", "shared-task"),
+            ("unscored", "shared-task"),
+            ("zero", "other-task"),
+        ):
+            self.assertEqual(
+                [item["task_id"] for item in rollouts(score=group)], [task_id]
+            )
+        self.assertEqual(
+            [item["bench"]["score"] for item in rollouts(sort="score")],
+            [0.0, 0.75, None],
+        )
+        self.assertEqual(
+            [item["bench"]["score"] for item in rollouts(sort="-score")],
+            [0.75, None, 0.0],
+        )
+        self.assertEqual(len(rollouts(query="grading skipped")), 1)
+        self.assertEqual(len(rollouts(query="productivity")), 2)
+        with self.assertRaisesRegex(viewer_app.ViewerDataError, "sort"):
+            source.list_tasks(sort="tokens")
+
+    def test_score_follows_the_score_key_and_a_grader_error_in_the_scores(self) -> None:
+        self.grade(
+            self.sample_a, scores={"reward": 1, "speed": 0.2}, score_key="reward"
+        )
+        self.grade(
+            self.sample_b, scores={"overall_score": 0.0, "error": "judge failed"}
+        )
+        source = RollerRun(self.root)
+
+        first, second = source.list_tasks()["items"][0]["rollouts"]
+
+        self.assertEqual(first["bench"]["score"], 1.0)
+        self.assertIsNone(second["bench"]["score"])
+        self.assertEqual(second["bench"]["error"], "judge failed")
+
+    def test_ui_strings_are_english_by_default_and_all_defined(self) -> None:
+        static = Path(viewer_app.__file__).with_name("static")
+        html = (static / "index.html").read_text(encoding="utf-8")
+        script = (static / "app.js").read_text(encoding="utf-8")
+        start = script.index("const STRINGS = {")
+        end = script.index("\n  };", start)
+        defined = set(re.findall(r"^    (\w+): \[", script[start:end], re.MULTILINE))
+        in_page = set(re.findall(r'data-i18n(?:-[a-z-]+)?="(\w+)"', html))
+        in_script = set(re.findall(r'\bth?\("(\w+)"', script))
+
+        self.assertIn('<html lang="en">', html)
+        # Chinese text lives in the table of app.js and nowhere else.
+        self.assertNotRegex(html + script[:start] + script[end:], "[\u4e00-\u9fff]")
+        self.assertTrue(in_page and in_script)
+        self.assertEqual((in_page | in_script) - defined, set())
+
     def test_serves_static_ui_and_read_only_api(self) -> None:
         server = make_server(self.root, port=0)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -273,6 +417,13 @@ class ViewerTests(unittest.TestCase):
                 payload = json.loads(response.read())
                 self.assertEqual(payload["page_size"], 1)
                 self.assertEqual(payload["total"], 1)
+            with urlopen(
+                f"{address}/api/v1/tasks?score=zero&sort=-score", timeout=5
+            ) as response:
+                self.assertEqual(json.loads(response.read())["total"], 0)
+            with self.assertRaises(HTTPError) as raised:
+                urlopen(f"{address}/api/v1/tasks?sort=tokens", timeout=5)
+            self.assertEqual(raised.exception.code, 422)
             with self.assertRaises(HTTPError) as raised:
                 urlopen(f"{address}/api/v1/rollouts/not-found", timeout=5)
             self.assertEqual(raised.exception.code, 404)

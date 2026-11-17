@@ -244,6 +244,13 @@ def binding_from_task_row(row: dict[str, Any]) -> BenchBinding | None:
     return BenchBinding.from_dict(payload)
 
 
+def required_env(binding: BenchBinding) -> tuple[tuple[str, ...], ...]:
+    """Every name in the task's ``bench.grade.env`` is required."""
+
+    grade = binding.grade
+    return tuple((name,) for name in grade.env_names) if grade is not None else ()
+
+
 class BenchAdapter(ABC):
     """Turn an upstream benchmark into ``roller.task/v1`` rows plus scorers.
 
@@ -286,6 +293,7 @@ class BenchAdapter(ABC):
         binding: BenchBinding,
         *,
         grading_semaphore: Any = None,
+        grader_retries: int = 0,
     ) -> Any:
         """Attach this bench's live-container grader to a harness."""
 
@@ -297,7 +305,18 @@ class BenchAdapter(ABC):
             harness,
             binding,
             grading_semaphore=grading_semaphore,
+            grader_retries=grader_retries,
         )
+
+    def required_env(self, binding: BenchBinding) -> tuple[tuple[str, ...], ...]:
+        """Environment variables the task's grader cannot run without.
+
+        Each entry is a group of alternatives, one of which must be set. Roller
+        checks them once, before any container starts. Override when the grader
+        accepts one of several variables, which ``bench.grade.env`` cannot say.
+        """
+
+        return required_env(binding)
 
     def aggregate(self, samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
         """Summarize per-sample scores; override to match upstream reporting."""

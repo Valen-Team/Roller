@@ -794,7 +794,17 @@ Complete the demo.
         self.assertEqual(report["passed_count"], 2)
         self.assertEqual(report["pass_rate"], 0.666667)
         self.assertEqual(report["mean_reward"], 0.666667)
-        self.assertEqual(report["categories"]["demo"]["task_count"], 3)
+        # The category counts every sample and divides as the headline does.
+        self.assertEqual(
+            report["categories"]["demo"],
+            {
+                "task_count": 6,
+                "scored_count": 3,
+                "pass_rate": 0.666667,
+                "average": 0.666667,
+                "scored_average": 0.666667,
+            },
+        )
 
     def test_dockerfile_heredocs_are_rewritten_for_podman(self) -> None:
         source = """FROM python:3.12-slim

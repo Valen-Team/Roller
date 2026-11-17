@@ -46,11 +46,11 @@ Roller provides the following capabilities:
 - **Viewer.** A built-in read-only web interface for browsing tasks, comparing models and inspecting each step.
 
 <p align="center">
-  <a href="assets/demo/viewer-trajectory.gif"><img src="assets/demo/viewer-trajectory.gif" alt="Step-by-step inspection of one rollout in Roller Viewer: task search, model selection, and the reasoning, tool calls and tool results of all six steps" width="32%"></a>
-  <a href="assets/demo/viewer-models.gif"><img src="assets/demo/viewer-models.gif" alt="One task compared across four models in Roller Viewer, with 3, 13, 27 and 53 steps" width="32%"></a>
-  <a href="assets/demo/viewer.png"><img src="assets/demo/viewer.png" alt="Roller Viewer with the four rollouts of one task on the left, step 3 expanded in the middle, and the Inspector on the right" width="32%"></a>
+  <a href="assets/demo/viewer-trajectory.gif"><img src="assets/demo/viewer-trajectory.gif" alt="Step-by-step inspection of one rollout in Roller Viewer: task search, model selection, and the reasoning, tool calls and tool results of the trajectory steps" width="32%"></a>
+  <a href="assets/demo/viewer-models.gif"><img src="assets/demo/viewer-models.gif" alt="One synthetic task compared across two models in Roller Viewer, with benchmark scores" width="32%"></a>
+  <a href="assets/demo/viewer.png"><img src="assets/demo/viewer.png" alt="Roller Viewer with the sample navigator on the left, a user image in the middle, and the Inspector on the right" width="32%"></a>
 </p>
-<p align="center"><sub>Recordings of the built-in Viewer. Left: step-by-step inspection of the reasoning, tool calls and tool results of one rollout. Middle: one task compared across four models. Right: the complete Viewer layout. Select an image to view it at full size.</sub></p>
+<p align="center"><sub>Recordings of the built-in Viewer using synthetic demonstration data. Left: step-by-step inspection of the reasoning, tool calls and tool results of one rollout. Middle: one task compared across four models. Right: the complete Viewer layout. Select an image to view it at full size.</sub></p>
 
 <a id="news"></a>
 
@@ -175,6 +175,18 @@ roller collect \
 
 To compare models, repeat `--model`; each task then runs once per model. To continue an interrupted run, rerun the same command with `--resume`. If a setting recorded in `lock.json` has changed, use a new `--run-name`.
 
+### Recovery, scores and training export
+
+Collection logs progress, ETA and heartbeats to `collect.log`, checks required credentials up front, and stops dispatch after 10 consecutive errors (`--max-consecutive-errors 0` disables this). Use `roller clean RUN_DIR --dry-run` to inspect containers left by dead collectors. Resume supports added tasks/models and compatible patch upgrades.
+
+Benchmark reports separate models and retain failures in their denominators. Failed graders retry in the live container; `--resume --resume-unscored` reruns affected agents after fixing the cause. The Viewer supports English/Chinese, scores, score filters and user images.
+
+```bash
+roller export RUN_DIR --format sft --min-score 0.5 --output training
+```
+
+SFT exports include aligned `sft_index.jsonl` and `sft_segments_index.jsonl` files for task/model/score lookup. HF export detects common credential shapes and writes a residual review report beside the output: `<output>.redaction-report.json`.
+
 ### 4. Viewer
 
 ```bash
@@ -216,6 +228,7 @@ runs/quickstart/
 ├── info.json            settings, progress and total usage
 ├── lock.json            settings compared by --resume
 ├── sft.jsonl            SFT records of successful, uncompacted samples
+├── sft_index.jsonl      task, model and score for each training record
 └── samples/<model>/<index>_<task>/
     ├── trace.jsonl      Harness-native session
     ├── trace_ACTF.json  unified trace: reasoning, tool calls, results, tokens, timing

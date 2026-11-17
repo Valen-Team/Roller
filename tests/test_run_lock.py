@@ -34,6 +34,296 @@ def _request(root: Path, digest: str = "bundle-a") -> RunRequest:
     )
 
 
+def _requests(
+    root: Path,
+    source_indices,
+    models=("proxy/model",),
+    samples: int = 1,
+    timeout: int = 30,
+) -> list[RunRequest]:
+    """Requests in the order of ``build_requests``: task, then model, then sample."""
+
+    requests: list[RunRequest] = []
+    for source_index in source_indices:
+        task = Task(
+            id=f"task-{source_index}", prompts=("hello",), source_index=source_index
+        )
+        for model in models:
+            for sample_index in range(samples):
+                requests.append(
+                    RunRequest(
+                        len(requests),
+                        task,
+                        model,
+                        timeout,
+                        _request(root).bundle,
+                        sample_index=sample_index,
+                        sample_count=samples,
+                    )
+                )
+    return requests
+
+
+class RunLockGrowthTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.path = self.root / "lock.json"
+
+    def lock(self, source_indices, version="0.4.0", execution=None, **options):
+        return build_run_lock(
+            _requests(self.root, source_indices, **options),
+            roller_version=version,
+            execution={"thinking": "high"} if execution is None else execution,
+            model_config=None,
+        )
+
+    def record(self, lock) -> dict:
+        self.path.unlink(missing_ok=True)
+        ensure_run_lock(self.path, lock, resume=False, existing_run=False)
+        return json.loads(self.path.read_text())
+
+    def resume(self, lock, **options):
+        return ensure_run_lock(
+            self.path, lock, resume=True, existing_run=True, **options
+        )
+
+    def assert_mismatch(self, lock, message: str) -> None:
+        before = self.path.read_bytes()
+        with self.assertRaises(FileExistsError) as caught:
+            self.resume(lock)
+        self.assertIn("lock mismatch", str(caught.exception))
+        self.assertIn(message, str(caught.exception))
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_more_tasks_and_models_grow_the_recorded_request_list(self) -> None:
+        recorded = self.record(self.lock(range(2)))
+        grown = self.lock(range(3), models=("proxy/model", "other/model"))
+        # The second recorded request moves from position 1 to position 2.
+        self.assertEqual(
+            [
+                (row["request_index"], row["task_id"], row["model"])
+                for row in grown["requests"][:3]
+            ],
+            [
+                (0, "task-0", "proxy/model"),
+                (1, "task-0", "other/model"),
+                (2, "task-1", "proxy/model"),
+            ],
+        )
+
+        with self.assertLogs("roller.run_lock", "INFO") as logs:
+            decision = self.resume(grown)
+
+        self.assertTrue(decision.reuse_existing_samples)
+        self.assertFalse(decision.created)
+        self.assertEqual(
+            logs.output,
+            ["INFO:roller.run_lock:lock.json now lists 6 requests (2 before)"],
+        )
+        self.assertEqual(
+            json.loads(self.path.read_text()),
+            {**recorded, "requests": grown["requests"]},
+        )
+        saved = self.path.read_bytes(), self.path.stat().st_mtime_ns
+        with self.assertNoLogs("roller.run_lock", "INFO"):
+            self.resume(grown)
+        self.assertEqual((self.path.read_bytes(), self.path.stat().st_mtime_ns), saved)
+        # The grown list is now the recorded one.
+        self.assert_mismatch(
+            self.lock(range(2)),
+            "4 recorded requests are not in the current command; "
+            "first: task-0 | other/model (task index 0)",
+        )
+
+    def test_a_recorded_request_must_stay_in_the_command(self) -> None:
+        self.record(self.lock(range(3)))
+        self.assert_mismatch(
+            self.lock(range(1, 4)),
+            "1 recorded request is not in the current command; "
+            "first: task-0 | proxy/model (task index 0)",
+        )
+        self.assert_mismatch(
+            self.lock(range(1)),
+            "2 recorded requests are not in the current command; "
+            "first: task-1 | proxy/model (task index 1)",
+        )
+        self.assert_mismatch(
+            self.lock(range(3), models=("other/model",)),
+            "3 recorded requests are not in the current command; "
+            "first: task-0 | proxy/model (task index 0)",
+        )
+        # A task that moved in the task list has another sample directory.
+        moved = self.lock(range(3))
+        for row in moved["requests"]:
+            row["source_index"] += 1
+        self.assert_mismatch(
+            moved,
+            "3 recorded requests are not in the current command; "
+            "first: task-0 | proxy/model (task index 0)",
+        )
+
+    def test_the_same_requests_in_another_order_are_accepted(self) -> None:
+        models = ("proxy/model", "other/model")
+        self.record(self.lock(range(2), models=models))
+        reordered = self.lock(range(2), models=models[::-1])
+
+        self.assertTrue(self.resume(reordered).reuse_existing_samples)
+
+        self.assertEqual(
+            json.loads(self.path.read_text())["requests"], reordered["requests"]
+        )
+
+    def test_a_recorded_request_must_stay_equal(self) -> None:
+        self.record(self.lock(range(2)))
+        self.assert_mismatch(
+            self.lock(range(4), timeout=60),
+            "2 recorded requests differ from the current command; "
+            "first: task-0 | proxy/model: timeout_seconds: recorded=30, current=60",
+        )
+        # --samples changes sample_count, and with it the sample directory names.
+        self.assert_mismatch(
+            self.lock(range(2), samples=2),
+            "2 recorded requests differ from the current command; "
+            "first: task-0 | proxy/model: sample_count: recorded=1, current=2",
+        )
+        changed = self.lock(range(3))
+        changed["requests"][1]["task_bundle"]["manifest_digest"] = "bundle-b"
+        self.assert_mismatch(
+            changed,
+            "1 recorded request differs from the current command; "
+            "first: task-1 | proxy/model: task_bundle.manifest_digest: "
+            'recorded="bundle-a", current="bundle-b"',
+        )
+
+        self.record(self.lock(range(1), samples=2))
+        self.assert_mismatch(
+            self.lock(range(1), samples=3),
+            "2 recorded requests differ from the current command; "
+            "first: task-0 | proxy/model | sample 1 of 2: "
+            "sample_count: recorded=2, current=3",
+        )
+
+    def test_settings_are_still_compared_exactly_when_the_run_grows(self) -> None:
+        self.record(self.lock(range(2)))
+        self.assert_mismatch(
+            self.lock(range(4), execution={"thinking": "low"}),
+            '$.execution.thinking: recorded="high", current="low"',
+        )
+
+    def test_resumes_under_another_patch_release_of_the_minor_series(self) -> None:
+        self.record(self.lock(range(2)))
+        saved = self.path.read_bytes(), self.path.stat().st_mtime_ns
+        with self.assertNoLogs("roller.run_lock", "INFO"):
+            self.resume(self.lock(range(2)))
+        for version in ("0.4.3", "0.4.10", "0.4.1.dev2", "0.4.0rc1", "0.4.2+local"):
+            with (
+                self.subTest(version=version),
+                self.assertLogs("roller.run_lock", "INFO") as logs,
+            ):
+                decision = self.resume(self.lock(range(2), version=version))
+                self.assertTrue(decision.reuse_existing_samples)
+                self.assertEqual(
+                    logs.output,
+                    [
+                        "INFO:roller.run_lock:run was created by Roller 0.4.0; "
+                        f"resuming with Roller {version}"
+                    ],
+                )
+                # The lock keeps the version that created the run.
+                self.assertEqual(
+                    (self.path.read_bytes(), self.path.stat().st_mtime_ns), saved
+                )
+        for version in ("0.5.0", "0.5.0rc1", "0.3.9", "0.40.0", "1.4.0"):
+            with self.subTest(version=version):
+                self.assert_mismatch(
+                    self.lock(range(2), version=version),
+                    f"the run was created by Roller 0.4.0 and this is Roller {version}; "
+                    "a run resumes only within its minor series (0.4.x)",
+                )
+
+    def test_dev_and_unparsed_versions(self) -> None:
+        self.record(self.lock(range(1), version="0.5.0.dev1"))
+        self.resume(self.lock(range(1), version="0.5.0"))
+        self.resume(self.lock(range(1), version="0.5.2rc1"))
+        self.assert_mismatch(
+            self.lock(range(1), version="0.6.0.dev1"),
+            "a run resumes only within its minor series (0.5.x)",
+        )
+        # A version without major.minor only matches itself.
+        self.record(self.lock(range(1), version="local"))
+        self.resume(self.lock(range(1), version="local"))
+        self.assert_mismatch(
+            self.lock(range(1), version="0.4.0"),
+            '$.roller_version: recorded="local", current="0.4.0"',
+        )
+
+    def test_a_grown_run_under_a_new_patch_release_keeps_its_version(self) -> None:
+        self.record(self.lock(range(1)))
+        with self.assertLogs("roller.run_lock", "INFO") as logs:
+            self.resume(self.lock(range(2), version="0.4.3"))
+        self.assertEqual(len(logs.output), 2)
+        saved = json.loads(self.path.read_text())
+        self.assertEqual(saved["roller_version"], "0.4.0")
+        self.assertEqual(len(saved["requests"]), 2)
+
+    def test_task_images_grow_with_the_requests(self) -> None:
+        def execution(**digests):
+            return {
+                "thinking": "high",
+                "task_images": {
+                    task: {"image": f"{task}:1", "digest": digest}
+                    for task, digest in digests.items()
+                },
+            }
+
+        self.record(self.lock(range(1), execution=execution(**{"task-0": "sha-0"})))
+        grown = self.lock(
+            range(2), execution=execution(**{"task-0": "sha-0", "task-1": "sha-1"})
+        )
+        self.assert_mismatch(
+            self.lock(
+                range(2),
+                execution=execution(**{"task-0": "rebuilt", "task-1": "sha-1"}),
+            ),
+            '$.execution.task_images.task-0.digest: recorded="sha-0", current="rebuilt"',
+        )
+        self.assert_mismatch(
+            self.lock(range(2), execution=execution(**{"task-1": "sha-1"})),
+            "$.execution.task_images.task-0: missing from current lock",
+        )
+
+        self.resume(grown)
+
+        self.assertEqual(json.loads(self.path.read_text()), grown)
+
+    def test_growth_keeps_the_recorded_encoding_of_the_settings(self) -> None:
+        def execution(port: int, **claude):
+            return {
+                "openclaw": {"network": "host", "gateway_port_start": port},
+                "claude-code": claude,
+            }
+
+        current = self.lock(range(2), execution=execution(18829, config_sha256="new"))
+        historical = self.lock(
+            range(2), execution=execution(18829, settings_fingerprint="old")
+        )
+        recorded = self.lock(
+            range(1), execution=execution(18789, settings_fingerprint="old")
+        )
+        recorded["execution"]["claude-code"]["external_thinking"] = "off"
+        self.path.write_text(json.dumps(recorded), encoding="utf-8")
+        self.assert_mismatch(current, "$.execution.claude-code.config_sha256")
+
+        self.resume(current, compatible_expected=[historical])
+
+        self.assertEqual(
+            json.loads(self.path.read_text()),
+            {**recorded, "requests": current["requests"]},
+        )
+
+
 class RunLockTests(unittest.TestCase):
     def test_disabled_retired_options_are_compared_without_rewriting_old_lock(
         self,

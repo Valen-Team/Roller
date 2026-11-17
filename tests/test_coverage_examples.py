@@ -39,6 +39,7 @@ class CoverageExamplesTests(unittest.TestCase):
         cls.env = {
             **os.environ,
             "PYTHONPATH": str(cls.checkout / "src"),
+            "OPENAI_API_KEY": "roller-test-key",
             "PYTHONDONTWRITEBYTECODE": "1",
             # A maintainer's environment must not leak into generated templates.
             "ROLLER_TEST_CODEX_MODEL": "local-model-must-not-be-published",

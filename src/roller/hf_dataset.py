@@ -34,6 +34,7 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import urlsplit
 
+from roller import export_audit
 from roller.benches.report import SCORE_FILE, read_scores, sample_score
 from roller.collector import CollectionConfig, Collector
 from roller.redaction import REDACTED
@@ -120,6 +121,7 @@ uvx --from roller-agent roller view {name}/runs/{part}
 _CARD_RUN_FILES = """\
 | `runs/<harness>-<model>/info.json` | Run configuration, progress and total usage |
 | `runs/<harness>-<model>/sft.jsonl` | SFT records of the successful samples |
+| `runs/<harness>-<model>/sft_index.jsonl` | Task, model and score for each SFT record |
 | `runs/<harness>-<model>/samples/<model>/<index>_<task>/` | Native session, unified trajectory, SFT record, scores and output files of one sample |
 
 The files of a sample are described in the
@@ -421,12 +423,33 @@ def _copy_file(source: Path, target: Path, rules: Rules, label: str) -> list[str
     target.parent.mkdir(parents=True, exist_ok=True)
     if rules.replace or rules.forbid:
         found: list[str] = []
+        private_key = False
+        detect_keys = any(
+            pattern in export_audit.TOKEN_PATTERNS for pattern, _ in rules.replace
+        )
         try:
             with (
                 source.open(encoding="utf-8", newline="") as reader,
                 target.open("w", encoding="utf-8", newline="") as writer,
             ):
                 for number, line in enumerate(reader, 1):
+                    if detect_keys:
+                        if private_key:
+                            end = re.search(
+                                r"-----END [A-Z0-9 ]*PRIVATE KEY-----", line
+                            )
+                            if end is None:
+                                continue
+                            line = line[end.end() :]
+                            private_key = False
+                        start = re.search(
+                            r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----", line
+                        )
+                        if start and not re.search(
+                            r"-----END [A-Z0-9 ]*PRIVATE KEY-----", line[start.end() :]
+                        ):
+                            private_key = True
+                            line = line[: start.start()] + REDACTED + "\n"
                     for pattern, text in rules.replace:
                         line = pattern.sub(text, line)
                     if any(pattern.search(line) for pattern in rules.forbid):
@@ -822,7 +845,7 @@ def _parts(run_dir: Path) -> dict[str, list[Path]]:
 def _rewrite_run_files(run_root: Path, had_report: bool) -> None:
     """Make the run-level files of a part describe the samples it holds.
 
-    ``info.json``, ``sft.jsonl`` and ``sft_segments.jsonl`` are written by the
+    ``info.json``, ``sft.jsonl``, ``sft_index.jsonl`` and ``sft_segments.jsonl`` are written by the
     code that writes them during collection, and ``bench-report.json`` by the
     code of ``roller bench report``.
     """
@@ -969,7 +992,13 @@ def export_run(
     )
     run_dir, output = run_dir.resolve(), output.resolve()
     extra = rules or Rules()
-    rules = Rules(derived.replace + extra.replace, extra.exclude, extra.forbid)
+    rules = Rules(
+        derived.replace
+        + (export_audit.replacements() if redact else ())
+        + extra.replace,
+        extra.exclude,
+        extra.forbid,
+    )
     parts = _parts(run_dir)
     shared = [
         path
@@ -979,6 +1008,8 @@ def export_run(
         and output != path
         and output not in path.parents
         and (run_dir / "samples") not in path.parents
+        and path.relative_to(run_dir).parts[0] not in {"atif", "hf", "sft"}
+        and not path.name.endswith(".redaction-report.json")
     ]
     with contextlib.ExitStack() as stack:
         # The sessions and the tables are built from redacted copies. Without
@@ -1043,4 +1074,6 @@ def export_run(
         _write_card(
             output, run_dir.name, next(iter(parts)), stats_table(_tables(output)), runs
         )
+    if output.is_dir():
+        export_audit.write_report(output)
     return rows, redaction

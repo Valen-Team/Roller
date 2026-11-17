@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import hashlib
 import io
 import json
@@ -20,6 +21,7 @@ from roller.harness_registry import HARNESS_NAMES as HARNESSES
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
 from roller.integrity import _validate_output_files, validate_resumable_sample
 from roller.models import HarnessResult, RunRequest, Task, UserSimulatorSpec
+from roller.sft import actf_to_sft
 
 
 class RecordingSession(InteractiveSession):
@@ -163,6 +165,260 @@ class CliResumeCompatibilityTests(unittest.TestCase):
         self.assertEqual(self.invoke(args), 0)
         return args, self.root / "runs" / name
 
+    def grow(self, name, **row):
+        """Four Codex tasks whose model comes from ``--model``."""
+
+        tasks = self.root / f"{name}.jsonl"
+        tasks.write_text(
+            "".join(
+                json.dumps(
+                    {"id": f"task-{i}", "harness": "codex", "prompt": f"say {i}", **row}
+                )
+                + "\n"
+                for i in range(4)
+            )
+        )
+        args = [
+            "collect",
+            "--tasks",
+            str(tasks),
+            "--api-base",
+            "http://example.test/v1",
+            "--api-key-env",
+            "TEST_KEY",
+            "--output",
+            str(self.root / "runs"),
+            "--run-name",
+            name,
+        ]
+        return args, self.root / "runs" / name
+
+    @staticmethod
+    def run_samples(run):
+        info = json.loads((run / "info.json").read_text())
+        return [
+            (row["request_index"], row["path"], row["status"])
+            for row in info["samples"]
+        ]
+
+    @staticmethod
+    def sft_prompts(run):
+        return [
+            next(
+                m["content"]
+                for m in json.loads(line)["messages"]
+                if m["role"] == "user"
+            )
+            for line in (run / "sft.jsonl").read_text().splitlines()
+        ]
+
+    def test_resume_grows_a_run_to_more_tasks(self):
+        args, run = self.grow("more-tasks")
+        self.assertEqual(self.invoke([*args, "--model", "m1", "--limit", "2"]), 0)
+        finished = self.snapshot(run / "samples")
+        recorded = json.loads((run / "lock.json").read_text())
+
+        with self.assertLogs("roller.run_lock", "INFO") as logs:
+            self.assertEqual(
+                self.invoke([*args, "--model", "m1", "--limit", "4"], resume=True), 0
+            )
+
+        self.assertIn("lock.json now lists 4 requests (2 before)", logs.output[0])
+        # Each task ran once: the finished samples were not run again.
+        self.assertEqual(self.calls, [("codex", f"task-{index}") for index in range(4)])
+        samples = self.snapshot(run / "samples")
+        self.assertEqual({name: samples[name] for name in finished}, finished)
+        self.assertEqual(
+            self.run_samples(run),
+            [
+                (0, "samples/m1/00000000_task-0", "skipped"),
+                (1, "samples/m1/00000001_task-1", "skipped"),
+                (2, "samples/m1/00000002_task-2", "ok"),
+                (3, "samples/m1/00000003_task-3", "ok"),
+            ],
+        )
+        self.assertEqual(self.sft_prompts(run), [f"say {index}" for index in range(4)])
+        lock = json.loads((run / "lock.json").read_text())
+        self.assertEqual(lock["requests"][:2], recorded["requests"])
+        self.assertEqual(
+            [row["task_id"] for row in lock["requests"]],
+            [f"task-{index}" for index in range(4)],
+        )
+        self.assertEqual({**lock, "requests": recorded["requests"]}, recorded)
+
+    def test_resume_adds_a_model_and_keeps_finished_samples_in_place(self):
+        args, run = self.grow("more-models")
+        self.assertEqual(self.invoke([*args, "--model", "m1", "--limit", "2"]), 0)
+        finished = self.snapshot(run / "samples")
+        both = [*args, "--model", "m1", "--model", "m2", "--limit", "2"]
+
+        self.assertEqual(self.invoke(both, resume=True), 0)
+
+        self.assertEqual(len(self.calls), 4)
+        # Requests are ordered by task, then model: the second m1 sample moves
+        # from position 1 to position 2 and stays in its directory.
+        expected = [
+            (0, "samples/m1/00000000_task-0", "skipped"),
+            (1, "samples/m2/00000000_task-0", "ok"),
+            (2, "samples/m1/00000001_task-1", "skipped"),
+            (3, "samples/m2/00000001_task-1", "ok"),
+        ]
+        self.assertEqual(self.run_samples(run), expected)
+        self.assertEqual(self.sft_prompts(run), ["say 0", "say 0", "say 1", "say 1"])
+        samples = self.snapshot(run / "samples")
+        self.assertEqual(
+            [name for name in finished if samples[name] != finished[name]],
+            ["m1/00000001_task-1/info.json"],
+        )
+        for index, sample, _ in expected:
+            info = json.loads((run / sample / "info.json").read_text())
+            self.assertEqual((info["request_index"], info["status"]), (index, "ok"))
+        self.assertEqual(
+            [
+                (row["request_index"], row["task_id"], row["model"])
+                for row in json.loads((run / "lock.json").read_text())["requests"]
+            ],
+            [
+                (0, "task-0", "m1"),
+                (1, "task-0", "m2"),
+                (2, "task-1", "m1"),
+                (3, "task-1", "m2"),
+            ],
+        )
+
+        # The grown run resumes like any other.
+        self.assertEqual(self.invoke(both, resume=True), 0)
+        self.assertEqual(len(self.calls), 4)
+        self.assertEqual(
+            self.run_samples(run),
+            [(index, sample, "skipped") for index, sample, _ in expected],
+        )
+        self.assertEqual(self.snapshot(run / "samples"), samples)
+
+    def test_resume_grows_a_run_whose_tasks_have_their_own_images(self):
+        args, run = self.grow("task-images", runtime={"image": "task-env:1"})
+        with patch(
+            "roller.cli.prepare_task_images",
+            side_effect=lambda binary, requests, images, **options: {
+                request.task.id: f"sha256:{request.task.id}" for request in requests
+            },
+        ):
+            self.assertEqual(self.invoke([*args, "--model", "m1", "--limit", "1"]), 0)
+            self.assertEqual(
+                self.invoke([*args, "--model", "m1", "--limit", "2"], resume=True), 0
+            )
+        self.assertEqual(self.calls, [("codex", "task-0"), ("codex", "task-1")])
+        self.assertEqual(
+            json.loads((run / "lock.json").read_text())["execution"]["task_images"],
+            {
+                f"task-{index}": {
+                    "image": "task-env:1",
+                    "digest": f"sha256:task-{index}",
+                }
+                for index in range(2)
+            },
+        )
+
+    def test_resume_still_rejects_removed_or_changed_requests(self):
+        args, run = self.grow("fewer")
+        models = ["--model", "m1", "--model", "m2"]
+        self.assertEqual(self.invoke([*args, *models]), 0)
+        before = self.snapshot(run)
+        for flags, message in (
+            (
+                [*models, "--limit", "3"],
+                "2 recorded requests are not in the current command; "
+                "first: task-3 | m1 (task index 3)",
+            ),
+            (
+                ["--model", "m1"],
+                "4 recorded requests are not in the current command; "
+                "first: task-0 | m2 (task index 0)",
+            ),
+            (
+                [*models, "--samples", "2"],
+                "8 recorded requests differ from the current command; "
+                "first: task-0 | m1: sample_count: recorded=1, current=2",
+            ),
+            (
+                [*models, "--timeout", "999"],
+                "8 recorded requests differ from the current command; "
+                "first: task-0 | m1: timeout_seconds: recorded=600, current=999",
+            ),
+            ([*models, "--thinking", "high"], "$.execution.codex.reasoning_effort"),
+        ):
+            with self.subTest(flags=flags):
+                with self.assertRaises(FileExistsError) as caught:
+                    self.invoke([*args, *flags], resume=True)
+                self.assertIn("lock mismatch", str(caught.exception))
+                self.assertIn(message, str(caught.exception))
+                self.assertEqual(self.snapshot(run), before)
+        self.assertEqual(len(self.calls), 8)
+
+    def test_resume_accepts_another_patch_release_only(self):
+        args, run = self.seed("patch-release", "codex")
+        lock = run / "lock.json"
+        before = lock.read_bytes(), lock.stat().st_mtime_ns
+        created = json.loads(lock.read_text())["roller_version"]
+        major, minor = (int(part) for part in created.split(".")[:2])
+        patch_release = f"{major}.{minor}.99"
+
+        with (
+            patch("roller.cli.__version__", patch_release),
+            self.assertLogs("roller.run_lock", "INFO") as logs,
+        ):
+            self.assertEqual(self.invoke(args, resume=True), 0)
+
+        self.assertEqual(
+            logs.output,
+            [
+                f"INFO:roller.run_lock:run was created by Roller {created}; "
+                f"resuming with Roller {patch_release}"
+            ],
+        )
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(
+            json.loads((run / "info.json").read_text())["summary"]["skipped"], 1
+        )
+        self.assertEqual((lock.read_bytes(), lock.stat().st_mtime_ns), before)
+
+        with (
+            patch("roller.cli.__version__", f"{major}.{minor + 1}.0"),
+            self.assertRaisesRegex(
+                FileExistsError,
+                f"created by Roller {created} and this is Roller {major}.{minor + 1}.0; "
+                "a run resumes only within its minor series",
+            ),
+        ):
+            self.invoke(args, resume=True)
+        self.assertEqual((lock.read_bytes(), lock.stat().st_mtime_ns), before)
+
+    def test_resume_rebuilds_sft_after_the_projection_changed(self):
+        args, run = self.seed("projection", "codex")
+        sample = next(run.glob("samples/*/*"))
+        raw = (sample / "trace.jsonl").stat().st_mtime_ns
+
+        def later_projection(trajectory):
+            record = actf_to_sft(trajectory)
+            record["messages"][0]["content"] = "written by a later patch release"
+            return record
+
+        with patch("roller.integrity.actf_to_sft", side_effect=later_projection):
+            self.assertEqual(self.invoke(args, resume=True), 0)
+
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual((sample / "trace.jsonl").stat().st_mtime_ns, raw)
+        record = json.loads((sample / "trace_SFT.json").read_text())
+        self.assertEqual(
+            record["messages"][0]["content"], "written by a later patch release"
+        )
+        self.assertEqual(
+            [json.loads(line) for line in (run / "sft.jsonl").read_text().splitlines()],
+            [record],
+        )
+        summary = json.loads((run / "info.json").read_text())["summary"]
+        self.assertEqual((summary["ok"], summary["skipped"]), (0, 1))
+
     def test_resume_can_verify_output_digests(self):
         args, _ = self.seed("verify-outputs", "codex")
         with self.assertRaisesRegex(ValueError, "requires --resume"):
@@ -209,7 +465,7 @@ class CliResumeCompatibilityTests(unittest.TestCase):
         return {
             str(path.relative_to(root)): (path.read_bytes(), path.stat().st_mtime_ns)
             for path in root.rglob("*")
-            if path.is_file()
+            if path.is_file() and path.name != "collect.log"
         }
 
     def assert_disabled_legacy_run_resumes(self, args, run):
@@ -595,12 +851,105 @@ class MixedResumeTests(unittest.TestCase):
                 self.assert_only_rerun(request)
                 self.assertTrue(wire.is_file())
 
-    def test_corrupt_sft_still_reruns_each_harness_on_either_side(self):
+    def test_stale_sft_is_rebuilt_from_the_trace_on_either_side(self):
+        self.collect()
+        dataset = (self.root / "sft.jsonl").read_bytes()
+        stale = (
+            lambda path: path.write_text('{"messages":[],"tools":[]}\n'),
+            lambda path: path.write_text('{"messages":[],"tools":[],"extra":1}\n'),
+            lambda path: path.write_text("{"),
+            lambda path: path.unlink(),
+        )
+        originals = {}
+        for index, (_, path, _) in enumerate(self.participants()):
+            sft = path / "trace_SFT.json"
+            originals[sft] = sft.read_bytes()
+            stale[index % len(stale)](sft)
+
+        with self.assertLogs("roller.collector", "INFO") as logs:
+            self.assert_reused()
+
+        for sft, original in originals.items():
+            self.assertEqual(sft.read_bytes(), original)
+        self.assertEqual((self.root / "sft.jsonl").read_bytes(), dataset)
+        # One line for each sample, naming the files of both participants.
+        rebuilt = [line for line in logs.output if "rebuilt" in line]
+        self.assertEqual(len(rebuilt), len(self.requests))
+        self.assertIn(
+            "INFO:roller.collector:[openclaw--codex | provider/model] rebuilt "
+            "trace_SFT.json, user_simulator/trace_SFT.json from the trace; "
+            "it differed from the SFT this Roller version derives",
+            rebuilt,
+        )
+
+    def test_invalid_actf_still_reruns_a_sample_with_a_stale_sft(self):
         self.collect()
         for request, path, _ in self.participants():
+            if not request.task.id.startswith("codex--"):
+                continue
             with self.subTest(task=request.task.id, participant=path.name):
                 (path / "trace_SFT.json").write_text('{"messages":[],"tools":[]}\n')
+                actf_path = path / "trace_ACTF.json"
+                actf = json.loads(actf_path.read_text())
+                actf["steps"] = []
+                actf_path.write_text(json.dumps(actf))
                 self.assert_only_rerun(request)
+
+    def test_strict_validation_still_reports_a_stale_sft(self):
+        self.requests = self.requests[:1]
+        self.collect()
+        request = self.requests[0]
+        sample = self.collector()._sample_dir(request)
+        info = json.loads((sample / "info.json").read_text())
+        sft = sample / "trace_SFT.json"
+        original = sft.read_bytes()
+        options = {"require_wire_trace": True, "require_cache_trace": True}
+        self.assertEqual(
+            validate_resumable_sample(sample, request, info, **options), []
+        )
+        sft.write_text('{"messages":[],"tools":[]}\n')
+
+        with self.assertRaisesRegex(ValueError, "canonical ACTF projection"):
+            validate_resumable_sample(sample, request, info, **options)
+        self.assertEqual(
+            validate_resumable_sample(
+                sample, request, info, rebuild_sft=True, **options
+            ),
+            [sft],
+        )
+        self.assertEqual(sft.read_bytes(), original)
+
+    def test_a_reused_sample_takes_its_position_in_the_current_requests(self):
+        self.requests = self.requests[:3]
+        self.collect()
+        self.requests = [
+            dataclasses.replace(request, index=index)
+            for index, request in enumerate(reversed(self.requests))
+        ]
+        before = list(self.calls)
+
+        results = self.collect(True)
+
+        self.assertEqual(self.calls, before)
+        expected = [
+            (request.index, request.task.id, "skipped") for request in self.requests
+        ]
+        self.assertEqual(
+            [(r["request_index"], r["task_id"], r["status"]) for r in results],
+            expected,
+        )
+        run = json.loads((self.root / "info.json").read_text())
+        self.assertEqual(
+            [(r["request_index"], r["task_id"], r["status"]) for r in run["samples"]],
+            expected,
+        )
+        for request in self.requests:
+            info = json.loads(
+                (self.collector()._sample_dir(request) / "info.json").read_text()
+            )
+            self.assertEqual(
+                (info["request_index"], info["status"]), (request.index, "ok")
+            )
 
     def test_disabled_or_pruned_cache_traces_do_not_block_resume(self):
         for self.keep_aux, self.capture_cache in ((True, False), (False, True)):

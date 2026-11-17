@@ -18,6 +18,7 @@ from roller.benches.base import (
 from roller.benches.qwenclaw.grader_runtime import (
     GRADE_TIMEOUT_SECONDS,
     JUDGE_ENV_NAMES,
+    JUDGE_REQUIRED_ENV,
     OUTPUT_DIR_NAME,
     WORKSPACE_CONTAINER_PATH,
     QwenClawGradedHarness,
@@ -133,7 +134,9 @@ class QwenClawBenchAdapter(BenchAdapter):
             )
         return rows
 
-    def wrap_harness(self, harness, binding, *, grading_semaphore=None):
+    def wrap_harness(
+        self, harness, binding, *, grading_semaphore=None, grader_retries=0
+    ):
         if binding.grade is None:
             return harness
         grade = replace(
@@ -143,7 +146,14 @@ class QwenClawBenchAdapter(BenchAdapter):
             harness,
             replace(binding, grade=grade),
             grading_semaphore=grading_semaphore,
+            grader_retries=grader_retries,
         )
+
+    def required_env(self, binding: BenchBinding) -> tuple[tuple[str, ...], ...]:
+        # ``bench.grade.env`` lists every name the judge reads, alternatives and
+        # optional ones included, so it cannot serve as the required set.
+        judged = binding.metadata.get("grading_type") in {"llm_judge", "hybrid"}
+        return JUDGE_REQUIRED_ENV if judged else ()
 
     def aggregate(self, samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
         return aggregate_samples(samples)

@@ -46,11 +46,11 @@ Roller 提供以下能力：
 - **Viewer。** 内置只读 Web 界面，用于浏览 task、对比模型和查看每个 step。
 
 <p align="center">
-  <a href="assets/demo/viewer-trajectory.gif"><img src="assets/demo/viewer-trajectory.gif" alt="在 Roller Viewer 中逐步查看单个 rollout：搜索 task、选择模型，并展开 6 个 step 的 reasoning、工具调用与工具结果" width="32%"></a>
-  <a href="assets/demo/viewer-models.gif"><img src="assets/demo/viewer-models.gif" alt="Roller Viewer 中同一 task 在 4 个模型间的对比，步数分别为 3、13、27、53" width="32%"></a>
-  <a href="assets/demo/viewer.png"><img src="assets/demo/viewer.png" alt="Roller Viewer：左侧为同一 task 的 4 个 rollout，中间展开第 3 个 step，右侧为 Inspector" width="32%"></a>
+  <a href="assets/demo/viewer-trajectory.gif"><img src="assets/demo/viewer-trajectory.gif" alt="在 Roller Viewer 中逐步查看单个 rollout：搜索 task、选择模型，并展开各个 step 的 reasoning、工具调用与工具结果" width="32%"></a>
+  <a href="assets/demo/viewer-models.gif"><img src="assets/demo/viewer-models.gif" alt="Roller Viewer 中合成 task 在两个模型间的得分与轨迹对比" width="32%"></a>
+  <a href="assets/demo/viewer.png"><img src="assets/demo/viewer.png" alt="Roller Viewer：左侧为样本导航，中间显示用户消息图片，右侧为 Inspector" width="32%"></a>
 </p>
-<p align="center"><sub>以上内容录制自内置 Viewer。左：逐步查看单个 rollout 的 reasoning、工具调用和工具结果；中：同一 task 在 4 个模型间的对比；右：Viewer 完整界面。点击图片可查看原图。</sub></p>
+<p align="center"><sub>以上内容使用合成演示数据录制自内置 Viewer。左：逐步查看单个 rollout 的 reasoning、工具调用和工具结果；中：同一 task 在两个模型间的对比；右：Viewer 完整界面。点击图片可查看原图。</sub></p>
 
 <a id="news"></a>
 
@@ -175,6 +175,18 @@ roller collect \
 
 如需对比多个模型，可重复指定 `--model`，每个 task 将对每个模型各执行一次。运行中断后，在原命令中添加 `--resume` 即可继续。若 `lock.json` 中记录的配置发生变化，应使用新的 `--run-name`。
 
+### 恢复、评分与训练导出
+
+采集将进度、ETA 和心跳写入 `collect.log`，提前检查必要凭据；连续 10 个 error 后停止派发（`--max-consecutive-errors 0` 关闭熔断）。用 `roller clean RUN_DIR --dry-run` 检查已退出采集进程的残留容器。Resume 支持增加任务、模型和兼容补丁升级。
+
+Benchmark 报告按模型分开，失败样本仍计入分母。评分器失败先在存活容器内重试；修复原因后可用 `--resume --resume-unscored` 重跑对应 agent。Viewer 支持中英文、得分筛选排序和用户消息图片。
+
+```bash
+roller export RUN_DIR --format sft --min-score 0.5 --output training
+```
+
+SFT 导出附带逐行对应的 `sft_index.jsonl`、`sft_segments_index.jsonl`，供查询任务、模型和得分。HF 导出检测常见凭据形态，并在输出目录旁写入残留审阅报告 `<output>.redaction-report.json`。
+
 ### 4. 查看结果
 
 ```bash
@@ -216,6 +228,7 @@ runs/quickstart/
 ├── info.json            配置、进度和总用量
 ├── lock.json            --resume 比对的配置
 ├── sft.jsonl            成功且未压缩的 sample 的 SFT 记录
+├── sft_index.jsonl      每条训练记录对应的任务、模型与得分
 └── samples/<model>/<index>_<task>/
     ├── trace.jsonl      Harness 原生 session
     ├── trace_ACTF.json  统一轨迹：reasoning、工具调用、结果、token、耗时

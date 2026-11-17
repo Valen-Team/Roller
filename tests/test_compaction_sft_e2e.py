@@ -277,8 +277,22 @@ def test_three_context_windows_export_aggregate_and_resume(
     segment.write_text(json.dumps(corrupted), encoding="utf-8")
     with pytest.raises(ValueError, match="does not match captured Call context"):
         validate_resumable_sample(sample, request, result)
+    # Resume rebuilds a segment from the captured Calls instead of rerunning.
+    assert validate_resumable_sample(sample, request, result, rebuild_sft=True) == [
+        segment
+    ]
+    assert segment.read_text() == original
+    assert validate_resumable_sample(sample, request, result) == []
+    # Segment metadata is recorded in info.json and is not rebuilt.
+    moved = json.loads(json.dumps(result))
+    moved["trajectory"]["sft_segments"][1]["first_call_id"] = "another-call"
+    with pytest.raises(ValueError, match="metadata does not match"):
+        validate_resumable_sample(sample, request, moved, rebuild_sft=True)
+    segment.unlink()
+    with pytest.raises(ValueError, match="files do not match metadata"):
+        validate_resumable_sample(sample, request, result, rebuild_sft=True)
     segment.write_text(original, encoding="utf-8")
-    validate_resumable_sample(sample, request, result)
+    assert validate_resumable_sample(sample, request, result, rebuild_sft=True) == []
 
 
 @pytest.mark.parametrize("harness", HARNESSES)

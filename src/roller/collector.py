@@ -8,21 +8,23 @@ import math
 import queue
 import re
 import shutil
+import signal
 import threading
 import time
 from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from roller.benches.report import brief_reason, grading_failure
 from roller.capture import (
-    _safe_file,
     read_jsonl,
     recover_capture_retention,
     validate_capture,
 )
+from roller.cleanup import remove_own_containers
 from roller.compaction_sft import (
     SFT_SEGMENTS_DIR,
     export_compaction_segments,
@@ -30,6 +32,7 @@ from roller.compaction_sft import (
 )
 from roller.harness_registry import allows_raw_only_actf
 from roller.harnesses.base import Harness
+from roller.harnesses.docker import begin_collection
 from roller.integrity import (
     has_legacy_claude_sidechain,
     keeps_thinking,
@@ -37,14 +40,10 @@ from roller.integrity import (
     validate_resumable_sample,
 )
 from roller.models import HarnessResult, RunRequest
-from roller.sft import SFTConversionError, validate_sft_record, write_sft
+from roller.sft import SFTConversionError, write_sft
+from roller.sft_dataset import write_sft_dataset
 from roller.storage import atomic_write_json, safe_component, write_jsonl
-from roller.trajectory_audit import (
-    SEGMENTED_SFT_REASON,
-    record_training_audits,
-    sft_exclusion_reason,
-    training_summary,
-)
+from roller.trajectory_audit import record_training_audits, training_summary
 
 logger = logging.getLogger(__name__)
 # New factories may inspect the request to select a task-level harness.  The
@@ -52,6 +51,8 @@ logger = logging.getLogger(__name__)
 HarnessFactory = Callable[..., Harness]
 RUN_CHECKPOINT_RESULT_INTERVAL = 25
 RUN_CHECKPOINT_TIME_INTERVAL_SECONDS = 30.0
+# Silence after which a run reports the rollouts it is still waiting for.
+HEARTBEAT_SECONDS = 60.0
 
 
 def _clear_sft_segments(sample_dir: Path) -> None:
@@ -64,6 +65,39 @@ def _clear_sft_segments(sample_dir: Path) -> None:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def error_line(error: object, limit: int = 300) -> str:
+    """The first line of an error, short enough for one log line."""
+
+    text = str(error or "").strip()
+    line = text.splitlines()[0].strip() if text else "no error message"
+    return line if len(line) <= limit else line[: limit - 3] + "..."
+
+
+def failure_groups(
+    results: list[dict[str, Any]], limit: int = 5
+) -> list[tuple[int, str, str]]:
+    """Failed results by reason, most frequent first: (count, reason, example task)."""
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for result in results:
+        if result.get("status") in {"error", "timeout"}:
+            # Ids, ports and counts differ between rollouts that fail alike.
+            key = re.sub(r"[0-9a-f]{8,}|\d+", "#", error_line(result.get("error")))
+            groups.setdefault(key, []).append(result)
+    return [
+        (len(group), error_line(group[0].get("error")), str(group[0].get("task_id")))
+        for group in sorted(groups.values(), key=len, reverse=True)[:limit]
+    ]
+
+
+def _duration(seconds: float) -> str:
+    minutes, seconds = divmod(int(seconds), 60)
+    if not minutes:
+        return f"{seconds}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m" if hours else f"{minutes}m{seconds:02d}s"
 
 
 def _remove_path(path: Path) -> None:
@@ -158,6 +192,10 @@ class CollectionConfig:
     retry_backoff: float = 0.0
     # On Resume, reread recorded output files and compare their SHA-256.
     verify_outputs: bool = False
+    # Stop the run after this many rollouts in a row end in error; 0 never stops.
+    max_consecutive_errors: int = 0
+    # On Resume, rerun bench samples whose agent finished but whose grading failed.
+    resume_unscored: bool = False
 
     def __post_init__(self) -> None:
         if self.parallel < 1:
@@ -168,6 +206,16 @@ class CollectionConfig:
             raise ValueError("launch_interval must be a finite number of seconds >= 0")
         if not math.isfinite(self.retry_backoff) or self.retry_backoff < 0:
             raise ValueError("retry_backoff must be a finite number of seconds >= 0")
+        if self.max_consecutive_errors < 0:
+            raise ValueError("max_consecutive_errors cannot be negative")
+
+
+class CollectionStopped(Exception):
+    """The run stopped before every rollout ran; it is checkpointed for Resume."""
+
+    def __init__(self, message: str, exit_code: int) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
 
 
 class LaunchCancelled(Exception):
@@ -278,7 +326,7 @@ class Collector:
                 )
                 return None
         try:
-            validate_resumable_sample(
+            rebuilt = validate_resumable_sample(
                 sample_dir,
                 request,
                 payload,
@@ -287,6 +335,7 @@ class Collector:
                     self.config.keep_aux_traces and self.config.capture_cache_trace
                 ),
                 verify_output_sha256=self.config.verify_outputs,
+                rebuild_sft=True,
             )
         except ValueError as exc:
             logger.info(
@@ -296,6 +345,26 @@ class Collector:
                 exc,
             )
             return None
+        if self.config.resume_unscored and (reason := grading_failure(payload)):
+            logger.info(
+                "[%s | %s] grading failed (%s); rerunning",
+                request.task.id,
+                request.model,
+                brief_reason(reason),
+            )
+            return None
+        if rebuilt:
+            logger.info(
+                "[%s | %s] rebuilt %s from the trace; it differed from the SFT "
+                "this Roller version derives",
+                request.task.id,
+                request.model,
+                ", ".join(path.relative_to(sample_dir).as_posix() for path in rebuilt),
+            )
+        if payload.get("request_index") != request.index:
+            # The run grew: the sample takes its position in the current list.
+            payload["request_index"] = request.index
+            atomic_write_json(info_path, payload)
         resumed = dict(payload)
         resumed["status"] = "skipped"
         resumed["resumed_from_status"] = "ok"
@@ -519,9 +588,10 @@ class Collector:
         atomic_write_json(sample_dir / "info.json", result)
         return result
 
-    def _run_one(self, request: RunRequest, worker_slot: int) -> dict[str, Any]:
-        sample_dir = self._sample_dir(request)
-        resumed = self._load_resumable(sample_dir, request)
+    def _resumed(self, request: RunRequest) -> dict[str, Any] | None:
+        """The stored result of a rollout that an earlier invocation completed."""
+
+        resumed = self._load_resumable(self._sample_dir(request), request)
         if resumed is not None:
             resumed.update(
                 {
@@ -534,15 +604,19 @@ class Collector:
                     "model_label": request.display_model,
                 }
             )
-            logger.info(
+            logger.debug(
                 "[%s | %s] already complete; skipping", request.task.id, request.model
             )
-            return resumed
+        return resumed
 
+    def _run_one(self, request: RunRequest, worker_slot: int) -> dict[str, Any]:
+        sample_dir = self._sample_dir(request)
         # Wait before touching the sample directory, so a rollout cancelled
         # here leaves nothing behind, like a request that never left the queue.
         if not self._launch_gate.wait_turn():
             raise LaunchCancelled(f"{request.task.id}: run interrupted before launch")
+        with self._running_lock:
+            self._running[request.index] = (request, time.monotonic())
         if sample_dir.exists():
             shutil.rmtree(sample_dir)
         sample_dir.mkdir(parents=True, exist_ok=True)
@@ -555,10 +629,11 @@ class Collector:
                 backoff = self.config.retry_backoff * 2 ** (attempt - 2)
                 if backoff:
                     logger.warning(
-                        "[%s | %s] attempt %d failed; waiting %gs before retrying",
+                        "[%s | %s] attempt %d failed: %s; waiting %gs before retrying",
                         request.task.id,
                         request.model,
                         attempt - 1,
+                        error_line(final.error),
                         backoff,
                     )
                 # The backoff runs first, so the launch turn is taken when the
@@ -574,12 +649,14 @@ class Collector:
                         attempt - 1,
                     )
                     break
-                logger.warning(
-                    "[%s | %s] attempt %d failed; retrying",
-                    request.task.id,
-                    request.model,
-                    attempt - 1,
-                )
+                if not backoff:
+                    logger.warning(
+                        "[%s | %s] attempt %d failed: %s; retrying",
+                        request.task.id,
+                        request.model,
+                        attempt - 1,
+                        error_line(final.error),
+                    )
             harness = self._make_harness(worker_slot, request)
             harness_name = getattr(harness, "name", "unknown")
             attempt_start = time.perf_counter()
@@ -603,9 +680,19 @@ class Collector:
             if final.status == "ok":
                 break
 
-        return self._finalize_sample(
+        result = self._finalize_sample(
             request, sample_dir, harness_name, final, attempt_rows, started_at
         )
+        if result["status"] != "ok":
+            logger.warning(
+                "[%s | %s] %s after %d attempt(s): %s",
+                request.task.id,
+                request.model,
+                result["status"],
+                len(attempt_rows),
+                error_line(result["error"]),
+            )
+        return result
 
     @staticmethod
     def _usage_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -698,65 +785,11 @@ class Collector:
         atomic_write_json(info_path, info)
 
     def _write_sft_dataset(self, results: list[dict[str, Any]]) -> None:
-        def rows(segmented: bool) -> Iterator[dict[str, Any]]:
-            for result in results:
-                reason = sft_exclusion_reason(result)
-                if reason is not None and reason != SEGMENTED_SFT_REASON:
-                    continue
-                trajectory = result.get("trajectory") or {}
-                segments = trajectory.get("sft_segments") or []
-                sample_dir = self._sample_dir_from_result(result)
-                paths = []
-                for item in segments:
-                    relative = item.get("path") if isinstance(item, dict) else None
-                    parts = Path(relative).parts if isinstance(relative, str) else ()
-                    if (
-                        len(parts) != 2
-                        or parts[0] != SFT_SEGMENTS_DIR
-                        or not parts[1].endswith(".json")
-                    ):
-                        raise RuntimeError(f"invalid SFT segment path: {relative!r}")
-                    try:
-                        paths.append(_safe_file(sample_dir, relative))
-                    except ValueError as exc:
-                        raise RuntimeError(
-                            f"cannot aggregate SFT segment {relative}: {exc}"
-                        ) from exc
-                if not paths:
-                    paths = [sample_dir / "trace_SFT.json"]
-                for path in paths:
-                    try:
-                        row = json.loads(path.read_text(encoding="utf-8"))
-                    except (OSError, json.JSONDecodeError) as exc:
-                        raise RuntimeError(
-                            f"cannot aggregate SFT sample {path}: {exc}"
-                        ) from exc
-                    if not isinstance(row, dict):
-                        raise RuntimeError(f"invalid SFT sample shape: {path}")
-                    try:
-                        validate_sft_record(row)
-                    except ValueError as exc:
-                        raise RuntimeError(
-                            f"invalid SFT sample shape ({exc}): {path}"
-                        ) from exc
-                    # Keep masked segments separate from legacy linear records.
-                    if bool(segments) == segmented:
-                        if not segmented and "target_start_index" in row:
-                            raise RuntimeError(
-                                f"legacy SFT record has a target mask: {path}"
-                            )
-                        yield row
-
-        write_jsonl(self.run_dir / "sft.jsonl", rows(False))
-        segment_dataset = self.run_dir / "sft_segments.jsonl"
-        if any(
-            isinstance(r.get("trajectory"), dict)
-            and r["trajectory"].get("sft_segments")
-            for r in results
-        ):
-            write_jsonl(segment_dataset, rows(True))
-        else:
-            segment_dataset.unlink(missing_ok=True)
+        write_sft_dataset(
+            self.run_dir,
+            self.run_dir,
+            [(self._sample_dir_from_result(result), result) for result in results],
+        )
 
         def calls() -> Iterator[dict[str, Any]]:
             for result in results:
@@ -791,6 +824,9 @@ class Collector:
         self._write_run_info([], total_requests=total_requests, state="running")
         # Rebuilt per collect(): an interrupt cancels the gate for good.
         self._launch_gate = _LaunchGate(self.config.launch_interval)
+        # Launched rollouts and when they started, by request index.
+        self._running: dict[int, tuple[RunRequest, float]] = {}
+        self._running_lock = threading.Lock()
         slots: queue.Queue[int] = queue.Queue()
         for slot in range(self.config.parallel):
             slots.put(slot)
@@ -856,35 +892,199 @@ class Collector:
             checkpoint_time = now
             return ordered
 
+        # Workers run even at parallel=1 so an interrupt lands here, never
+        # inside a Harness that would then skip its container cleanup.
+        pool = ThreadPoolExecutor(
+            max_workers=self.config.parallel, thread_name_prefix="roller"
+        )
+        futures: dict[Future[dict[str, Any]], RunRequest] = {}
+        # Finished futures and received signal numbers, in order of arrival.
+        events: queue.SimpleQueue[Future[dict[str, Any]] | int] = queue.SimpleQueue()
+        handlers: dict[int, Any] = {}
+        # Raised once the running rollouts are dealt with; set by an interrupt,
+        # a termination signal or too many consecutive errors.
+        stop: BaseException | None = None
+        abandon = False  # running rollouts lost their containers; do not wait
+
+        def stop_launching() -> int:
+            # Queued requests never start; running ones still finalize.
+            # Workers still waiting for a launch turn give it up.
+            self._launch_gate.cancel()
+            return sum(future.cancel() for future in futures)
+
+        def stored(request: RunRequest) -> dict[str, Any] | None:
+            try:
+                return self._resumed(request)
+            except Exception as exc:
+                return collector_error(request, exc)
+
+        begin_collection(self.run_dir)
         try:
-            # Workers run even at parallel=1 so an interrupt lands here, never
-            # inside a Harness that would then skip its container cleanup.
-            with ThreadPoolExecutor(
-                max_workers=self.config.parallel, thread_name_prefix="roller"
-            ) as pool:
-                futures = {
-                    pool.submit(with_slot, request): request for request in requests
-                }
-                try:
-                    for future in as_completed(futures):
-                        request = futures[future]
-                        try:
-                            results.append(future.result())
-                        except Exception as exc:
-                            results.append(collector_error(request, exc))
-                        checkpoint("running")
-                except BaseException:
-                    # Queued requests never start; running ones still finalize.
-                    # Workers still waiting for a launch turn give it up.
-                    self._launch_gate.cancel()
-                    cancelled = sum(future.cancel() for future in futures)
-                    logger.warning(
-                        "interrupted: cancelled %d queued request(s) and any "
-                        "rollouts waiting for a launch turn; "
-                        "waiting for running samples to finish",
-                        cancelled,
+            try:
+                pending = requests
+                if self.config.resume:
+                    found = list(pool.map(stored, requests))
+                    results.extend(row for row in found if row is not None)
+                    pending = [
+                        request for request, row in zip(requests, found) if row is None
+                    ]
+                    logger.info(
+                        "resume: %d of %d rollout(s) already complete, %d to run",
+                        sum(row.get("status") == "skipped" for row in results),
+                        total_requests,
+                        len(pending),
                     )
-                    raise
+                    checkpoint("running", force=True)
+                if threading.current_thread() is threading.main_thread():
+                    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                        # A signal the caller ignores, as under nohup, stays ignored.
+                        if signal.getsignal(signum) is not signal.SIG_IGN:
+                            handlers[signum] = signal.signal(
+                                signum, lambda number, _frame: events.put(number)
+                            )
+                started = quiet_since = time.monotonic()
+                for request in pending:
+                    future = pool.submit(with_slot, request)
+                    futures[future] = request
+                    future.add_done_callback(events.put)
+                outstanding = len(futures)
+                interrupts = 0
+                resumed = len(results)
+                failed = sum(row.get("status") != "skipped" for row in results)
+                streak: list[dict[str, Any]] = []  # rollouts in a row ending in error
+                while outstanding:
+                    wait = quiet_since + HEARTBEAT_SECONDS - time.monotonic()
+                    try:
+                        event = events.get(timeout=max(0.0, wait))
+                    except queue.Empty:
+                        quiet_since = time.monotonic()
+                        with self._running_lock:
+                            running = sorted(
+                                self._running.values(), key=lambda item: item[1]
+                            )
+                        logger.info(
+                            "no rollout finished in the last %s: %d running, "
+                            "%d waiting to start; longest running: %s",
+                            _duration(HEARTBEAT_SECONDS),
+                            len(running),
+                            outstanding - len(running),
+                            ", ".join(
+                                f"{request.task.id} | {request.model} "
+                                f"{_duration(quiet_since - launched)}"
+                                for request, launched in running[:3]
+                            )
+                            or "none",
+                        )
+                        continue
+                    if isinstance(event, int):
+                        interrupts += event == signal.SIGINT
+                        if event == signal.SIGINT and interrupts == 1:
+                            cancelled = stop_launching()
+                            if stop is None:
+                                stop = KeyboardInterrupt()
+                            logger.warning(
+                                "interrupted: cancelled %d queued request(s) and any "
+                                "rollouts waiting for a launch turn; waiting for %d "
+                                "running rollout(s) to finish. Press Ctrl-C again "
+                                "to stop them now",
+                                cancelled,
+                                len(self._running),
+                            )
+                            continue
+                        # A second Ctrl-C, or a signal that leaves no time to wait.
+                        stop_launching()
+                        abandon = True
+                        name = signal.Signals(event).name
+                        stop = (
+                            KeyboardInterrupt()
+                            if event == signal.SIGINT
+                            else CollectionStopped(f"received {name}", 128 + event)
+                        )
+                        logger.warning(
+                            "%s: stopped %d running rollout(s) and removed %d "
+                            "container(s) of this run",
+                            name,
+                            len(self._running),
+                            remove_own_containers(),
+                        )
+                        break
+                    outstanding -= 1
+                    request = futures[event]
+                    with self._running_lock:
+                        launched = self._running.pop(
+                            request.index, (request, time.monotonic())
+                        )[1]
+                    if event.cancelled():
+                        continue
+                    try:
+                        result = event.result()
+                    except LaunchCancelled:
+                        continue
+                    except Exception as exc:
+                        result = collector_error(request, exc)
+                    except BaseException as exc:
+                        # A Harness that lets an interrupt through ends the run
+                        # the way one Ctrl-C does.
+                        if stop is None:
+                            stop = exc
+                            logger.warning(
+                                "interrupted: cancelled %d queued request(s) and any "
+                                "rollouts waiting for a launch turn; "
+                                "waiting for running samples to finish",
+                                stop_launching(),
+                            )
+                        continue
+                    results.append(result)
+                    quiet_since = time.monotonic()
+                    status = result.get("status")
+                    failed += status != "ok"
+                    remaining = total_requests - len(results)
+                    pace = (quiet_since - started) / (len(results) - resumed)
+                    logger.info(
+                        "[%d/%d] %s %s | %s in %s (ok %d, failed %d)%s",
+                        len(results),
+                        total_requests,
+                        status,
+                        request.task.id,
+                        request.model,
+                        _duration(quiet_since - launched),
+                        len(results) - failed,
+                        failed,
+                        f", ETA {_duration(remaining * pace)}"
+                        if remaining and stop is None
+                        else "",
+                    )
+                    if status == "ok":
+                        streak.clear()
+                    elif status == "error":
+                        streak.append(result)
+                    limit = self.config.max_consecutive_errors
+                    if stop is None and limit and len(streak) >= limit:
+                        count, reason, _ = failure_groups(streak, 1)[0]
+                        stop = CollectionStopped(
+                            f"{len(streak)} rollouts in a row ended in error, "
+                            f"{count} of them with: {reason}",
+                            1,
+                        )
+                        logger.error(
+                            "%s; cancelled %d queued request(s), waiting for %d "
+                            "running rollout(s) to finish",
+                            stop,
+                            stop_launching(),
+                            len(self._running),
+                        )
+                    checkpoint("running")
+            except BaseException:
+                stop_launching()
+                raise
+            finally:
+                for signum, handler in handlers.items():
+                    signal.signal(signum, handler)
+                pool.shutdown(wait=not abandon, cancel_futures=True)
+                if not abandon:
+                    begin_collection(None)
+            if stop is not None:
+                raise stop
         except BaseException:
             ordered = checkpoint("interrupted", force=True)
             try:

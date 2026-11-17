@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import shlex
 import shutil
 import subprocess
@@ -26,6 +25,8 @@ from roller.harnesses.container import (
     ContainerCommands,
     build_provenance,
     docker_run_args,
+    host_api_key,
+    host_environment,
     output_collection_metadata,
 )
 from roller.harnesses.container import (
@@ -288,28 +289,10 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         return request.model.rsplit("/", 1)[-1]
 
     def _environment(self, request: RunRequest) -> dict[str, str]:
-        environment: dict[str, str] = {}
-        for name in self.config.pass_env:
-            if not ENV_NAME_RE.fullmatch(name):
-                raise ValueError(f"invalid environment variable name: {name!r}")
-            if os.environ.get(name):
-                environment[name] = os.environ[name]
-        for name in request.task.env_names:
-            if not ENV_NAME_RE.fullmatch(name):
-                raise ValueError(f"invalid task environment variable name: {name!r}")
-            if name not in os.environ or os.environ[name] == "":
-                raise ValueError(
-                    f"task {request.task.id!r} requires missing environment "
-                    f"variable {name}"
-                )
-            environment[name] = os.environ[name]
-
-        api_key = os.environ.get(self.config.api_key_env)
-        if not api_key:
-            raise ValueError(
-                f"Claude Code requires a non-empty API key in {self.config.api_key_env}"
-            )
-        environment["ANTHROPIC_API_KEY"] = api_key
+        environment = host_environment(request.task, self.config.pass_env)
+        environment["ANTHROPIC_API_KEY"] = host_api_key(
+            "Claude Code", self.config.api_key_env
+        )
         api_base = (
             self._wire_proxy.proxy_base_url
             if self._wire_proxy is not None
