@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +16,7 @@ from roller.models import RunRequest
 from roller.storage import atomic_write_json
 from roller.wire_trace import redact_sensitive_values
 
+logger = logging.getLogger(__name__)
 RUN_LOCK_SCHEMA = "roller.run-lock/v1"
 LEGACY_MIGRATION_FILENAME = ".legacy-resume-untrusted.json"
 URL_KEY_NAMES = {"baseurl", "apiurl", "endpoint", "url"}
@@ -199,7 +202,7 @@ def _differences(
 
 
 def _comparable_lock(lock: Any) -> Any:
-    """Ignore retired no-ops and host-specific placement; never rewrite the saved lock."""
+    """Ignore retired no-ops and host-specific placement in the comparison."""
 
     if not isinstance(lock, dict) or not isinstance(lock.get("execution"), dict):
         return lock
@@ -229,6 +232,128 @@ def _comparable_lock(lock: Any) -> Any:
     return {**lock, "execution": execution}
 
 
+def _release_series(version: Any) -> tuple[int, int] | None:
+    """Major and minor of a version; patch, dev, rc and local parts are ignored."""
+
+    match = re.match(r"(\d+)\.(\d+)", version) if isinstance(version, str) else None
+    return (int(match[1]), int(match[2])) if match else None
+
+
+def _request_key(row: Any) -> str:
+    """Identity of a locked request; its position in the list is not part of it."""
+
+    row = row if isinstance(row, dict) else {}
+    names = ("source_index", "task_id", "model_label", "sample_index")
+    return json.dumps([row.get(name) for name in names])
+
+
+def _without_position(row: Any) -> Any:
+    if not isinstance(row, dict):
+        return row
+    return {key: value for key, value in row.items() if key != "request_index"}
+
+
+def _request_label(row: Any) -> str:
+    if not isinstance(row, dict):
+        return _short(row)
+    label = f"{row.get('task_id')} | {row.get('model_label')}"
+    index, count = row.get("sample_index"), row.get("sample_count")
+    if isinstance(index, int) and isinstance(count, int) and count > 1:
+        label += f" | sample {index + 1} of {count}"
+    return label
+
+
+def _task_images(lock: Mapping[str, Any]) -> Any:
+    execution = lock.get("execution")
+    return execution.get("task_images") if isinstance(execution, dict) else None
+
+
+def _request_mismatches(recorded: Any, current: Any) -> list[str]:
+    """Every recorded request must be in the current list with equal fields."""
+
+    if not isinstance(recorded, list) or not isinstance(current, list):
+        return _differences(recorded, current, "$.requests")
+    by_key = {_request_key(row): row for row in current}
+    missing, changed = [], []
+    for row in recorded:
+        counterpart = by_key.get(_request_key(row))
+        if counterpart is None:
+            missing.append(row)
+        elif _without_position(row) != _without_position(counterpart):
+            changed.append((row, counterpart))
+    rows = []
+    if missing:
+        first = missing[0]
+        noun = "request is" if len(missing) == 1 else "requests are"
+        # The task index tells a removed task from one that moved in the task list.
+        index = (
+            f" (task index {first.get('source_index')})"
+            if isinstance(first, dict)
+            else ""
+        )
+        rows.append(
+            f"{len(missing)} recorded {noun} not in the current command; "
+            f"first: {_request_label(first)}{index}"
+        )
+    if changed:
+        row, counterpart = changed[0]
+        noun = "request differs" if len(changed) == 1 else "requests differ"
+        details = _differences(
+            _without_position(row), _without_position(counterpart), "", 3
+        )
+        rows.append(
+            f"{len(changed)} recorded {noun} from the current command; "
+            f"first: {_request_label(row)}: "
+            + "; ".join(detail.lstrip(".") for detail in details)
+        )
+    return rows
+
+
+def _mismatches(recorded: Any, current: Mapping[str, Any]) -> list[str]:
+    """Explain why ``current`` cannot continue the run that ``recorded`` locked.
+
+    A run continues under another patch release of its minor series, and with
+    more requests than it recorded. Every other field must be equal.
+    """
+
+    recorded = _comparable_lock(recorded)
+    current = _comparable_lock(dict(current))
+    if not isinstance(recorded, dict):
+        return _differences(recorded, current)
+    rows = []
+    created, running = recorded.get("roller_version"), current.get("roller_version")
+    series = _release_series(created)
+    if series is None:
+        rows.extend(_differences(created, running, "$.roller_version"))
+    elif series != _release_series(running):
+        rows.append(
+            f"the run was created by Roller {created} and this is Roller {running}; "
+            f"a run resumes only within its minor series ({series[0]}.{series[1]}.x)"
+        )
+    recorded_settings, current_settings = (
+        {
+            key: value
+            for key, value in lock.items()
+            if key not in {"roller_version", "requests"}
+        }
+        for lock in (recorded, current)
+    )
+    # New requests bring the images of their tasks; the recorded ones stay equal.
+    recorded_images, current_images = _task_images(recorded), _task_images(current)
+    if isinstance(recorded_images, dict) and isinstance(current_images, dict):
+        current_settings["execution"] = {
+            **current["execution"],
+            "task_images": {
+                task: image
+                for task, image in current_images.items()
+                if task in recorded_images
+            },
+        }
+    rows.extend(_differences(recorded_settings, current_settings))
+    rows.extend(_request_mismatches(recorded.get("requests"), current.get("requests")))
+    return rows
+
+
 def ensure_run_lock(
     path: Path,
     expected: Mapping[str, Any],
@@ -238,6 +363,10 @@ def ensure_run_lock(
     compatible_expected: Sequence[Mapping[str, Any]] = (),
 ) -> RunLockDecision:
     """Write a new lock or reject resume against a different resolved run.
+
+    An existing run continues under another patch release of its minor series
+    and with more requests than it recorded; the lock then keeps the version
+    and settings it was written with and lists the current requests.
 
     Legacy runs without a lock are adopted, but their old samples are not
     reused on that first adoption because their execution configuration cannot
@@ -254,19 +383,38 @@ def ensure_run_lock(
             raise ValueError(
                 f"existing run lock cannot be parsed; refusing to overwrite {path}: {exc}"
             ) from exc
-        recorded_comparison = _comparable_lock(recorded)
-        expected_comparisons = [
-            _comparable_lock(candidate)
+        mismatches = [
+            _mismatches(recorded, candidate)
             for candidate in (expected_row, *compatible_expected)
         ]
-        if recorded_comparison not in expected_comparisons:
-            details = "\n".join(
-                f"- {row}"
-                for row in _differences(recorded_comparison, expected_comparisons[0])
-            )
+        if all(mismatches):
+            details = "\n".join(f"- {row}" for row in mismatches[0])
             raise FileExistsError(
                 "run directory cannot be resumed with different resolved inputs; "
                 f"lock mismatch at {path}:\n{details}"
+            )
+        created, running = (
+            recorded.get("roller_version"),
+            expected_row.get("roller_version"),
+        )
+        if created != running:
+            logger.info(
+                "run was created by Roller %s; resuming with Roller %s",
+                created,
+                running,
+            )
+        requests = expected_row.get("requests")
+        if recorded.get("requests") != requests:
+            # The run grew: keep what was recorded and list the current requests.
+            grown = {**recorded, "requests": requests}
+            images = _task_images(expected_row)
+            if images != _task_images(recorded):
+                grown["execution"] = {**recorded["execution"], "task_images": images}
+            atomic_write_json(path, grown)
+            logger.info(
+                "lock.json now lists %d requests (%d before)",
+                len(requests),
+                len(recorded["requests"]),
             )
         return RunLockDecision(
             reuse_existing_samples=bool(resume and not migration_path.is_file()),

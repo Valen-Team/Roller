@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -9,25 +10,43 @@ import math
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
-from collections.abc import Callable, Mapping, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from roller import hf_dataset
+from roller import hf_dataset, sft_dataset
 from roller.atif import export_run
 from roller.benches import (
     binding_from_task_row,
+    build_report,
     format_report,
     get_bench,
+    grading_failure,
     list_benches,
     mean_aggregate,
+    missing_grader_env,
 )
-from roller.benches.grading import GradedHarness
+from roller.benches.grading import GRADER_RETRY_MAX_SECONDS, GradedHarness
+from roller.benches.report import brief_reason
 from roller.bundles import BundlePolicy, TaskBundleStore
-from roller.collector import CollectionConfig, Collector, check_retired_cot_samples
+from roller.cleanup import (
+    BUNDLE_PREFIX,
+    clean,
+    record_owner,
+    remove_leftover_containers,
+)
+from roller.collector import (
+    CollectionConfig,
+    CollectionStopped,
+    Collector,
+    check_retired_cot_samples,
+    failure_groups,
+)
 from roller.conversation import ConversationManager
 from roller.harness_registry import HARNESS_NAMES, HARNESSES
 from roller.harnesses.claude_code import (
@@ -49,7 +68,11 @@ from roller.harnesses.config_overrides import (
     parse_config_assignment,
     recorded_config_assignments,
 )
-from roller.harnesses.container import PROXY_ENV_NAMES
+from roller.harnesses.container import (
+    PROXY_ENV_NAMES,
+    host_api_key,
+    host_environment,
+)
 from roller.harnesses.deepseek import (
     DEEPSEEK_PERMISSION_MODES,
     DEEPSEEK_VERSION,
@@ -58,6 +81,7 @@ from roller.harnesses.deepseek import (
     DeepSeekHarness,
     deepseek_effort,
 )
+from roller.harnesses.docker import DockerRuntime
 from roller.harnesses.gateway_ports import (
     DEFAULT_GATEWAY_PORT,
     GatewayPortReservation,
@@ -169,15 +193,28 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     export.add_argument(
         "--format",
-        choices=("atif", "hf"),
+        choices=("atif", "hf", "sft"),
         default="atif",
         help=(
             "target format: atif, the trajectory format Harbor reads (default), "
-            "or hf, a Hugging Face dataset folder"
+            "hf, a Hugging Face dataset folder, or sft, the SFT records of the "
+            "run with an index of the task, model and bench score of each"
         ),
     )
     export.add_argument(
         "--output", "-o", help="directory to write (default: RUN_DIR/<format>)"
+    )
+    export.add_argument(
+        "--min-score",
+        type=float,
+        metavar="X",
+        help=(
+            "with --format sft, keep only the samples whose bench score is at "
+            "least X and leave out the samples without a score. The score is "
+            "the one `roller bench report` lists for the sample: from 0 to 1 "
+            "for WildClawBench, PinchBench, QwenClawBench and SkillsBench, and "
+            "0 or 1 for SWE-Bench Pro"
+        ),
     )
     export.add_argument(
         "--redact",
@@ -204,6 +241,31 @@ def _build_parser() -> argparse.ArgumentParser:
             "applied whether or not --redact is on"
         ),
     )
+
+    cleaner = subparsers.add_parser(
+        "clean",
+        help="remove containers and bundle directories that dead collectors left behind",
+    )
+    cleaner.add_argument(
+        "path",
+        nargs="?",
+        help=(
+            "limit the cleanup to one run directory or output root (default: "
+            "every Roller container, and the bundle directories under runs)"
+        ),
+    )
+    cleaner.add_argument(
+        "--dry-run", action="store_true", help="print what would be removed"
+    )
+    cleaner.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "also remove what belongs to a running collector, to a collector on "
+            "another host, or to no recorded collector"
+        ),
+    )
+    cleaner.add_argument("--docker-binary", default="docker")
 
     bench = subparsers.add_parser("bench", help="work with benchmark adapters")
     bench_sub = bench.add_subparsers(dest="bench_command", required=True)
@@ -364,6 +426,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="maximum concurrent benchmark graders (default: --parallel)",
     )
     collect.add_argument(
+        "--grader-retries",
+        type=int,
+        default=2,
+        metavar="N",
+        help=(
+            "run a failed benchmark grader again in the same task container, up "
+            "to N times, before the sample is left unscored; a score is never "
+            "retried, nor is a grader that failed after more than "
+            f"{GRADER_RETRY_MAX_SECONDS / 60:g} minutes (default: 2)"
+        ),
+    )
+    collect.add_argument(
         "--samples",
         type=int,
         default=None,
@@ -384,6 +458,16 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     collect.add_argument(
+        "--max-consecutive-errors",
+        type=int,
+        default=10,
+        metavar="N",
+        help=(
+            "stop the run when N rollouts in a row end in error after their "
+            "retries; timeouts do not count (default: 10, 0 never stops)"
+        ),
+    )
+    collect.add_argument(
         "--start-index", type=int, default=0, help="first normalized task index"
     )
     collect.add_argument("--limit", type=int, help="maximum number of tasks")
@@ -401,6 +485,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="with --resume, reread recorded output files and rerun a sample whose "
         "content no longer matches its SHA-256 (default: check path and size only)",
+    )
+    collect.add_argument(
+        "--resume-unscored",
+        action="store_true",
+        help="with --resume, also rerun benchmark samples whose agent finished but "
+        "whose grading failed; the agent runs again (default: keep them)",
     )
     collect.add_argument(
         "--dry-run", action="store_true", help="validate and print the execution plan"
@@ -866,6 +956,21 @@ def _config_assignment(text: str) -> tuple[str, str]:
         raise argparse.ArgumentTypeError(str(exc)) from None
 
 
+def _remove_leftover_containers(binary: str, run_dir: Path) -> None:
+    """Before a Resume, remove the containers dead collectors left for the run."""
+
+    try:
+        removed = remove_leftover_containers(DockerRuntime(binary), run_dir)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        logger.warning("could not look for leftover containers of this run: %s", exc)
+        return
+    if removed:
+        logger.info(
+            "removed %d container(s) that an earlier collector of this run left behind",
+            removed,
+        )
+
+
 def _docker_preflight(binary: str, image: str) -> str:
     if shutil.which(binary) is None:
         raise RuntimeError(f"Docker executable not found: {binary}")
@@ -930,7 +1035,9 @@ def _dry_run_payload(
         "parallel": args.parallel,
         "launch_interval": args.launch_interval,
         "retry_backoff": args.retry_backoff,
+        "max_consecutive_errors": args.max_consecutive_errors,
         "grader_parallel": args.grader_parallel or args.parallel,
+        "grader_retries": args.grader_retries,
         "samples": args.samples,
         "opencode_max_steps": args.opencode_max_steps,
         "opencode_output_tokens": args.opencode_output_tokens,
@@ -1124,6 +1231,76 @@ def _validate_thinking_requests(
             validate(spec.model or request.model, spec.thinking)
 
 
+def _preflight_environment(
+    requests: Sequence[Any], cli_harness: str | None, configs: Mapping[str, Any]
+) -> None:
+    """Fail before the first rollout when a host variable a rollout reads is missing."""
+
+    for request in requests:
+        agent = cli_harness or request.task.harness
+        host_environment(request.task, configs[agent].pass_env)
+        spec = request.task.user_simulator
+        for name in (agent, *([spec.harness] if spec is not None else [])):
+            if name != "openclaw":  # OpenClaw reads its keys through --model-config.
+                host_api_key(HARNESSES[name].label, configs[name].api_key_env)
+
+
+@contextlib.contextmanager
+def _run_log(path: Path) -> Iterator[None]:
+    """Append this invocation's log, INFO and above, to ``path``."""
+
+    root = logging.getLogger()
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    level = root.level
+    # The file gets INFO even when --log-level keeps the console quieter.
+    console = [(item, item.level) for item in root.handlers if level > logging.INFO]
+    for item, own_level in console:
+        item.setLevel(max(own_level, level))
+    root.setLevel(min(level, logging.INFO))
+    root.addHandler(handler)
+    try:
+        yield
+    except Exception as exc:
+        # main() reports the error on the console after this log is closed.
+        handler.handle(
+            logging.LogRecord(__name__, logging.ERROR, __file__, 0, "%s", (exc,), None)
+        )
+        raise
+    finally:
+        root.removeHandler(handler)
+        handler.close()
+        root.setLevel(level)
+        for item, own_level in console:
+            item.setLevel(own_level)
+
+
+def _report_stop(stop: BaseException, run_dir: Path, args: argparse.Namespace) -> int:
+    """Log why a run stopped early and how to continue it; return the exit code."""
+
+    if getattr(args, "_bench_run_config", None) is not None:
+        execution = {"resume": True}
+        if not args.run_name:
+            execution["run_name"] = run_dir.name
+        resume = f"--extra-config '{json.dumps({'execution': execution})}'"
+    else:
+        resume = "--resume" if args.run_name else f"--resume --run-name {run_dir.name}"
+    if isinstance(stop, CollectionStopped) and stop.exit_code < 128:
+        logger.error(
+            "stopped: %s. Fix the cause and rerun the same command with %s",
+            stop,
+            resume,
+        )
+    else:
+        logger.error(
+            "%s. Rerun the same command with %s to continue",
+            f"stopped: {stop}" if str(stop) else "interrupted",
+            resume,
+        )
+    logger.error("Run directory: %s", run_dir)
+    return getattr(stop, "exit_code", 130)
+
+
 def _collect(args: argparse.Namespace) -> int:
     if args.samples is None:
         args.samples = 3 if args.bench == "skillsbench" else 1
@@ -1137,14 +1314,20 @@ def _collect(args: argparse.Namespace) -> int:
         raise ValueError("--launch-interval must be a finite number of seconds >= 0")
     if args.grader_parallel is not None and args.grader_parallel < 1:
         raise ValueError("--grader-parallel must be at least 1")
+    if args.grader_retries < 0:
+        raise ValueError("--grader-retries cannot be negative")
     if args.samples < 1:
         raise ValueError("--samples must be at least 1")
     if args.retries < 0:
         raise ValueError("--retries cannot be negative")
     if args.resume_verify_outputs and not args.resume:
         raise ValueError("--resume-verify-outputs requires --resume")
+    if args.resume_unscored and not args.resume:
+        raise ValueError("--resume-unscored requires --resume")
     if not math.isfinite(args.retry_backoff) or args.retry_backoff < 0:
         raise ValueError("--retry-backoff must be a finite number of seconds >= 0")
+    if args.max_consecutive_errors < 0:
+        raise ValueError("--max-consecutive-errors cannot be negative")
     if args.timeout <= 0:
         raise ValueError("--timeout must be greater than zero")
     if args.start_index < 0:
@@ -1632,6 +1815,28 @@ def _collect(args: argparse.Namespace) -> int:
                 f"task {task.id!r}: files.attach_images requires --pi-input-modalities text,image"
             )
 
+    _preflight_environment(
+        requests,
+        cli_harness,
+        {
+            "openclaw": openclaw_config,
+            "codex": codex_config,
+            "claude-code": claude_code_config,
+            "hermes": hermes_config,
+            "opencode": opencode_config,
+            "deepseek": deepseek_config,
+            "pi": pi_config,
+        },
+    )
+    # Checked once here, for a dry run too: a judge key that is missing would
+    # otherwise cost every judged sample its score after the agent has run.
+    missing_env = missing_grader_env(task.raw for task in tasks)
+    if missing_env:
+        raise ValueError(
+            "benchmark graders need environment variables that are not set: "
+            + "; ".join(missing_env)
+        )
+
     if args.dry_run:
         # Run every path, hash, collision and size check without writing a file.
         bundles = TaskBundleStore(
@@ -1935,12 +2140,15 @@ def _collect(args: argparse.Namespace) -> int:
             "parallel": args.parallel,
             "launch_interval": args.launch_interval,
             "grader_parallel": args.grader_parallel or args.parallel,
+            "grader_retries": args.grader_retries,
             "samples": args.samples,
             "retries": args.retries,
             "retry_backoff": args.retry_backoff,
+            "max_consecutive_errors": args.max_consecutive_errors,
             "start_index": args.start_index,
             "limit": args.limit,
             "resume": args.resume,
+            "resume_unscored": args.resume_unscored,
             "task_schema": "roller.task/v1",
             "thinking_capabilities_path": (
                 str(thinking_capabilities_path) if thinking_capabilities_path else None
@@ -1980,9 +2188,12 @@ def _collect(args: argparse.Namespace) -> int:
 
     results: list[dict] | None = None
     gateway_ports: GatewayPortReservation | None = None
-    with tempfile.TemporaryDirectory(
-        prefix=".roller-bundle-", dir=output_root
-    ) as temporary:
+    with (
+        tempfile.TemporaryDirectory(prefix=BUNDLE_PREFIX, dir=output_root) as temporary,
+        contextlib.ExitStack() as run_log,
+    ):
+        # `roller clean` removes the directory if this process is killed.
+        record_owner(Path(temporary), run_dir)
         bundle_store = TaskBundleStore(Path(temporary), bundle_policy)
         try:
             if openclaw_config is not None and args.network == "host":
@@ -2008,6 +2219,7 @@ def _collect(args: argparse.Namespace) -> int:
             bundles = bundle_store.prepare_all(tasks)
             requests = bundle_store.attach(requests, bundles)
             run_dir.mkdir(parents=True, exist_ok=True)
+            run_log.enter_context(_run_log(run_dir / "collect.log"))
             if tasks_snapshot is not None and not tasks_snapshot.exists():
                 tasks_snapshot.write_bytes(bench_manifest or b"")
             execution = {
@@ -2160,11 +2372,13 @@ def _collect(args: argparse.Namespace) -> int:
                             agent,
                             binding,
                             grading_semaphore=grading_semaphore,
+                            grader_retries=args.grader_retries,
                         )
                     return adapter.wrap_harness(
                         agent,
                         binding,
                         grading_semaphore=grading_semaphore,
+                        grader_retries=args.grader_retries,
                     )
                 spec = request.task.user_simulator
                 if spec is None:
@@ -2188,8 +2402,10 @@ def _collect(args: argparse.Namespace) -> int:
                     launch_interval=args.launch_interval,
                     retries=args.retries,
                     retry_backoff=args.retry_backoff,
+                    max_consecutive_errors=args.max_consecutive_errors,
                     resume=lock_decision.reuse_existing_samples,
                     verify_outputs=args.resume_verify_outputs,
+                    resume_unscored=args.resume_unscored,
                     keep_aux_traces=keep_aux_traces,
                     capture_cache_trace=(
                         args.cache_trace if "openclaw" in selected_harnesses else False
@@ -2198,15 +2414,32 @@ def _collect(args: argparse.Namespace) -> int:
                 ),
                 harness_factory=harness_factory,
             )
-            results = collector.collect(requests)
+            if args.resume and existing_run:
+                _remove_leftover_containers(args.docker_binary, run_dir)
+            try:
+                results = collector.collect(requests)
+            except (KeyboardInterrupt, CollectionStopped) as stop:
+                if bench_temporary is not None:
+                    bench_temporary.cleanup()
+                return _report_stop(stop, run_dir, args)
             if lock_decision.legacy_run:
                 complete_legacy_adoption(run_dir / "lock.json")
+            failed = sum(
+                result.get("status") in {"error", "timeout"} for result in results
+            )
+            if failed:
+                logger.warning(
+                    "%d rollout(s) failed; the full error of each is in its "
+                    "sample's info.json. Most frequent reasons:",
+                    failed,
+                )
+                for count, reason, task_id in failure_groups(results):
+                    logger.warning("  %dx %s (for example %s)", count, reason, task_id)
         finally:
             bundle_store.cleanup_runtime()
             if gateway_ports is not None:
                 gateway_ports.release()
     assert results is not None
-    failed = sum(result.get("status") in {"error", "timeout"} for result in results)
     print(f"Collected {len(results)} trajectories ({failed} failed).")
     training = training_summary(results)
     print(
@@ -2229,9 +2462,34 @@ def _collect(args: argparse.Namespace) -> int:
             if not failed:
                 raise
             logger.warning(
-                "benchmark report was not generated because no graded samples were produced"
+                "benchmark report was not generated because the run has no bench samples"
             )
-    return 1 if failed else 0
+    grading_failed = _print_grading_failures(results)
+    return 1 if failed or grading_failed else 0
+
+
+def _print_grading_failures(results: Sequence[Mapping[str, Any]]) -> int:
+    """Say how many samples finished but have no score, and why; return the count."""
+
+    reasons = Counter(
+        brief_reason(reason)
+        for result in results
+        if (reason := grading_failure(result)) is not None
+    )
+    count = sum(reasons.values())
+    if not count:
+        return 0
+    print(
+        f"Grading failed for {count} of {len(results)} samples; they have no score. "
+        "Most common reasons:"
+    )
+    for reason, times in reasons.most_common(3):
+        print(f"  {times}x {reason}")
+    print(
+        "Rerun them with --resume --resume-unscored once the cause is fixed; "
+        "that runs the agent again."
+    )
+    return count
 
 
 def _bench(args: argparse.Namespace) -> int:
@@ -2294,13 +2552,68 @@ def _bench(args: argparse.Namespace) -> int:
     return _bench_report(args)
 
 
+def _task_rows(
+    run_dir: Path, configuration: Mapping[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Task rows of a run by id, from its snapshot or the task list it was given."""
+
+    paths = [run_dir / "tasks.jsonl"]
+    if isinstance(configuration.get("tasks"), str):
+        paths.append(Path(configuration["tasks"]))
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            payload = json.loads(text)
+            rows = payload if isinstance(payload, list) else [payload]
+        except json.JSONDecodeError:
+            try:
+                rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+            except json.JSONDecodeError:
+                continue
+        return {
+            row["id"]: row
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get("id"), str)
+        }
+    return {}
+
+
+def _ungraded_bench_payload(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The bench record of a sample that failed before its grader ran.
+
+    Such a sample has no record of its own, so its task row says whether it is
+    graded, and under which category. ``None`` for a task without a grader.
+    """
+
+    block = row.get("bench")
+    if not isinstance(block, dict) or block.get("grade") is None:
+        return None
+    return {
+        "bench": block.get("name"),
+        "category": block.get("category"),
+        "metadata": block.get("metadata"),
+    }
+
+
 def _bench_report(args: argparse.Namespace) -> int:
     run_dir = Path(args.run_dir).expanduser().resolve()
     samples_root = run_dir / "samples"
     if not samples_root.is_dir():
         raise FileNotFoundError(f"run directory has no samples/: {run_dir}")
+    try:
+        run_info = json.loads((run_dir / "info.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        run_info = {}
+    configuration = run_info.get("configuration") if isinstance(run_info, dict) else {}
+    configuration = configuration if isinstance(configuration, dict) else {}
+    bench = configuration.get("bench")
+    task_rows = _task_rows(run_dir, configuration)
     rows: list[dict[str, Any]] = []
     bench_names: set[str] = set()
+    sample_count = unidentified = 0
     for info_path in sorted(samples_root.glob("*/*/info.json")):
         try:
             info = json.loads(info_path.read_text(encoding="utf-8"))
@@ -2309,17 +2622,31 @@ def _bench_report(args: argparse.Namespace) -> int:
             continue
         if not isinstance(info, dict):
             continue
+        sample_count += 1
         runtime = info.get("runtime")
         payload = runtime.get("bench") if isinstance(runtime, dict) else None
         if not isinstance(payload, dict):
-            continue
+            # Dropping a sample that never reached its grader would shrink the
+            # denominator; it counts as unscored, like one whose agent crashed.
+            row = task_rows.get(str(info.get("task_id")))
+            if row is not None:
+                payload = _ungraded_bench_payload(row)
+            elif isinstance(bench, dict):
+                # ``collect --bench`` runs nothing but the tasks of its bench.
+                payload = {"bench": bench.get("name")}
+            else:
+                payload = None
+                unidentified += 1
+            if payload is None:
+                continue
         name = payload.get("bench")
         if isinstance(name, str) and name:
             bench_names.add(name)
         rows.append(
             {
                 "task_id": info.get("task_id"),
-                "model": info.get("model"),
+                "model": info.get("model_label") or info.get("model"),
+                "harness": info.get("harness"),
                 "status": info.get("status"),
                 "error": info.get("error"),
                 "bench_scores": payload.get("scores"),
@@ -2330,16 +2657,30 @@ def _bench_report(args: argparse.Namespace) -> int:
             }
         )
     if not rows:
-        raise TaskFormatError(f"no graded bench samples found under {samples_root}")
-    label = ", ".join(sorted(bench_names)) or "unknown"
-    try:
-        report = (
-            get_bench(sorted(bench_names)[0]).aggregate(rows)
-            if len(bench_names) == 1
-            else mean_aggregate(rows)
+        raise TaskFormatError(f"no bench samples found under {samples_root}")
+    if unidentified:
+        logger.warning(
+            "%d samples have no grading record and the task list of the run is no "
+            "longer available, so the report cannot tell whether they are bench "
+            "samples; they are left out",
+            unidentified,
         )
-    except KeyError:
-        report = mean_aggregate(rows)
+    label = ", ".join(sorted(bench_names)) or "unknown"
+    aggregate = mean_aggregate
+    if len(bench_names) == 1:
+        try:
+            aggregate = get_bench(sorted(bench_names)[0]).aggregate
+        except KeyError:
+            pass
+    report = build_report(rows, aggregate)
+    summary = run_info.get("summary") if isinstance(run_info, dict) else None
+    planned = summary.get("total") if isinstance(summary, dict) else None
+    if isinstance(planned, int) and planned > sample_count:
+        # An interrupted run: say so, and keep the two long lists last.
+        report["planned_count"] = planned
+        report["missing_count"] = planned - sample_count
+        for key in ("models", "tasks"):
+            report[key] = report.pop(key)
     print(format_report(label, report))
     if args.output:
         output = Path(args.output).expanduser().resolve()
@@ -2391,6 +2732,8 @@ def _export(args: argparse.Namespace) -> int:
     if not (run_dir / "samples").is_dir():
         raise FileNotFoundError(f"{run_dir} has no samples directory")
     output = Path(args.output) if args.output else run_dir / args.format
+    if args.min_score is not None and args.format != "sft":
+        raise ValueError("--min-score applies to --format sft")
     if args.format == "hf":
         rules = (
             hf_dataset.load_rules(Path(args.redact_rules))
@@ -2403,15 +2746,33 @@ def _export(args: argparse.Namespace) -> int:
         print(f"Exported {len(rows)} samples as a Hugging Face dataset to {output}")
         for line in redaction.lines():
             print(line)
+        report_path = output.with_name(output.name + ".redaction-report.json")
+        print(f"Redaction review: {report_path}")
         return 0
     if args.redact_rules or args.include_runs:
         raise ValueError("--redact-rules and --include-runs apply to --format hf")
+    if args.format == "sft":
+        summary = sft_dataset.export_run(run_dir, output, args.min_score)
+        for line in summary.lines(output, args.min_score):
+            print(line)
+        return 0
     written, skipped = export_run(run_dir, output)
     print(f"Exported {len(written)} ATIF trajectories to {output}")
     if skipped:
         print(f"Skipped {len(skipped)} samples:")
         for sample, reason in skipped.items():
             print(f"  {sample}: {reason}")
+    return 0
+
+
+def _clean(args: argparse.Namespace) -> int:
+    path = Path(args.path).expanduser().resolve() if args.path else None
+    if path is not None and not path.is_dir():
+        raise FileNotFoundError(f"not a directory: {path}")
+    for line in clean(
+        DockerRuntime(args.docker_binary), path, dry_run=args.dry_run, force=args.force
+    ):
+        print(line)
     return 0
 
 
@@ -2434,6 +2795,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             exit_code = _export(args)
         elif args.command == "init":
             exit_code = _init(args)
+        elif args.command == "clean":
+            exit_code = _clean(args)
         else:
             parser.error(f"unsupported command: {args.command}")
             return
@@ -2446,4 +2809,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     ) as exc:
         logger.error("%s", exc)
         exit_code = 2
+    except KeyboardInterrupt:
+        logger.error("interrupted")
+        exit_code = 130
+    if exit_code > 128 and args.command in {"collect", "bench"}:
+        # A signal stopped the run. Rollout threads that lost their containers
+        # may still be unwinding, and a normal exit would wait for them.
+        logging.shutdown()
+        sys.stdout.flush()
+        os._exit(exit_code)
     raise SystemExit(exit_code)

@@ -32,6 +32,8 @@ from roller.harnesses.container import (
     build_provenance,
     collect_outputs,
     docker_run_args,
+    host_api_key,
+    host_environment,
     output_collection_metadata,
 )
 from roller.harnesses.docker import (
@@ -211,10 +213,7 @@ class BridgeSession(InteractiveSession):
         return ""
 
     def inherited_environment(self) -> dict[str, str]:
-        config = self.harness.config
-        return {
-            name: os.environ[name] for name in config.pass_env if os.environ.get(name)
-        }
+        return host_environment(self.request.task, self.harness.config.pass_env)
 
     def system_prompt(self) -> str:
         config, task = self.harness.config, self.request.task
@@ -290,17 +289,7 @@ class BridgeSession(InteractiveSession):
         self.effort()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         environment = self.inherited_environment()
-        for name in task.env_names:
-            if not ENV_NAME.fullmatch(name) or not os.environ.get(name):
-                raise ValueError(
-                    f"task requires missing or invalid environment variable: {name}"
-                )
-            environment[name] = os.environ[name]
-        if not os.environ.get(config.api_key_env):
-            raise ValueError(
-                f"{self.label} requires a non-empty API key in {config.api_key_env}"
-            )
-        environment[self.api_key_name] = os.environ[config.api_key_env]
+        environment[self.api_key_name] = host_api_key(self.label, config.api_key_env)
         api_base = config.api_base or self.default_api_base
         if config.wire_trace_mode == "full" or config.capture_calls:
             self.proxy = WireTraceProxy(

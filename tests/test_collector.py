@@ -532,10 +532,19 @@ class CollectorTests(unittest.TestCase):
                 CollectionConfig(run_dir=run_dir, resume=True),
                 lambda slot: FakeHarness(state, slot),
             ).collect(requests)
-            self.assertEqual(repaired[0]["status"], "ok")
+            # The SFT record is rebuilt from the trace; the agent does not run again.
+            self.assertEqual(repaired[0]["status"], "skipped")
+            self.assertEqual(state["calls"][("task-0", "provider/model")], 1)
             self.assertEqual(
                 json.loads((sample / "trace_SFT.json").read_text())["images"],
                 ["data:image/png;base64,AA=="],
+            )
+            self.assertEqual(
+                [
+                    json.loads(line)
+                    for line in (run_dir / "sft.jsonl").read_text().splitlines()
+                ],
+                dataset,
             )
 
     def test_normalized_image_base64_aggregates_and_resumes(self) -> None:
@@ -805,7 +814,7 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(resumed[0]["status"], "skipped")
             self.assertEqual(state["calls"][("task-0", "provider/model")], 1)
 
-    def test_resume_reruns_sample_when_canonical_sft_is_corrupt(self) -> None:
+    def test_resume_rebuilds_a_corrupt_canonical_sft_without_rerunning(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run_dir = Path(temporary) / "run"
             state = self._state()
@@ -815,17 +824,28 @@ class CollectorTests(unittest.TestCase):
                 lambda slot: FakeHarness(state, slot),
             ).collect(requests)
             sample = next((run_dir / "samples").glob("*/*"))
+            original = (sample / "trace_SFT.json").read_bytes()
+            raw = (sample / "trace.jsonl").stat().st_mtime_ns
             (sample / "trace_SFT.json").write_text("{}\n", encoding="utf-8")
 
-            result = Collector(
-                CollectionConfig(run_dir=run_dir, resume=True),
-                lambda slot: FakeHarness(state, slot),
-            ).collect(requests)
+            with self.assertLogs("roller.collector", "INFO") as logs:
+                result = Collector(
+                    CollectionConfig(run_dir=run_dir, resume=True),
+                    lambda slot: FakeHarness(state, slot),
+                ).collect(requests)
 
-            self.assertEqual(result[0]["status"], "ok")
-            self.assertEqual(state["calls"][("task-0", "provider/model")], 2)
-            repaired = json.loads((sample / "trace_SFT.json").read_text())
-            self.assertEqual(set(repaired), {"messages", "tools"})
+            self.assertEqual(result[0]["status"], "skipped")
+            self.assertEqual(state["calls"][("task-0", "provider/model")], 1)
+            self.assertEqual((sample / "trace_SFT.json").read_bytes(), original)
+            self.assertEqual((sample / "trace.jsonl").stat().st_mtime_ns, raw)
+            self.assertEqual(
+                [line for line in logs.output if "rebuilt" in line],
+                [
+                    "INFO:roller.collector:[task-0 | provider/model] rebuilt "
+                    "trace_SFT.json from the trace; it differed from the SFT "
+                    "this Roller version derives"
+                ],
+            )
 
     def test_retired_cot_outputs_are_not_overwritten(self) -> None:
         modes = (

@@ -1,9 +1,53 @@
 from __future__ import annotations
 
 import logging
+import os
+import socket
 import subprocess
+import threading
 from collections.abc import Sequence
 from pathlib import Path
+
+# Every container carries its collector, so `roller clean` and an interrupted
+# run can tell which containers are theirs to remove.
+RUN_DIR_LABEL = "ai.roller.run_dir"
+PID_LABEL = "ai.roller.pid"
+HOST_LABEL = "ai.roller.host"
+HOST = socket.gethostname()
+
+
+class _Launches:
+    """The ``docker run`` calls of this process."""
+
+    def __init__(self) -> None:
+        self.changed = threading.Condition()
+        self.run_dir: str | None = None
+        self.closed = False
+        self.in_flight = 0
+        self.binaries: set[str] = set()
+
+
+_launches = _Launches()
+
+
+def begin_collection(run_dir: Path | None) -> None:
+    """Label containers started from now on with ``run_dir``; ``None`` ends the run."""
+
+    with _launches.changed:
+        _launches.run_dir = None if run_dir is None else str(run_dir)
+        _launches.closed = False
+
+
+def stop_launches(timeout: float = 10.0) -> set[str]:
+    """Refuse further ``docker run`` calls and wait for the ones in flight.
+
+    Returns the Docker binaries this process has started containers with.
+    """
+
+    with _launches.changed:
+        _launches.closed = True
+        _launches.changed.wait_for(lambda: not _launches.in_flight, timeout)
+        return set(_launches.binaries)
 
 
 class DockerRuntime:
@@ -15,12 +59,45 @@ class DockerRuntime:
     def run(
         self, args: Sequence[str], timeout: float | None = None
     ) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "run":
+            return self._start_container(args, timeout)
+        return self._execute(args, timeout)
+
+    def _execute(
+        self, args: Sequence[str], timeout: float | None
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [self.binary, *args],
             capture_output=True,
             text=True,
             timeout=timeout,
+            # Ctrl-C in the terminal goes to Roller alone, which decides what
+            # happens to the rollouts; see Collector.collect().
+            start_new_session=True,
         )
+
+    def _start_container(
+        self, args: Sequence[str], timeout: float | None
+    ) -> subprocess.CompletedProcess[str]:
+        with _launches.changed:
+            if _launches.closed:
+                raise RuntimeError("the run is stopping; no container was started")
+            _launches.in_flight += 1
+            _launches.binaries.add(self.binary)
+            labels = {PID_LABEL: str(os.getpid()), HOST_LABEL: HOST}
+            if _launches.run_dir is not None:
+                labels[RUN_DIR_LABEL] = _launches.run_dir
+        try:
+            owner = [
+                item
+                for name, value in labels.items()
+                for item in ("--label", f"{name}={value}")
+            ]
+            return self._execute(["run", *owner, *args[1:]], timeout)
+        finally:
+            with _launches.changed:
+                _launches.in_flight -= 1
+                _launches.changed.notify_all()
 
     def popen(
         self, args: Sequence[str], log_path: Path, append: bool = False
@@ -33,6 +110,7 @@ class DockerRuntime:
             stdout=log_file,
             stderr=subprocess.STDOUT,
             text=True,
+            start_new_session=True,
         )
         process._roller_log_file = log_file  # type: ignore[attr-defined]
         return process

@@ -4,6 +4,21 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ## Unreleased
 
+### Added
+
+- Collection credential preflight, detailed failure summaries, progress, ETA, 60-second heartbeats and `collect.log`; `--max-consecutive-errors` stops dispatch after 10 consecutive errors by default, and `--retry-backoff` spaces sample retries.
+- Grader retries in the live container and `--resume-unscored` to rerun agents whose grading failed. Grading failures now cause a nonzero exit.
+- SFT record indexes and `roller export --format sft --min-score` for score-filtered training data.
+- HF credential-shape redaction and a residual review report beside the exported dataset.
+- English/Chinese Viewer controls, benchmark scores, sorting/filtering and inline user-message images.
+- Collector ownership labels, signal cleanup and `roller clean` for leftovers of dead collectors.
+
+### Fixed
+
+- Benchmark reports aggregate each model separately, include failed samples in denominators and use consistent category denominators.
+- Resume accepts task/model supersets and compatible patch upgrades, and rebuilds derived SFT artifacts without rerunning valid samples.
+- HF exports exclude previous export directories and review reports from shared run files.
+
 ## 0.4.0 - 2026-11-16
 
 Roller 0.4.0 exports a run for publishing. `roller export` writes ATIF, the trajectory format of Harbor, and with `--format hf` a Hugging Face dataset folder that the Hub opens in its trace viewer, with the endpoints, host names, host paths and credentials of the collection environment replaced. Five Harness images are prebuilt at `ghcr.io/valen-team`.

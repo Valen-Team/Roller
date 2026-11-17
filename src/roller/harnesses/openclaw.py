@@ -34,10 +34,8 @@ from roller.harnesses.container import (
     ContainerCommands,
     build_provenance,
     docker_run_args,
+    host_environment,
     output_collection_metadata,
-)
-from roller.harnesses.container import (
-    ENV_NAME as ENV_NAME_RE,
 )
 from roller.harnesses.docker import DockerRuntime, remove_container
 from roller.models import HarnessResult, RunRequest
@@ -609,20 +607,7 @@ exec node --input-type=module -e "$1"
             self._wire_proxy = None
 
     def _environment(self, request: RunRequest) -> dict[str, str]:
-        environment: dict[str, str] = {}
-        for name in self.config.pass_env:
-            if not ENV_NAME_RE.fullmatch(name):
-                raise ValueError(f"invalid environment variable name: {name!r}")
-            if os.environ.get(name):
-                environment[name] = os.environ[name]
-        for name in request.task.env_names:
-            if not ENV_NAME_RE.fullmatch(name):
-                raise ValueError(f"invalid task environment variable name: {name!r}")
-            if name not in os.environ or os.environ[name] == "":
-                raise ValueError(
-                    f"task {request.task.id!r} requires missing environment variable {name}"
-                )
-            environment[name] = os.environ[name]
+        environment = host_environment(request.task, self.config.pass_env)
 
         # Compatibility with Interns2_data's host-side variable name.
         if "OPENROUTER_BASE_URL" not in environment and os.environ.get(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import shlex
 import shutil
 import subprocess
@@ -31,6 +30,8 @@ from roller.harnesses.container import (
     ContainerCommands,
     build_provenance,
     docker_run_args,
+    host_api_key,
+    host_environment,
     output_collection_metadata,
 )
 from roller.harnesses.container import (
@@ -319,27 +320,8 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
             self._wire_proxy = None
 
     def _environment(self, request: RunRequest) -> dict[str, str]:
-        environment: dict[str, str] = {}
-        for name in self.config.pass_env:
-            if not ENV_NAME_RE.fullmatch(name):
-                raise ValueError(f"invalid environment variable name: {name!r}")
-            if os.environ.get(name):
-                environment[name] = os.environ[name]
-        for name in request.task.env_names:
-            if not ENV_NAME_RE.fullmatch(name):
-                raise ValueError(f"invalid task environment variable name: {name!r}")
-            if name not in os.environ or os.environ[name] == "":
-                raise ValueError(
-                    f"task {request.task.id!r} requires missing environment variable {name}"
-                )
-            environment[name] = os.environ[name]
-
-        api_key = os.environ.get(self.config.api_key_env)
-        if not api_key:
-            raise ValueError(
-                f"Codex requires a non-empty API key in {self.config.api_key_env}"
-            )
-        environment["OPENAI_API_KEY"] = api_key
+        environment = host_environment(request.task, self.config.pass_env)
+        environment["OPENAI_API_KEY"] = host_api_key("Codex", self.config.api_key_env)
         if self.config.api_base:
             environment["OPENAI_BASE_URL"] = self.config.api_base
         return environment

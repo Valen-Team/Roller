@@ -279,6 +279,7 @@ class SWEBenchProAdapter(BenchAdapter):
         binding: BenchBinding,
         *,
         grading_semaphore: Any = None,
+        grader_retries: int = 0,
     ) -> Any:
         source_image = binding.metadata.get("source_image")
         if not isinstance(source_image, str) or not source_image:
@@ -309,6 +310,7 @@ class SWEBenchProAdapter(BenchAdapter):
             prepared,
             binding,
             grading_semaphore=grading_semaphore,
+            grader_retries=grader_retries,
         )
 
     def aggregate(self, samples: Iterable[dict[str, Any]]) -> dict[str, Any]:

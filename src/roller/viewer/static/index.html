@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +7,8 @@
     <title>Roller Trajectory Viewer</title>
     <link rel="stylesheet" href="/style.css">
   </head>
+  <!-- Text comes from the STRINGS table in app.js: data-i18n names the entry for
+       an element's text, data-i18n-<attribute> the entry for that attribute. -->
   <body>
     <div class="app-shell">
       <header class="topbar">
@@ -24,31 +26,46 @@
         </div>
         <div class="run-location">
           <span class="live-dot"></span>
-          <span id="run-path">正在读取 run…</span>
+          <span id="run-path" data-i18n="loadingRun"></span>
         </div>
-        <button class="icon-button" id="refresh-button" title="刷新 run 索引" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"></path></svg>
-          <span>刷新</span>
-        </button>
+        <div class="topbar-actions">
+          <div class="language-switch" id="language-switch" role="group" data-i18n-aria-label="language"></div>
+          <button class="icon-button" id="refresh-button" data-i18n-title="refreshTitle" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"></path></svg>
+            <span data-i18n="refresh"></span>
+          </button>
+        </div>
       </header>
 
       <div class="metrics-frame">
-        <section class="metrics" id="metrics" aria-label="Run summary"></section>
-        <div class="row-resizer" data-resize="metrics" role="separator" aria-orientation="horizontal" aria-label="调整运行概览高度" title="拖动调整高度，双击恢复默认" tabindex="0"></div>
+        <section class="metrics" id="metrics" data-i18n-aria-label="runSummary"></section>
+        <div class="row-resizer" data-resize="metrics" role="separator" aria-orientation="horizontal" data-i18n-aria-label="resizeSummary" data-i18n-title="resizeHint" tabindex="0"></div>
       </div>
 
-      <section class="toolbar">
+      <section class="toolbar" id="toolbar">
         <label class="search-box">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
-          <input id="search-input" type="search" placeholder="搜索 task、model 或 error…" autocomplete="off">
+          <input id="search-input" type="search" data-i18n-placeholder="searchPlaceholder" autocomplete="off">
         </label>
         <label class="select-field">
-          <span>状态</span>
-          <select id="status-filter"><option value="">全部状态</option></select>
+          <span data-i18n="status"></span>
+          <select id="status-filter"><option value="" data-i18n="allStatuses"></option></select>
         </label>
         <label class="select-field">
-          <span>模型</span>
-          <select id="model-filter"><option value="">全部模型</option></select>
+          <span data-i18n="model"></span>
+          <select id="model-filter"><option value="" data-i18n="allModels"></option></select>
+        </label>
+        <label class="select-field" data-graded hidden>
+          <span data-i18n="score"></span>
+          <select id="score-filter"><option value="" data-i18n="allScores"></option></select>
+        </label>
+        <label class="select-field" data-graded hidden>
+          <span data-i18n="sort"></span>
+          <select id="sort-order">
+            <option value="" data-i18n="sortTaskOrder"></option>
+            <option value="score" data-i18n="sortLowestScore"></option>
+            <option value="-score" data-i18n="sortHighestScore"></option>
+          </select>
         </label>
         <div class="toolbar-note" id="task-range"></div>
       </section>
@@ -57,43 +74,41 @@
         <aside class="task-panel panel">
           <div class="panel-heading">
             <div>
-              <span class="eyebrow">TASKS</span>
-              <h2>任务导航</h2>
+              <span class="eyebrow" data-i18n="tasksEyebrow"></span>
+              <h2 data-i18n="tasksHeading"></h2>
             </div>
             <span class="count-pill" id="task-count">0</span>
           </div>
           <div class="task-list" id="task-list">
-            <div class="skeleton-list" aria-label="加载中">
+            <div class="skeleton-list" data-i18n-aria-label="loading">
               <i></i><i></i><i></i><i></i>
             </div>
           </div>
           <div class="pagination" id="pagination"></div>
         </aside>
 
-        <div class="column-resizer" data-resize="task" role="separator" aria-orientation="vertical" aria-label="调整任务导航宽度" title="拖动调整宽度，双击恢复默认" tabindex="0"></div>
+        <div class="column-resizer" data-resize="task" role="separator" aria-orientation="vertical" data-i18n-aria-label="resizeTasks" data-i18n-title="resizeHint" tabindex="0"></div>
 
         <section class="timeline-panel panel" id="timeline-panel">
           <div class="empty-state" id="timeline-empty">
             <div class="empty-orbit"><span></span></div>
-            <p class="eyebrow">SELECT A ROLLOUT</p>
-            <h2>选择一个任务，展开它的完整思考与行动轨迹</h2>
-            <p>Reasoning、工具调用、工具结果和最终回复会依照 step 顺序呈现。</p>
+            <p class="eyebrow" data-i18n="selectEyebrow"></p>
+            <h2 data-i18n="selectHeading"></h2>
+            <p data-i18n="selectHint"></p>
           </div>
           <div id="timeline-content" hidden></div>
         </section>
 
-        <div class="column-resizer" data-resize="inspector" role="separator" aria-orientation="vertical" aria-label="调整 Inspector 宽度" title="拖动调整宽度，双击恢复默认" tabindex="0"></div>
+        <div class="column-resizer" data-resize="inspector" role="separator" aria-orientation="vertical" data-i18n-aria-label="resizeInspector" data-i18n-title="resizeHint" tabindex="0"></div>
 
         <aside class="inspector-panel panel" id="inspector-panel">
           <div class="panel-heading">
             <div>
-              <span class="eyebrow">INSPECTOR</span>
-              <h2>上下文</h2>
+              <span class="eyebrow" data-i18n="inspectorEyebrow"></span>
+              <h2 data-i18n="inspectorHeading"></h2>
             </div>
           </div>
-          <div id="inspector-content" class="inspector-empty">
-            选择 rollout 后可查看运行信息、system prompt、tools schema 和原始 metadata。
-          </div>
+          <div id="inspector-content" class="inspector-empty"></div>
         </aside>
       </main>
     </div>

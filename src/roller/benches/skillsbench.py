@@ -649,11 +649,18 @@ class SkillsBenchAdapter(BenchAdapter):
         }
 
     def aggregate(self, samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
-        """Report SkillsBench's score-eligible pass rate and mean reward."""
+        """Report SkillsBench's score-eligible pass rate and mean reward.
+
+        Upstream's leaderboard divides by the score-eligible trials only
+        (``integrations/agentbeats/leaderboard/queries/overall.sql``) and lists
+        an agent timeout or error among the infrastructure failures that make a
+        trial ineligible. Every sample still counts in ``task_count``, so the
+        ineligible ones stay visible as ``infra_failed_count``.
+        """
 
         rows = list(samples)
         task_rows: list[dict[str, Any]] = []
-        category_values: dict[str, list[tuple[float, bool]]] = {}
+        category_values: dict[str, list[tuple[float, bool] | None]] = {}
         rewards: list[float] = []
         passed = 0
         for row in rows:
@@ -689,14 +696,17 @@ class SkillsBenchAdapter(BenchAdapter):
                 assert value is not None
                 rewards.append(value)
                 passed += int(is_passed)
-                if isinstance(category, str) and category:
-                    category_values.setdefault(category, []).append((value, is_passed))
             elif not error:
                 error = str(row.get("error") or status or "not score eligible")
+            if isinstance(category, str) and category:
+                category_values.setdefault(category, []).append(
+                    (value, is_passed) if eligible and value is not None else None
+                )
             task_rows.append(
                 {
                     "task_id": row.get("task_id"),
                     "model": row.get("model"),
+                    "harness": row.get("harness"),
                     "category": category,
                     "status": status,
                     "score": value if eligible else None,
@@ -708,6 +718,25 @@ class SkillsBenchAdapter(BenchAdapter):
         eligible_count = len(rewards)
         mean_reward = sum(rewards) / eligible_count if eligible_count else None
         pass_rate = passed / eligible_count if eligible_count else None
+        categories: dict[str, dict[str, Any]] = {}
+        for name, values in sorted(category_values.items()):
+            scored = [item for item in values if item is not None]
+            reward = (
+                round(sum(item[0] for item in scored) / len(scored), 6)
+                if scored
+                else None
+            )
+            categories[name] = {
+                "task_count": len(values),
+                "scored_count": len(scored),
+                "pass_rate": (
+                    round(sum(int(item[1]) for item in scored) / len(scored), 6)
+                    if scored
+                    else None
+                ),
+                "average": reward,
+                "scored_average": reward,
+            }
         return {
             "schema_version": REPORT_SCHEMA,
             "metric": "pass_rate",
@@ -723,16 +752,7 @@ class SkillsBenchAdapter(BenchAdapter):
             "scored_average": round(mean_reward, 6)
             if mean_reward is not None
             else None,
-            "categories": {
-                name: {
-                    "task_count": len(values),
-                    "pass_rate": round(
-                        sum(int(item[1]) for item in values) / len(values), 6
-                    ),
-                    "average": round(sum(item[0] for item in values) / len(values), 6),
-                }
-                for name, values in sorted(category_values.items())
-            },
+            "categories": categories,
             "tasks": task_rows,
         }
 

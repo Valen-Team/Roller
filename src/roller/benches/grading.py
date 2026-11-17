@@ -9,11 +9,12 @@ import subprocess
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from roller.benches.base import BenchBinding, GradeSpec
+from roller.benches.report import brief_reason
 from roller.harnesses.base import Harness, InteractiveHarness, InteractiveSession
 from roller.models import HarnessResult, RunRequest
 from roller.storage import atomic_write_json
@@ -24,6 +25,12 @@ ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 GRADER_CONTAINER_DIR = "/tmp/roller-bench"
 RUNNER_CONTAINER_PATH = f"{GRADER_CONTAINER_DIR}/_grade_runner.py"
 TRANSCRIPT_CONTAINER_PATH = f"{GRADER_CONTAINER_DIR}/transcript.jsonl"
+# Wait before the first grader retry; doubles before each further one.
+GRADER_RETRY_BACKOFF_SECONDS = 5.0
+# A grader that failed only after running this long is not run again: a judge
+# request error or a crash shows up early, and repeating a grader that used up
+# a long time limit would hold its container and grader slot that long again.
+GRADER_RETRY_MAX_SECONDS = 600.0
 
 # The grader is a plain function in the bench's own source. It is invoked with
 # the transcript and workspace the agent actually produced, which is why it has
@@ -88,6 +95,15 @@ class GradeOutcome:
     scores: dict[str, Any]
     elapsed_seconds: float
     error: str | None = None
+    # False when there was no container to run the grader in.
+    retryable: bool = True
+    attempts: int = 1
+
+    @property
+    def failure(self) -> str | None:
+        """Why grading failed; ``None`` for a score, zero included."""
+
+        return self.error or self.scores.get("error") or None
 
 
 def _error_scores(message: str) -> dict[str, Any]:
@@ -143,20 +159,18 @@ class ContainerGrader:
     def __init__(self, spec: GradeSpec) -> None:
         self.spec = spec
 
-    def _env_args(self, task_id: str) -> list[str]:
+    def _env_args(self) -> list[str]:
+        """Pass the grader the variables that are set.
+
+        A missing required one stops the run before any container starts, see
+        ``roller.benches.missing_grader_env``.
+        """
+
         args: list[str] = []
-        required = set(self.spec.env_names)
         for name in (*self.spec.env_names, *self.spec.optional_env_names):
             if not ENV_NAME_RE.fullmatch(name):
                 raise ValueError(f"invalid grading environment variable name: {name!r}")
-            value = os.environ.get(name)
-            if not value:
-                if name in required:
-                    logger.warning(
-                        "[%s] grading environment variable %s is unset; grader may fail",
-                        task_id,
-                        name,
-                    )
+            if not os.environ.get(name):
                 continue
             # Docker/Podman copies NAME from this process's environment. Do not
             # place secret values in argv, where process listings can expose them.
@@ -221,7 +235,7 @@ class ContainerGrader:
                 result = runtime.run(
                     [
                         "exec",
-                        *self._env_args(task_id),
+                        *self._env_args(),
                         "-w",
                         workspace,
                         container,
@@ -415,6 +429,7 @@ class GradedHarness(Harness):
         *,
         write_score_file: bool = True,
         grading_semaphore: threading.Semaphore | None = None,
+        grader_retries: int = 0,
     ) -> None:
         if not isinstance(inner, InteractiveHarness):
             raise TypeError(
@@ -425,6 +440,8 @@ class GradedHarness(Harness):
         self.binding = binding
         self.write_score_file = write_score_file
         self.grading_semaphore = grading_semaphore
+        # How often a failed grader is run again while the container is up.
+        self.grader_retries = grader_retries
         self.name = inner.name
 
     def run(self, request: RunRequest, output_dir: Path, attempt: int) -> HarnessResult:
@@ -453,22 +470,60 @@ class GradedHarness(Harness):
             status = "error"
             error = str(exc)
 
-        grade_started = time.monotonic()
         try:
-            outcome = self._grade(session, request, status)
-        except Exception as exc:
-            logger.exception("[%s] grading raised", request.task.id)
-            outcome = GradeOutcome(
-                _error_scores(str(exc)),
-                time.monotonic() - grade_started,
-                error=str(exc),
-            )
+            outcome = self._grade_with_retries(session, request, status)
         finally:
             # Grader failures must not skip saving the agent's work and teardown.
             result = session.finish(status, error)
         if outcome is not None:
             self._attach(result, request, output_dir, outcome)
         return result
+
+    def _grade_with_retries(
+        self, session: InteractiveSession, request: RunRequest, status: str
+    ) -> GradeOutcome | None:
+        """Grade, running a failed grader again while the container is still up.
+
+        A judge request error or a grader crash leaves the agent's work intact
+        in the container, so grading again costs far less than a new rollout.
+        A score is never retried, a zero included.
+        """
+
+        spec = self.binding.grade
+        # A failed agent is graded only where the bench asks for it.
+        graded = status == "ok" or (spec is not None and spec.grade_on_agent_failure)
+        attempt = 1
+        while True:
+            started = time.monotonic()
+            try:
+                outcome = self._grade(session, request, status)
+            except Exception as exc:
+                logger.exception("[%s] grading raised", request.task.id)
+                outcome = GradeOutcome(
+                    _error_scores(str(exc)), time.monotonic() - started, error=str(exc)
+                )
+            if (
+                outcome is None
+                or outcome.failure is None
+                or not (graded and outcome.retryable)
+                or outcome.elapsed_seconds > GRADER_RETRY_MAX_SECONDS
+                or attempt > self.grader_retries
+            ):
+                break
+            delay = GRADER_RETRY_BACKOFF_SECONDS * 2 ** (attempt - 1)
+            logger.warning(
+                "[%s] grading failed (%s); retry %d of %d in %gs",
+                request.task.id,
+                brief_reason(outcome.failure),
+                attempt,
+                self.grader_retries,
+                delay,
+            )
+            time.sleep(delay)
+            attempt += 1
+        if outcome is not None and attempt > 1:
+            outcome = replace(outcome, attempts=attempt)
+        return outcome
 
     def _prepare_session(self, session: InteractiveSession) -> None:
         prepare_benchmark_workspace(session, self.binding.grade)
@@ -507,6 +562,7 @@ class GradedHarness(Harness):
                 _error_scores(f"container unavailable for grading (status={status})"),
                 0.0,
                 error="container unavailable",
+                retryable=False,
             )
         runtime = getattr(getattr(session, "harness", None), "runtime", None)
         if runtime is None:
@@ -514,6 +570,7 @@ class GradedHarness(Harness):
                 _error_scores("harness exposes no docker runtime"),
                 0.0,
                 error="no docker runtime",
+                retryable=False,
             )
         grader = ContainerGrader(spec)
         grade_started = time.monotonic()
@@ -570,6 +627,8 @@ class GradedHarness(Harness):
             "error": outcome.error,
             "scores": outcome.scores,
         }
+        if outcome.attempts > 1:
+            payload["grade_attempts"] = outcome.attempts
         if isinstance(result.metadata, dict):
             result.metadata["bench"] = payload
         if self.write_score_file:

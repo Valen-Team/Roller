@@ -38,7 +38,7 @@ To check a change against a real Harness, build its image as described in the Ha
 | Harness adapters | `src/roller/harnesses/`, with trace converters in `src/roller/*_actf.py` |
 | Code that runs inside the containers | `src/roller/assets/` |
 | Bench adapters | `src/roller/benches/` |
-| SFT export | `src/roller/sft.py`, `src/roller/compaction_sft.py` |
+| SFT export | `src/roller/sft.py`, `src/roller/compaction_sft.py`, `src/roller/sft_dataset.py` |
 | Viewer | `src/roller/viewer/` |
 | Documentation | `roller/` and its Chinese counterpart in the [website repository](https://github.com/Valen-Team/valen-team.github.io) |
 | Machine-readable schemas | `schemas/` |
@@ -50,6 +50,7 @@ To check a change against a real Harness, build its image as described in the Ha
 - When behaviour changes, update the handbook in the [website repository](https://github.com/Valen-Team/valen-team.github.io), in `roller/` and `i18n/zh-Hans/docusaurus-plugin-content-docs-roller/current/`, and the two READMEs when they are affected. The English and Chinese pages mirror each other section by section.
 - A new `roller collect` option also needs an entry in `src/roller/benches/run_config.py`, either mapped to a YAML key or listed as collect-only. A test fails otherwise.
 - A setting that changes what a sample contains belongs in the run lock, so that `--resume` refuses to mix samples collected with different settings. A new option must leave the lock of existing runs unchanged when it is not used.
+- A run resumes under every patch release of the minor series that created it, so one run can hold samples collected by several patch releases. A change to the SFT projection fits a patch release, because Resume rewrites `trace_SFT.json` from the trace. A change after which new samples no longer belong with those an earlier release of the series collected waits for the next minor release.
 - Commit subjects follow the `type(scope): summary` form used in the history, for example `fix(openclaw): turn off heartbeat polls during a rollout`.
 - Add a line to the Unreleased section of [CHANGELOG.md](CHANGELOG.md) for a change users will notice.
 

@@ -21,6 +21,7 @@ from roller.harness_registry import (
 )
 from roller.models import RunRequest
 from roller.sft import actf_to_sft, validate_sft_record
+from roller.storage import atomic_write_json
 
 
 def trajectory_conversion_unavailable(
@@ -170,13 +171,46 @@ def _validate_output_files(
                 )
 
 
+def _check_sft_file(
+    path: Path, expected: dict[str, Any], mismatch: str, rebuilt: list[Path] | None
+) -> None:
+    """Compare an SFT file with the record this version derives from the trace.
+
+    A file that differs is an error. When ``rebuilt`` is a list, the file is
+    rewritten and added to it.
+    """
+
+    try:
+        actual = _json_object(path)
+        try:
+            validate_sft_record(actual)
+        except ValueError as exc:
+            raise ValueError(f"{path.name} is not a valid SFT record: {exc}") from exc
+        if actual != expected:
+            raise ValueError(mismatch)
+    except ValueError:
+        if rebuilt is None:
+            raise
+        validate_sft_record(expected)
+        atomic_write_json(path, expected)
+        rebuilt.append(path)
+
+
 def _validate_trajectory_files(
     base: Path,
     info: Mapping[str, Any],
     *,
     require_wire_trace: bool,
     require_cache_trace: bool,
-) -> None:
+    rebuild_sft: bool = False,
+) -> list[Path]:
+    """Validate the trajectory files of one participant.
+
+    SFT files are derived from the trace. With ``rebuild_sft``, one that differs
+    from what this version derives from the validated evidence is rewritten
+    and returned; without it, the difference is an error.
+    """
+
     raw_path = base / "trace.jsonl"
     actf_path = base / "trace_ACTF.json"
     sft_path = base / "trace_SFT.json"
@@ -226,7 +260,7 @@ def _validate_trajectory_files(
                 raise ValueError(
                     "SFT-unavailable sample contains an unexpected SFT artifact"
                 )
-        elif not segments and not sft_path.is_file():
+        elif not segments and not sft_path.is_file() and not rebuild_sft:
             raise ValueError(f"required trajectory file is missing: {sft_path.name}")
         elif segments and sft_path.exists():
             raise ValueError("compacted sample must not contain a linear SFT")
@@ -246,7 +280,7 @@ def _validate_trajectory_files(
     if isinstance(capture, dict):
         validate_capture(base, capture)
     if raw_only:
-        return
+        return []
     manifest = capture.get("manifest") if isinstance(capture, Mapping) else None
     try:
         # Captured Calls can reveal a rewrite that the native trace did not log.
@@ -276,6 +310,7 @@ def _validate_trajectory_files(
     ) as exc:
         raise ValueError(f"compaction evidence cannot be validated: {exc}") from exc
 
+    rebuilt: list[Path] | None = [] if rebuild_sft else None
     actf = _json_object(actf_path)
     if compaction_mode(info.get("harness")) == "claude" and has_legacy_claude_sidechain(
         actf
@@ -310,23 +345,20 @@ def _validate_trajectory_files(
         if actual_paths != expected_paths:
             raise ValueError("SFT segment files do not match metadata")
         for metadata, record in expected:
-            actual = _json_object(base / metadata["path"])
-            validate_sft_record(actual)
-            if actual != record:
-                raise ValueError("SFT segment does not match captured Call context")
-    elif not sft_unavailable:
-        actual_sft = _json_object(sft_path)
-        try:
-            validate_sft_record(actual_sft)
-        except ValueError as exc:
-            raise ValueError(
-                f"trace_SFT.json is not a valid SFT record: {exc}"
-            ) from exc
-        expected_sft = actf_to_sft(actf)
-        if actual_sft != expected_sft:
-            raise ValueError(
-                "trace_SFT.json does not match the canonical ACTF projection"
+            _check_sft_file(
+                base / metadata["path"],
+                record,
+                "SFT segment does not match captured Call context",
+                rebuilt,
             )
+    elif not sft_unavailable:
+        _check_sft_file(
+            sft_path,
+            actf_to_sft(actf),
+            "trace_SFT.json does not match the canonical ACTF projection",
+            rebuilt,
+        )
+    return rebuilt or []
 
 
 def validate_resumable_sample(
@@ -337,11 +369,16 @@ def validate_resumable_sample(
     require_wire_trace: bool = False,
     require_cache_trace: bool = False,
     verify_output_sha256: bool = False,
-) -> None:
+    rebuild_sft: bool = False,
+) -> list[Path]:
     """Raise ``ValueError`` when a finalized sample is unsafe to reuse.
 
     Output files are checked by path and size. ``verify_output_sha256`` also
     rereads each file and compares it with the recorded digest.
+
+    The request's position in the run is not part of a sample's identity: a run
+    that grows moves its requests. ``rebuild_sft`` rewrites SFT files that
+    differ from what this version derives from the trace, and returns them.
 
     Cache-trace requirements are resolved separately for each participant's
     recorded harness; wire-trace requirements apply to every harness.
@@ -352,7 +389,6 @@ def validate_resumable_sample(
     if info.get("status") != "ok":
         raise ValueError("info.json status is not ok")
     expected_identity = {
-        "request_index": request.index,
         "sample_index": request.sample_index,
         "sample_count": request.sample_count,
         "source_index": request.task.source_index,
@@ -367,16 +403,17 @@ def validate_resumable_sample(
                 f"{info.get(key)!r} != {expected!r}"
             )
 
-    _validate_trajectory_files(
+    rebuilt = _validate_trajectory_files(
         sample_dir,
         info,
         require_wire_trace=require_wire_trace,
         require_cache_trace=require_cache_trace,
+        rebuild_sft=rebuild_sft,
     )
     _validate_output_files(sample_dir, info, verify_sha256=verify_output_sha256)
 
     if request.task.user_simulator is None:
-        return
+        return rebuilt
     conversation = _json_object(sample_dir / "conversation.json")
     if conversation.get("schema_version") != "roller.conversation/v1":
         raise ValueError("conversation.json has an unsupported schema_version")
@@ -388,9 +425,10 @@ def validate_resumable_sample(
         raise ValueError("user_simulator/info.json has an unsupported schema_version")
     if simulator_info.get("status") != "ok":
         raise ValueError("user_simulator/info.json status is not ok")
-    _validate_trajectory_files(
+    return rebuilt + _validate_trajectory_files(
         simulator_dir,
         simulator_info,
         require_wire_trace=require_wire_trace,
         require_cache_trace=require_cache_trace,
+        rebuild_sft=rebuild_sft,
     )

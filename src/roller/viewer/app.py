@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from roller.benches.report import sample_score
 from roller.sft import SFTConversionError, _image_data_uri
 
 logger = logging.getLogger(__name__)
@@ -114,8 +115,8 @@ def _text_view(value: Any, limit: int) -> dict[str, Any]:
     }
 
 
-def _observation_view(value: Any, limit: int) -> dict[str, Any]:
-    """Expose validated inline images in their original tool-result order."""
+def _blocks_view(value: Any, limit: int) -> dict[str, Any]:
+    """Expose validated inline images in their original message order."""
     view = _text_view(value, limit)
     if not isinstance(value, list):
         return view
@@ -143,7 +144,41 @@ def _observation_view(value: Any, limit: int) -> dict[str, Any]:
 
 
 def _preview(value: Any, limit: int = 180) -> str:
+    if isinstance(value, list):
+        # A one-line preview names an image instead of quoting its bytes.
+        value = [
+            "<image>"
+            if isinstance(block, dict) and block.get("type") == "image"
+            else block
+            for block in value
+        ]
     return " ".join(_content_text(value).split())[:limit]
+
+
+def _bench_summary(info: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Reduce the grading record of a sample to the score bench-report.json uses."""
+    payload = _mapping(_mapping(info.get("runtime")).get("bench"))
+    if not payload:
+        return None
+    scores = _mapping(payload.get("scores"))
+    # A zero returned alongside a grader error is not a score of the model.
+    error = payload.get("error") or scores.get("error")
+    score_key = _string(payload.get("score_key")) or "overall_score"
+    return {
+        "name": _string(payload.get("bench")),
+        "category": _string(payload.get("category")),
+        "score": None if error else sample_score(scores, score_key),
+        "error": _content_text(error) if error else "",
+    }
+
+
+def _score_group(bench: Mapping[str, Any] | None) -> str:
+    """Name the score filter a rollout falls under; "" when it was not graded."""
+    if bench is None:
+        return ""
+    if bench["score"] is None:
+        return "unscored"
+    return "positive" if bench["score"] > 0 else "zero"
 
 
 def _duration_seconds(started_at: Any, finished_at: Any) -> float | None:
@@ -191,6 +226,7 @@ class Rollout:
             "harness": _string(self.info.get("harness")),
             "status": _string(self.info.get("status")) or "partial",
             "error": _string(self.info.get("error")),
+            "bench": _bench_summary(self.info),
             "request_index": self.info.get("request_index"),
             "source_index": self.info.get("source_index"),
             "path": self.relative_path,
@@ -291,11 +327,15 @@ class RollerRun:
         with self._lock:
             summaries = [item.summary(self.root) for item in self._rollouts.values()]
             status_counts: dict[str, int] = {}
+            score_counts: dict[str, int] = {}
             models: set[str] = set()
             tasks: set[str] = set()
             for item in summaries:
                 status = item["status"]
                 status_counts[status] = status_counts.get(status, 0) + 1
+                group = _score_group(item["bench"])
+                if group:
+                    score_counts[group] = score_counts.get(group, 0) + 1
                 if item["model"]:
                     models.add(item["model"])
                 tasks.add(item["task_id"])
@@ -332,6 +372,7 @@ class RollerRun:
                 "task_count": len(tasks),
                 "rollout_count": len(summaries),
                 "status_counts": status_counts,
+                "score_counts": score_counts,
                 "models": sorted(models),
                 "usage": _mapping(_mapping(self._run_info.get("summary")).get("usage")),
                 "configuration": {
@@ -356,9 +397,13 @@ class RollerRun:
         query: str = "",
         status: str = "",
         model: str = "",
+        score: str = "",
+        sort: str = "",
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
     ) -> dict[str, Any]:
+        if sort not in ("", "score", "-score"):
+            raise ViewerDataError("sort must be 'score' or '-score'")
         page = max(1, page)
         page_size = max(1, min(page_size, MAX_PAGE_SIZE))
         needle = query.strip().casefold()
@@ -370,8 +415,18 @@ class RollerRun:
                     continue
                 if model and item["model"] != model:
                     continue
+                if score and _score_group(item["bench"]) != score:
+                    continue
+                bench = item["bench"] or {}
                 haystack = "\n".join(
-                    (item["task_id"], item["model"], item["status"], item["error"])
+                    (
+                        item["task_id"],
+                        item["model"],
+                        item["status"],
+                        item["error"],
+                        bench.get("category", ""),
+                        bench.get("error", ""),
+                    )
                 ).casefold()
                 if needle and needle not in haystack:
                     continue
@@ -384,6 +439,16 @@ class RollerRun:
                 item["model"],
             )
         )
+        if sort:
+            # A task takes the place of its first rollout in this order, and
+            # rollouts without a score come last in both directions.
+            direction = -1 if sort == "-score" else 1
+
+            def by_score(item: dict[str, Any]) -> tuple[bool, float]:
+                value = (item["bench"] or {}).get("score")
+                return value is None, direction * (value or 0.0)
+
+            selected.sort(key=by_score)
         grouped: dict[str, dict[str, Any]] = {}
         for item in selected:
             group = grouped.setdefault(
@@ -548,9 +613,7 @@ class RollerRun:
                         "tool_name": _string(observation.get("toolName")),
                         "is_error": bool(observation.get("isError", False)),
                         "timestamp": observation.get("timestamp"),
-                        "content": _observation_view(
-                            observation.get("content"), text_limit
-                        ),
+                        "content": _blocks_view(observation.get("content"), text_limit),
                     }
                 )
         return {
@@ -562,7 +625,7 @@ class RollerRun:
                 step.get("started_at"), step.get("finished_at")
             ),
             "metric": _mapping(step.get("metric")),
-            "user": _text_view(step.get("user_content"), text_limit),
+            "user": _blocks_view(step.get("user_content"), text_limit),
             "assistant": {
                 "reasoning": _text_view(assistant.get("reasoning_content"), text_limit),
                 "content": _text_view(assistant.get("content"), text_limit),
@@ -632,6 +695,8 @@ def _handler(source: RollerRun) -> type[BaseHTTPRequestHandler]:
                         query=_first(query, "query"),
                         status=_first(query, "status"),
                         model=_first(query, "model"),
+                        score=_first(query, "score"),
+                        sort=_first(query, "sort"),
                         page=_query_int(query, "page", 1, 1),
                         page_size=_query_int(query, "page_size", DEFAULT_PAGE_SIZE, 1),
                     )

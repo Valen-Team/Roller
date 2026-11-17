@@ -35,6 +35,12 @@ JUDGE_ENV_NAMES = (
     "JUDGE_API_KEY",
     "JUDGE_MODEL",
 )
+# What the judge cannot run without: an endpoint and a key, each under either
+# name. The model and the retry count have defaults.
+JUDGE_REQUIRED_ENV = (
+    ("QWENCLAW_JUDGE_BASE_URL", "JUDGE_BASE_URL"),
+    ("QWENCLAW_JUDGE_API_KEY", "JUDGE_API_KEY"),
+)
 
 _GRADER_RUNTIME = r"""
 import json as _roller_json

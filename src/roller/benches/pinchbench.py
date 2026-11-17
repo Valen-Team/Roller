@@ -23,7 +23,11 @@ SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 PYTHON_FENCE_RE = re.compile(r"```python\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
 CODE_FENCE_RE = re.compile(r"```\s*\n(.*?)\n```", re.DOTALL)
 GRADING_TYPES = {"automated", "llm_judge", "hybrid"}
-JUDGE_ENV = ()
+JUDGED_GRADING_TYPES = {"llm_judge", "hybrid"}
+# The judge reads its key from either variable, so a judged task needs one of
+# them. ``bench.grade.env`` cannot say that, every name in it being required;
+# ``PinchBenchAdapter.required_env`` does, and both names are passed below.
+JUDGE_KEY_ENV = ("PINCHBENCH_JUDGE_API_KEY", "OPENROUTER_API_KEY")
 JUDGE_OPTIONAL_ENV = (
     "PINCHBENCH_JUDGE_BASE_URL",
     "PINCHBENCH_JUDGE_API_KEY",
@@ -822,6 +826,10 @@ class PinchBenchAdapter(BenchAdapter):
     variants = ("all", "automated-only", "core")
     default_variant = "all"
 
+    def required_env(self, binding: BenchBinding) -> tuple[tuple[str, ...], ...]:
+        judged = binding.metadata.get("grading_type") in JUDGED_GRADING_TYPES
+        return (JUDGE_KEY_ENV,) if judged else ()
+
     @staticmethod
     def _tasks_root(root: Path) -> Path:
         root = root.expanduser().resolve()
@@ -951,11 +959,10 @@ class PinchBenchAdapter(BenchAdapter):
                     ".roller-private/image_classification_answer_key.json",
                 )
             )
-        judge_required = task["grading_type"] in {"llm_judge", "hybrid"}
+        judge_required = task["grading_type"] in JUDGED_GRADING_TYPES
         grade = GradeSpec(
             code=_grader_source(task),
             entrypoint="roller_grade",
-            env_names=JUDGE_ENV if judge_required else (),
             optional_env_names=JUDGE_OPTIONAL_ENV if judge_required else (),
             timeout_seconds=3600 if judge_required else 120,
             stage=tuple(stage),

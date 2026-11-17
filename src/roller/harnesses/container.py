@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -13,7 +14,7 @@ from typing import Any
 
 from roller.artifacts import ArtifactCollectionResult, collect_output_directory
 from roller.harnesses.docker import DockerRuntime, warn_if_image_changed
-from roller.models import RunRequest
+from roller.models import RunRequest, Task
 from roller.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,39 @@ WORKSPACE_INPUT_CONTAINER_PATH = "/roller-input"
 
 def error_text(result: subprocess.CompletedProcess[str], limit: int = 2000) -> str:
     return (result.stderr or result.stdout or "unknown error").strip()[-limit:]
+
+
+def host_environment(task: Task, pass_env: Sequence[str]) -> dict[str, str]:
+    """Host variables a task container inherits.
+
+    ``pass_env`` names are optional; every variable the task names must be set.
+    The collect preflight calls this for each task before the first rollout.
+    """
+
+    environment: dict[str, str] = {}
+    for name in pass_env:
+        if not ENV_NAME.fullmatch(name):
+            raise ValueError(f"invalid environment variable name: {name!r}")
+        if os.environ.get(name):
+            environment[name] = os.environ[name]
+    for name in task.env_names:
+        if not ENV_NAME.fullmatch(name):
+            raise ValueError(f"invalid task environment variable name: {name!r}")
+        if not os.environ.get(name):
+            raise ValueError(
+                f"task {task.id!r} requires missing environment variable {name}"
+            )
+        environment[name] = os.environ[name]
+    return environment
+
+
+def host_api_key(label: str, name: str) -> str:
+    """The API key a Harness reads from the host variable ``name``."""
+
+    value = os.environ.get(name)
+    if not value:
+        raise ValueError(f"{label} requires a non-empty API key in {name}")
+    return value
 
 
 def docker_run_args(
