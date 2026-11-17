@@ -241,6 +241,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "applied whether or not --redact is on"
         ),
     )
+    export.add_argument(
+        "--preserve-task-keys",
+        action="store_true",
+        help="with --format hf, preserve deliberate benchmark key fixtures while still redacting known collection credentials and paths",
+    )
 
     cleaner = subparsers.add_parser(
         "clean",
@@ -906,6 +911,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "set this detail on Responses input_image blocks that Codex sends "
             "without one; needs the request recording proxy"
         ),
+    )
+    codex.add_argument(
+        "--codex-tool-images-as-user",
+        action="store_true",
+        help="attach tool-returned images as user images for Responses backends that ignore multimodal tool outputs",
     )
 
     claude = collect.add_argument_group("Claude Code")
@@ -1666,6 +1676,7 @@ def _collect(args: argparse.Namespace) -> int:
             web_search=args.codex_web_search,
             supports_websockets=args.codex_websockets,
             responses_image_detail=args.codex_image_detail,
+            responses_tool_images_as_user=args.codex_tool_images_as_user,
             wire_trace_mode=args.wire_trace,
             capture_calls=args.capture_calls,
             capture_debug=args.capture_debug,
@@ -1947,6 +1958,11 @@ def _collect(args: argparse.Namespace) -> int:
             "keep_thinking": args.keep_thinking,
             "web_search": args.codex_web_search,
             "supports_websockets": args.codex_websockets,
+            **(
+                {"responses_tool_images_as_user": True}
+                if codex_config.responses_tool_images_as_user
+                else {}
+            ),
             "pass_env_names": list(codex_config.pass_env),
             **(
                 {"capture_calls": True, "capture_debug": args.capture_debug}
@@ -2741,7 +2757,12 @@ def _export(args: argparse.Namespace) -> int:
             else None
         )
         rows, redaction = hf_dataset.export_run(
-            run_dir, output, rules, redact=args.redact, runs=args.include_runs
+            run_dir,
+            output,
+            rules,
+            redact=args.redact,
+            runs=args.include_runs,
+            preserve_task_keys=args.preserve_task_keys,
         )
         print(f"Exported {len(rows)} samples as a Hugging Face dataset to {output}")
         for line in redaction.lines():
@@ -2749,8 +2770,10 @@ def _export(args: argparse.Namespace) -> int:
         report_path = output.with_name(output.name + ".redaction-report.json")
         print(f"Redaction review: {report_path}")
         return 0
-    if args.redact_rules or args.include_runs:
-        raise ValueError("--redact-rules and --include-runs apply to --format hf")
+    if args.redact_rules or args.include_runs or args.preserve_task_keys:
+        raise ValueError(
+            "--redact-rules, --include-runs and --preserve-task-keys apply to --format hf"
+        )
     if args.format == "sft":
         summary = sft_dataset.export_run(run_dir, output, args.min_score)
         for line in summary.lines(output, args.min_score):

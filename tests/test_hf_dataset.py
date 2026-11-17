@@ -273,6 +273,24 @@ def _lines(path: Path) -> list[dict]:
 
 
 class HuggingFaceExportTests(unittest.TestCase):
+    def test_task_keys_can_survive_export_without_collection_addresses(self) -> None:
+        key = "sk-benchmark-fixture-0123456789abcdef"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = _run(root)
+            sample = next(run.glob("samples/*/*/trace_SFT.json"))
+            original = json.loads(sample.read_text())
+            original["messages"].append({"role": "user", "content": key})
+            sample.write_text(json.dumps(original))
+            before = sample.read_bytes()
+            rows, _ = export_run(
+                run, root / "dataset", environ={}, machine="", preserve_task_keys=True
+            )
+            messages = "\n".join(row["messages"] or "" for row in rows)
+            self.assertIn(key, messages)
+            self.assertNotIn(SECRET_HOST, messages)
+            self.assertEqual(sample.read_bytes(), before)
+
     def test_run_is_split_into_one_part_per_harness_and_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "dataset"

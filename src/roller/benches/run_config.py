@@ -190,6 +190,7 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "web_search": ("--codex-web-search", "value"),
         "websockets": ("--codex-websockets", "bool"),
         "image_detail": ("--codex-image-detail", "value"),
+        "tool_images_as_user": ("--codex-tool-images-as-user", "bool"),
         "config_set": ("--codex-config-set", "repeat"),
     },
     "claude-code": {

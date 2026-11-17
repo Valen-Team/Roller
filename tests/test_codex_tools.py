@@ -347,6 +347,65 @@ class CodexToolsTests(unittest.TestCase):
 
 
 class CodexToolsProxyTests(unittest.TestCase):
+    def test_tool_images_are_forwarded_as_user_images_only_when_enabled(self) -> None:
+        image = {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,AA==",
+            "detail": "auto",
+        }
+        key = "sk-benchmark-fixture-0123456789abcdef"
+        body = {
+            "model": "m",
+            "tools": TOOLS,
+            "input": [
+                {"role": "user", "content": "Inspect the image"},
+                {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "view_image",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "c1",
+                    "output": [{"type": "input_text", "text": key}, image],
+                },
+            ],
+        }
+        raw = json.dumps(body).encode()
+        for enabled in [False, True]:
+            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as tmp:
+                harness = CodexHarness(
+                    CodexConfig(
+                        api_base="http://example.test/v1",
+                        responses_tool_images_as_user=enabled,
+                    ),
+                    0,
+                )
+                with patch.object(WireTraceProxy, "start"):
+                    harness._start_wire_proxy(Path(tmp))
+                handler = MagicMock()
+                handler.server.proxy = harness._wire_proxy
+                handler.headers = {"Content-Length": str(len(raw))}
+                handler.rfile = io.BytesIO(raw)
+                handler.path, handler.command = "/v1/responses", "POST"
+                response = MagicMock(status=200, headers={})
+                response.read.return_value = b""
+                with patch(
+                    "roller.wire_trace.urllib_request.urlopen", return_value=response
+                ) as send:
+                    _ProxyHandler._handle(handler)
+                forwarded = send.call_args.args[0].data
+                if not enabled:
+                    self.assertEqual(forwarded, raw)
+                else:
+                    result = json.loads(forwarded)
+                    self.assertEqual(result["tools"], TOOLS)
+                    self.assertEqual(result["input"][:2], body["input"][:2])
+                    self.assertIn(key, result["input"][2]["output"])
+                    self.assertEqual(result["input"][3]["role"], "user")
+                    self.assertEqual(result["input"][3]["content"][-1], image)
+
     def test_capture_transport_requirements(self) -> None:
         with self.assertRaisesRegex(ValueError, "network host"):
             CodexConfig(api_base="http://example.test/v1", network="bridge")

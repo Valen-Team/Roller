@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -12,6 +13,7 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 from roller.benches.base import BenchBinding, GradeSpec
 from roller.benches.report import brief_reason
@@ -175,6 +177,33 @@ class ContainerGrader:
             # Docker/Podman copies NAME from this process's environment. Do not
             # place secret values in argv, where process listings can expose them.
             args.extend(["-e", name])
+        # HTTPX does not interpret NO_PROXY CIDRs. Expand configured ranges for
+        # the grader's actual endpoints without bypassing other proxy traffic.
+        bypass = os.environ.get("NO_PROXY") or os.environ.get("no_proxy", "")
+        entries = [value.strip() for value in bypass.split(",") if value.strip()]
+        networks = []
+        for value in entries:
+            if "/" in value:
+                try:
+                    networks.append(ipaddress.ip_network(value, strict=False))
+                except ValueError:
+                    pass
+        hosts = []
+        for name in (*self.spec.env_names, *self.spec.optional_env_names):
+            if name.endswith("BASE_URL"):
+                host = urlsplit(os.environ.get(name, "")).hostname
+                try:
+                    address = ipaddress.ip_address(host or "")
+                except ValueError:
+                    continue
+                if (
+                    any(address in network for network in networks)
+                    and host not in entries
+                ):
+                    hosts.append(host)
+        if hosts:
+            expanded = ",".join(dict.fromkeys([*entries, *hosts]))
+            args.extend(["-e", "NO_PROXY=" + expanded, "-e", "no_proxy=" + expanded])
         return args
 
     def grade(
