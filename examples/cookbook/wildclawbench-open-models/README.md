@@ -4,13 +4,14 @@
 
 Collect, grade and browse 28 WildClawBench tasks with DeepSeek-V4.1-Flash-1017,
 GLM-5.3-Flash, Kimi K3 and Kimi K3.1 Pro. Each model runs each task three times:
-84 attempts per model, 336 per Harness. The published batches retain successful,
+84 attempts per collection. The dataset has 336 OpenClaw attempts and 168
+Codex attempts from DeepSeek and GLM. The published batches retain successful,
 timed-out and failed attempts. Current results and browsable sessions are on HF.
 
 ## Setup
 
-Install Roller from the current repository (`pip install -e .`), have Docker
-running, and download [WildClawBench](https://github.com/InternLM/WildClawBench)
+Use a Git checkout for the options in this example (PyPI 0.4.0 predates them).
+Install with `pip install -e .` from the checkout, start Docker, and download [WildClawBench](https://github.com/InternLM/WildClawBench)
 with its task assets. The image build instructions are in
 [`docker/wildclawbench`](../../../docker/wildclawbench).
 
@@ -43,8 +44,16 @@ roller view runs/wildclawbench-codex-glm
 
 For a backend that drops images from tool outputs, set `TOOL_IMAGES_AS_USER=1`.
 This attaches the same image bytes as a following user image message and keeps
-the associated tool text. The Kimi K3.1 Pro backend used for the Codex batch
-needed this compatibility setting; other backends should leave it off.
+the associated tool text. Kimi K3.1 Pro backends that lose tool images
+need this compatibility setting; other backends should leave it off.
+
+For a one-task check before a full collection:
+
+```bash
+printf '%s\n' 05_Creative_Synthesis_task_10_social_poster_multi_crop > one-task.txt
+TASK_IDS_FILE="$PWD/one-task.txt" RUNS_PER_TASK=1 PARALLEL=1 \
+  RUN_NAME=wildclawbench-codex-check ./collect-codex.sh
+```
 
 ## OpenClaw
 
@@ -76,8 +85,8 @@ with the date, model settings, task selection and any compatibility settings.
 The HF exporter replaces collection endpoints, host paths and known environment
 credentials. `--preserve-task-keys` keeps deliberately planted benchmark keys;
 review the resulting files and add environment-specific replacements to
-`redact.json`. Raw runs stay unchanged. An execution status of `ok` means the
-agent exited normally; consult the score and produced files for task success.
+`redact.json`. Raw runs stay unchanged. The exported table keeps execution status,
+score, grader error and output filenames.
 
 The two Harness batches are an observed comparison under their documented
 settings. Their prompts, tools, context management, software versions and

@@ -49,7 +49,9 @@ CONTEXT_PATTERNS = (
 _HOME = re.compile(
     r"/(?:home|Users)/(?!root(?:/|\b)|ubuntu(?:/|\b)|user(?:/|\b))[A-Za-z0-9][A-Za-z0-9._-]*"
 )
-_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}\b")
+_EMAIL = re.compile(
+    r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}\b"
+)
 _IP = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.]|\.\d)")
 
 

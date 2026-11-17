@@ -218,14 +218,6 @@ class CodexConfig:
                 )
         if self.wire_trace_mode == "full" and not self.api_base:
             raise ValueError("Codex --wire-trace full requires --api-base")
-        if self.responses_tool_images_as_user and (
-            not self.api_base
-            or self.wire_trace_mode == "off"
-            or self.supports_websockets
-        ):
-            raise ValueError(
-                "Codex tool image compatibility requires --api-base, wire tracing and --no-codex-websockets"
-            )
         if self.wire_trace_mode == "full" and self.supports_websockets:
             raise ValueError("Codex tool capture requires --no-codex-websockets")
         if (

@@ -18,9 +18,9 @@ if [[ -n "${MODEL_CONTEXT_WINDOW:-}" ]]; then
   compat+=(--codex-config-set "model_context_window=$MODEL_CONTEXT_WINDOW")
 fi
 ids=()
-while IFS= read -r task; do ids+=(--bench-task-id "$task"); done < task-ids.txt
+while IFS= read -r task; do ids+=(--bench-task-id "$task"); done < "${TASK_IDS_FILE:-task-ids.txt}"
 roller collect --bench wildclawbench --bench-root "$WILDCLAWBENCH_ROOT" \
-  "${ids[@]}" --bench-runs-per-task 3 \
+  "${ids[@]}" --bench-runs-per-task "${RUNS_PER_TASK:-3}" \
   --model "$MODEL" --api-base "$OPENAI_BASE_URL" \
   --harness codex \
   --codex-image "${CODEX_IMAGE:-ghcr.io/valen-team/roller-wildclaw-codex:1.3-codex0.149.0}" \

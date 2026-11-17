@@ -61,3 +61,17 @@ def test_report_keeps_content_and_does_not_repeat_values(tmp_path: Path):
     }
     assert "alice" not in report.read_text()
     assert json.loads((output / "sample.jsonl").read_text())["text"] == text
+
+
+def test_report_handles_long_image_data_without_an_email(tmp_path: Path):
+    output = tmp_path / "dataset"
+    output.mkdir()
+    (output / "sample.jsonl").write_text(
+        json.dumps({"image_url": "data:image/png;base64," + "A" * 100_000})
+        + "\n"
+        + json.dumps({"text": "alice@example.org"})
+        + "\n"
+    )
+    report = json.loads(export_audit.write_report(output).read_text())
+    assert report["counts"] == {"email": 1}
+    assert report["findings"] == [{"file": "sample.jsonl", "line": 2, "kind": "email"}]
