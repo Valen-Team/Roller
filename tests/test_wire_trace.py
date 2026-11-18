@@ -30,6 +30,71 @@ from roller.wire_trace import (
 
 
 class FullCallCaptureTests(unittest.TestCase):
+    def test_anthropic_pdf_rewrite_preserves_other_tool_results_and_records_forwarded_body(
+        self,
+    ):
+        document = {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "encoded PDF",
+            },
+            "cache_control": {"type": "ephemeral"},
+        }
+        other = {"type": "tool_result", "tool_use_id": "second", "is_error": True}
+        text = {"type": "text", "text": "tool output"}
+        tool = {
+            "type": "tool_result",
+            "tool_use_id": "first",
+            "content": [text, document],
+        }
+        payload = {"messages": [{"role": "user", "content": [tool, other]}]}
+        body = json.dumps(payload).encode()
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / "wire.jsonl"
+            handler = MagicMock()
+            handler.server.proxy = WireTraceProxy(
+                "http://model.test", log, mode="full", anthropic_pdf_as_images=True
+            )
+            handler.command = "POST"
+            handler.path = "/v1/messages"
+            handler.headers = {"Content-Length": str(len(body))}
+            handler.rfile = io.BytesIO(body)
+            handler._record.side_effect = lambda value: _ProxyHandler._record(
+                handler, value
+            )
+            response = MagicMock(status=200, headers={})
+            response.read.return_value = b""
+            with (
+                patch("roller.anthropic_pdf._pages", return_value=(("page", "png"),)),
+                patch(
+                    "roller.wire_trace.urllib_request.urlopen", return_value=response
+                ) as send,
+            ):
+                _ProxyHandler._handle(handler)
+            forwarded = json.loads(send.call_args.args[0].data)
+            self.assertEqual(forwarded, read_jsonl(log)[0]["body"])
+            result, unchanged = forwarded["messages"][0]["content"]
+            self.assertEqual(unchanged, other)
+            self.assertEqual(result["tool_use_id"], "first")
+            self.assertEqual(
+                result["content"],
+                [
+                    text,
+                    {"type": "text", "text": "page"},
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "png",
+                        },
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                ],
+            )
+
     def forward(
         self, root, recorder, payload, *, chat_session=None, native_run=None, wfile=None
     ):

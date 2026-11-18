@@ -25,6 +25,7 @@ dependencies = ["PyYAML>=6.0,<7"]
 [project.optional-dependencies]
 test = ["pytest", "jsonschema", "tomli; python_version < '3.11'"]
 swebench-pro = ["pyarrow>=14"]
+pdf = ["pypdfium2>=4.30", "Pillow>=10"]
 
 [project.urls]
 Homepage = "https://github.com/Valen-Team/Roller"

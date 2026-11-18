@@ -952,6 +952,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "recording proxy"
         ),
     )
+    claude.add_argument(
+        "--claude-pdf-as-images",
+        action="store_true",
+        help="render inline PDF documents as page text and images for Messages backends without document support",
+    )
     return parser
 
 
@@ -1715,6 +1720,7 @@ def _collect(args: argparse.Namespace) -> int:
             capture_debug=args.capture_debug,
             permission_mode=args.claude_permission_mode,
             unique_tool_ids=args.claude_unique_tool_ids,
+            pdf_as_images=args.claude_pdf_as_images,
             wire_trace_mode=args.wire_trace,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
@@ -2006,6 +2012,7 @@ def _collect(args: argparse.Namespace) -> int:
                 else {}
             ),
             **({"unique_tool_ids": True} if claude_code_config.unique_tool_ids else {}),
+            **({"pdf_as_images": True} if claude_code_config.pdf_as_images else {}),
         }
 
     if hermes_config is not None:

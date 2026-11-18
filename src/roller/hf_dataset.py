@@ -1059,7 +1059,7 @@ def export_run(
         for pattern, replacement in rules.replace:
             name = pattern.sub(replacement, name)
         name = safe_component(name)
-        parts[name] = samples
+        parts.setdefault(name, []).extend(samples)
         source_samples.update(
             {
                 _export_path(sample.relative_to(run_dir).as_posix(), rules): sample
