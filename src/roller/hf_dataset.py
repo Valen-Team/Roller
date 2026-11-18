@@ -43,6 +43,9 @@ from roller.storage import safe_component
 
 DATA_DIR = "data"
 TRACES_DIR = "traces"
+# The Hub splits traces with str.splitlines(), which treats these JSON string
+# characters as line breaks even though they are part of a JSONL record.
+_TRACE_LINE_BREAKS = re.compile("[\\u0085\\u2028\\u2029]")
 # Native session schemas of ``trace.jsonl`` that the Hub reads as they are.
 NATIVE_TRACES = {
     "openclaw-session-jsonl",
@@ -66,6 +69,32 @@ configs:
   default: true
 - config_name: trajectories
   data_files: {data_dir}/*.jsonl
+dataset_info:
+- config_name: trajectories
+  features:
+  - {{name: run, dtype: string}}
+  - {{name: sample, dtype: string}}
+  - {{name: trace, dtype: string}}
+  - {{name: task_id, dtype: string}}
+  - {{name: upstream_task_id, dtype: string}}
+  - {{name: run_index, dtype: int64}}
+  - {{name: bench, dtype: string}}
+  - {{name: category, dtype: string}}
+  - {{name: model, dtype: string}}
+  - {{name: harness, dtype: string}}
+  - {{name: status, dtype: string}}
+  - {{name: error, dtype: string}}
+  - {{name: score, dtype: float64}}
+  - {{name: grader_error, dtype: string}}
+  - {{name: steps, dtype: int64}}
+  - {{name: tool_calls, dtype: int64}}
+  - {{name: input_tokens, dtype: int64}}
+  - {{name: output_tokens, dtype: int64}}
+  - {{name: total_tokens, dtype: int64}}
+  - {{name: elapsed_seconds, dtype: float64}}
+  - {{name: files, sequence: string}}
+  - {{name: messages, dtype: string}}
+  - {{name: tools, dtype: string}}
 ---
 
 # {name}
@@ -709,6 +738,10 @@ def session_trace(
     return lines
 
 
+def _trace_line(line: str) -> str:
+    return _TRACE_LINE_BREAKS.sub(lambda match: f"\\u{ord(match[0]):04x}", line)
+
+
 def _write_trace(
     path: Path,
     sample_dir: Path,
@@ -718,26 +751,23 @@ def _write_trace(
 ) -> bool:
     """Write the session trace of one sample and tell whether it has one.
 
-    A native OpenClaw, Codex or Claude Code session is published as it is; an
-    OpenClaw session header also gets ``header``, which names the harness and
-    gives the session an id that is unique in the run. Any other sample is
-    converted from its ACTF.
+    Preserve native OpenClaw, Codex and Claude Code records, escaping Unicode
+    line separators for the Hub. An OpenClaw session header also gets
+    ``header``, which names the harness and gives the session an id that is
+    unique in the run. Convert other samples from ACTF.
     """
 
     raw = sample_dir / "trace.jsonl"
     schema = (info.get("trajectory") or {}).get("raw_schema")
     if schema in NATIVE_TRACES and raw.is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
-        if schema != "openclaw-session-jsonl":
-            shutil.copyfile(raw, path)
-            return True
         sessions = 0
         with (
             raw.open(encoding="utf-8", newline="") as reader,
             path.open("w", encoding="utf-8", newline="") as writer,
         ):
             for line in reader:
-                if '"session"' in line:
+                if schema == "openclaw-session-jsonl" and '"session"' in line:
                     row = json.loads(line)
                     if isinstance(row, dict) and row.get("type") == "session":
                         # Roller starts every OpenClaw session under the same id.
@@ -745,14 +775,14 @@ def _write_trace(
                         suffix = f"#{sessions}" if sessions > 1 else ""
                         row = {**row, **header, "id": header["id"] + suffix}
                         line = json.dumps(row, ensure_ascii=False) + "\n"
-                writer.write(line)
+                writer.write(_trace_line(line))
         return True
     if not trajectory.get("steps"):
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as writer:
         for row in session_trace(trajectory, header):
-            writer.write(json.dumps(row, ensure_ascii=False) + "\n")
+            writer.write(_trace_line(json.dumps(row, ensure_ascii=False)) + "\n")
     return True
 
 

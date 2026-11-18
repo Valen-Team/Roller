@@ -512,6 +512,36 @@ class HuggingFaceExportTests(unittest.TestCase):
                 ],
             )
 
+    def test_codex_trace_survives_hub_line_splitting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _run(Path(tmp))
+            output = Path(tmp) / "dataset"
+            sample = run_dir / "samples" / DIR_A / "00000000_chat__run_01"
+            info_path = sample / "info.json"
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+            info["harness"] = "codex"
+            info["trajectory"]["raw_schema"] = "codex-session-jsonl"
+            info_path.write_text(json.dumps(info), encoding="utf-8")
+            events = [
+                {"type": "session_meta", "payload": {"id": "test"}},
+                {
+                    "type": "event_msg",
+                    "payload": {"message": "前\u0085中\u2028后\u2029"},
+                },
+            ]
+            (sample / "trace.jsonl").write_text(
+                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in events),
+                encoding="utf-8",
+            )
+
+            _export(run_dir, output)
+
+            trace = output / "traces/codex-model-a/00000000_chat__run_01.jsonl"
+            self.assertEqual(
+                [json.loads(line) for line in trace.read_text("utf-8").splitlines()],
+                events,
+            )
+
     def test_session_trace_is_a_pi_session(self) -> None:
         lines = session_trace(
             ACTF, {"harness": "opencode", "id": "s1", "name": "demo", "model": "p/m"}
