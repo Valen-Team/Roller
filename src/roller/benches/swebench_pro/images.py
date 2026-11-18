@@ -43,6 +43,7 @@ def _image_id(runtime: Any, image: str) -> str:
 
 
 def _image_architecture(runtime: Any, image: str) -> str:
+    # Raw: the failure detail of this inspect is the error a caller reports.
     inspected = runtime.run(
         ["image", "inspect", image, "--format", "{{.Architecture}}"], timeout=60
     )
@@ -53,6 +54,8 @@ def _image_architecture(runtime: Any, image: str) -> str:
 
 
 def _pull_image_id(runtime: Any, image: str) -> str:
+    # Raw: reuses one result for the initial check, the retry loop's success
+    # test and the final error detail.
     inspected = runtime.run(
         ["image", "inspect", image, "--format", "{{.Id}}"], timeout=60
     )
@@ -157,6 +160,8 @@ def ensure_harness_image(
         cached = _DERIVED_IMAGES.get(key)
         if cached is not None:
             return cached
+        # Raw: the image-id argv is what the derived-image cache check expects
+        # to see, and its result is only asked for a return code.
         existing = runtime.run(
             ["image", "inspect", tag, "--format", "{{.Id}}"], timeout=60
         )

@@ -363,7 +363,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             f"ln -s {shlex.quote(output_root)} {OUTPUTS_CONTAINER_PATH}"
         )
         self._checked(
-            ["exec", container, "/bin/bash", "-c", script],
+            self.runtime.exec_args(container, ["/bin/bash", "-c", script]),
             "Claude Code workspace setup",
         )
 
@@ -378,32 +378,24 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
                 f"{CLAUDE_HOME_CONTAINER_PATH}/skills/; fi"
             )
             self._checked(
-                ["exec", container, "/bin/bash", "-c", script],
+                self.runtime.exec_args(container, ["/bin/bash", "-c", script]),
                 "Claude Code context injection",
             )
         for command in request.task.setup_commands:
             self._checked(
-                [
-                    "exec",
-                    "-w",
-                    self.config.workspace_container_path,
+                self.runtime.exec_args(
                     container,
-                    "/bin/bash",
-                    "-lc",
-                    command,
-                ],
+                    ["/bin/bash", "-lc", command],
+                    workdir=self.config.workspace_container_path,
+                ),
                 f"task setup command {command!r}",
             )
 
     def _prepare_settings(self, container: str) -> None:
         self._checked(
-            [
-                "exec",
-                container,
-                "mkdir",
-                "-p",
-                CLAUDE_HOME_CONTAINER_PATH,
-            ],
+            self.runtime.exec_args(
+                container, ["mkdir", "-p", CLAUDE_HOME_CONTAINER_PATH]
+            ),
             "Claude Code config directory setup",
         )
         if self.config.settings_path is None:
@@ -433,12 +425,6 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         """
 
         command = [
-            "exec",
-            "-e",
-            f"CLAUDE_CONFIG_DIR={CLAUDE_HOME_CONTAINER_PATH}",
-            "-w",
-            self.config.workspace_container_path,
-            container,
             "claude",
             "--verbose",
             "--output-format=stream-json",
@@ -459,18 +445,26 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             command.append("--continue")
         if input_path is None:
             command.extend(["--print", prompt])
-            return command
-        command.extend(["--print", "--input-format=stream-json"])
-        # ``docker exec`` forwards no stdin; read the message from the file.
-        index = command.index("claude")
-        command[index:] = [
-            "/bin/sh",
-            "-c",
-            'exec "$@" < "$0"',
-            input_path,
-            *command[index:],
+        else:
+            command.extend(["--print", "--input-format=stream-json"])
+            # ``docker exec`` forwards no stdin; read the message from the file.
+            index = command.index("claude")
+            command[index:] = [
+                "/bin/sh",
+                "-c",
+                'exec "$@" < "$0"',
+                input_path,
+                *command[index:],
+            ]
+        return [
+            "exec",
+            "-e",
+            f"CLAUDE_CONFIG_DIR={CLAUDE_HOME_CONTAINER_PATH}",
+            "-w",
+            self.config.workspace_container_path,
+            container,
+            *command,
         ]
-        return command
 
     def _copy_image_input(
         self, container: str, request: RunRequest, prompt: str, staging: Path
@@ -517,7 +511,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         except subprocess.TimeoutExpired as exc:
             process.kill()
             process.wait()
-            self.runtime.run(["exec", container, "pkill", "-f", "claude"])
+            self.runtime.exec(container, ["pkill", "-f", "claude"])
             raise TimeoutError("Claude Code turn timed out") from exc
         finally:
             self.runtime.close_log(process)

@@ -23,12 +23,10 @@ def session_trajectory(session: Any) -> dict[str, Any]:
     else:
         source = session.output_dir / "rollout" / "bench-native.jsonl"
         source.parent.mkdir(parents=True, exist_ok=True)
-        copied = harness.runtime.run(
-            [
-                "cp",
-                f"{session.container}:{session.transcript_container_path}",
-                str(source),
-            ],
+        copied = harness.runtime.copy_out(
+            session.container,
+            session.transcript_container_path,
+            source,
             timeout=60,
         )
         if copied.returncode:

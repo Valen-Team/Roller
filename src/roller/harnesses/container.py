@@ -86,38 +86,40 @@ def docker_run_args(
     environment in provenance.
     """
 
-    args = ["run", "-d", "--name", container, "--label", f"ai.roller.harness={harness}"]
-    if config.container_user is not None:
-        args += ["--user", config.container_user]
-    if config.network:
-        args += ["--network", config.network]
-    for name, value in sorted(environment.items()):
-        args += ["-e", f"{name}={value}"]
-    for name, value in (extra_env or {}).items():
-        args += ["-e", f"{name}={value}"]
-    bundle, task = request.bundle, request.task
+    task = request.task
+    bundle = request.bundle
+    volumes: list[str] = []
+    env = [(name, value) for name, value in sorted(environment.items())]
+    env += [(name, value) for name, value in (extra_env or {}).items()]
     if bundle is not None:
-        args += [
-            "-v",
+        volumes += [
             f"{bundle.inputs_root}:{INPUTS_CONTAINER_PATH}:ro",
-            "-v",
             f"{bundle.context_root}:{CONTEXT_CONTAINER_PATH}:ro",
         ]
         if not bundle.legacy_workspace and task.input_mode == "mount":
             for spec in task.inputs:
                 source = bundle.inputs_root / spec.path
                 if source.exists():
-                    args += [
-                        "-v",
-                        f"{source}:{config.workspace_container_path}/{spec.path}:ro",
-                    ]
+                    volumes.append(
+                        f"{source}:{config.workspace_container_path}/{spec.path}:ro"
+                    )
     elif task.workspace is not None:
         if not task.workspace.is_dir():
             raise FileNotFoundError(
                 f"task workspace is not a directory: {task.workspace}"
             )
-        args += ["-v", f"{task.workspace}:{WORKSPACE_INPUT_CONTAINER_PATH}:ro"]
-    return args
+        volumes.append(f"{task.workspace}:{WORKSPACE_INPUT_CONTAINER_PATH}:ro")
+    # ``image=None`` stops the argv before the image: every caller appends its
+    # own image and command, exactly as this function always let it.
+    return DockerRuntime().start_args(
+        container,
+        None,
+        labels={"ai.roller.harness": harness},
+        env=env,
+        volumes=volumes,
+        network=config.network,
+        user=config.container_user,
+    )
 
 
 def collect_outputs(

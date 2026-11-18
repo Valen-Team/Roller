@@ -5,7 +5,9 @@ from __future__ import annotations
 import ast
 import json
 import re
+import subprocess
 import tempfile
+from typing import Any
 
 from roller.benches.grading import (
     GradedHarness,
@@ -349,12 +351,22 @@ def _session_trajectory(session):
     return qwenclaw.session_trajectory(session)
 
 
+def _copy_in(
+    runtime: Any, source: Any, container: str, destination: str, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Copy the transcript in, named here for substitution in tests."""
+
+    return runtime.copy_in(source, container, destination, timeout=timeout)
+
+
 class QwenClawGradedHarness(GradedHarness):
     """Normalize each native journal before the upstream grader sees it."""
 
     def _prepare_session(self, session) -> None:
         super()._prepare_session(session)
         workspace = workspace_container_path(session)
+        # Raw: this runs before grading, where the runtime is whatever the
+        # caller injected, which only promises the low-level argv.
         result = self.inner.runtime.run(
             [
                 "exec",
@@ -382,12 +394,11 @@ class QwenClawGradedHarness(GradedHarness):
             ) as handle:
                 json.dump(events, handle, ensure_ascii=False)
                 handle.flush()
-                copied = self.inner.runtime.run(
-                    [
-                        "cp",
-                        handle.name,
-                        f"{session.container}:/tmp/roller-qwenclaw-transcript.json",
-                    ],
+                copied = _copy_in(
+                    self.inner.runtime,
+                    handle.name,
+                    session.container,
+                    "/tmp/roller-qwenclaw-transcript.json",
                     timeout=60,
                 )
                 if copied.returncode:

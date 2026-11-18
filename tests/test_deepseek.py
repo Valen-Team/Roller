@@ -18,6 +18,7 @@ from roller.deepseek_actf import (
     extract_deepseek_usage,
 )
 from roller.harnesses.deepseek import RUNNER_PATH, DeepSeekConfig, DeepSeekHarness
+from roller.harnesses.docker import DockerRuntime
 from roller.models import RunRequest, Task
 from roller.sft import actf_to_sft
 
@@ -554,7 +555,7 @@ class DeepSeekTraceTests(unittest.TestCase):
             )
 
 
-class FakeRuntime:
+class FakeRuntime(DockerRuntime):
     def __init__(self):
         self.calls = []
         self.result = {"ok": True, "content": "TOKEN"}

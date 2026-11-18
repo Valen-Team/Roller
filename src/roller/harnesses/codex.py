@@ -375,7 +375,7 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
             f"ln -s {shlex.quote(output_root)} {OUTPUTS_CONTAINER_PATH}"
         )
         self._checked(
-            ["exec", container, "/bin/bash", "-c", script],
+            self.runtime.exec_args(container, ["/bin/bash", "-c", script]),
             "Codex workspace setup",
         )
 
@@ -389,26 +389,24 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
                 'cp -a /roller/task/context/skills/. "$HOME/.agents/skills/"; fi'
             )
             self._checked(
-                ["exec", container, "/bin/bash", "-c", script],
+                self.runtime.exec_args(container, ["/bin/bash", "-c", script]),
                 "Codex context injection",
             )
         for command in request.task.setup_commands:
             self._checked(
-                [
-                    "exec",
-                    "-w",
-                    self.config.workspace_container_path,
+                self.runtime.exec_args(
                     container,
-                    "/bin/bash",
-                    "-lc",
-                    command,
-                ],
+                    ["/bin/bash", "-lc", command],
+                    workdir=self.config.workspace_container_path,
+                ),
                 f"task setup command {command!r}",
             )
 
     def _prepare_config(self, container: str) -> None:
         self._checked(
-            ["exec", container, "mkdir", "-p", CODEX_HOME_CONTAINER_PATH],
+            self.runtime.exec_args(
+                container, ["mkdir", "-p", CODEX_HOME_CONTAINER_PATH]
+            ),
             "Codex home setup",
         )
         if self.config.config_path is None:
@@ -434,16 +432,7 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
         *,
         resume: bool,
     ) -> list[str]:
-        command = [
-            "exec",
-            "-e",
-            f"CODEX_HOME={CODEX_HOME_CONTAINER_PATH}",
-            "-w",
-            self.config.workspace_container_path,
-            container,
-            "codex",
-            "exec",
-        ]
+        command = ["codex", "exec"]
         if resume:
             if self.config.capture_calls and not self._root_thread_id:
                 raise RuntimeError(
@@ -512,7 +501,12 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
         ):
             command.extend(["--image", image["path"]])
         command.extend(["--", prompt])
-        return command
+        return self.runtime.exec_args(
+            container,
+            command,
+            env={"CODEX_HOME": CODEX_HOME_CONTAINER_PATH},
+            workdir=self.config.workspace_container_path,
+        )
 
     def _run_turn(
         self,
@@ -534,7 +528,7 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
         except subprocess.TimeoutExpired as exc:
             process.kill()
             process.wait()
-            self.runtime.run(["exec", container, "pkill", "-f", "codex exec"])
+            self.runtime.exec(container, ["pkill", "-f", "codex exec"])
             raise TimeoutError("Codex turn timed out") from exc
         finally:
             self.runtime.close_log(process)
@@ -571,7 +565,7 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
             "rows=[x for x in rows if not json.loads(x.open().readline()).get('payload',{}).get('parent_thread_id')]; "
             "print(max(rows,key=lambda x:x.stat().st_mtime_ns) if rows else '')"
         )
-        found = self.runtime.run(["exec", container, "python3", "-c", finder])
+        found = self.runtime.exec(container, ["python3", "-c", finder])
         source = found.stdout.strip() if found.returncode == 0 else ""
         if not source:
             return None

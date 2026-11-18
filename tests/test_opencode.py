@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 
 from roller.cli import _build_parser, _collect
 from roller.harnesses.container import PROXY_ENV_NAMES
+from roller.harnesses.docker import DockerRuntime
 from roller.harnesses.opencode import (
     RUNNER_PATH,
     OpenCodeConfig,
@@ -643,7 +644,7 @@ class OpenCodeTraceTests(unittest.TestCase):
             )
 
 
-class FakeRuntime:
+class FakeRuntime(DockerRuntime):
     def __init__(self):
         self.calls = []
         self.turn_configs = []

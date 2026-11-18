@@ -31,6 +31,7 @@ from roller.benches.qwenclaw import (
 )
 from roller.benches.transcripts import grader_messages
 from roller.cli import _bench, _bench_report, _build_parser
+from roller.harnesses.docker import DockerRuntime
 from roller.harnesses.hermes import HermesConfig, HermesHarness
 
 
@@ -730,7 +731,7 @@ class QwenClawTranscriptTests(unittest.TestCase):
         self.assertEqual(events[2]["message"]["toolCallId"], "call-1")
 
     def test_normalized_transcript_is_staged_for_container_grader(self) -> None:
-        class RecordingRuntime:
+        class RecordingRuntime(DockerRuntime):
             def __init__(self) -> None:
                 self.staged: list[dict[str, Any]] | None = None
 

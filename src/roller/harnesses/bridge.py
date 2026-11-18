@@ -15,7 +15,7 @@ import shlex
 import subprocess
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar
@@ -276,6 +276,70 @@ class BridgeSession(InteractiveSession):
             raise RuntimeError(f"{description} failed: {detail}")
         return result
 
+    def checked_exec(
+        self,
+        command: Sequence[str],
+        description: str,
+        *,
+        env: Mapping[str, str] | None = None,
+        workdir: str | None = None,
+        timeout: float = 60,
+    ) -> subprocess.CompletedProcess[str]:
+        """``checked`` for one container command; the runtime builds the argv."""
+
+        limit = min(timeout, self.remaining())
+
+        def execute(budget: float | None) -> subprocess.CompletedProcess[str]:
+            return self.harness.runtime.exec(
+                self.container,
+                command,
+                env=env,
+                workdir=workdir,
+                timeout=budget,
+            )
+
+        try:
+            result = execute(limit)
+        except subprocess.TimeoutExpired:
+            if limit < timeout:
+                raise TimeoutError(f"{self.label} task timed out") from None
+            raise RuntimeError(f"{description} timed out after {limit:g}s") from None
+        if result.returncode:
+            detail = self.redact(
+                (result.stderr or result.stdout or "unknown error").strip()
+            )[-2000:]
+            raise RuntimeError(f"{description} failed: {detail}")
+        return result
+
+    def checked_copy_in(
+        self,
+        source: Path | str,
+        destination: str,
+        description: str,
+        *,
+        timeout: float = 60,
+    ) -> subprocess.CompletedProcess[str]:
+        """``docker cp`` into the container, with ``checked``'s failure text."""
+
+        limit = min(timeout, self.remaining())
+        try:
+            result = self.harness.runtime.copy_in(
+                source,
+                self.container,
+                destination,
+                timeout=limit,
+            )
+        except subprocess.TimeoutExpired:
+            if limit < timeout:
+                raise TimeoutError(f"{self.label} task timed out") from None
+            raise RuntimeError(f"{description} timed out after {limit:g}s") from None
+        if result.returncode:
+            detail = self.redact(
+                (result.stderr or result.stdout or "unknown error").strip()
+            )[-2000:]
+            raise RuntimeError(f"{description} failed: {detail}")
+        return result
+
     def start(self) -> None:
         if self.container_started or self._result is not None:
             raise RuntimeError(f"{self.label} session has already started or finished")
@@ -343,39 +407,30 @@ class BridgeSession(InteractiveSession):
         if bundle:
             script += f" && cp -a {CONTEXT_CONTAINER_PATH}/. {workspace}/"
         script += f" && rm -rf {output} && mkdir -p {output} && ln -s {output} {OUTPUTS_CONTAINER_PATH}"
-        self.checked(
-            ["exec", self.container, "/bin/bash", "-c", script],
+        self.checked_exec(
+            ["/bin/bash", "-c", script],
             f"{self.label} workspace setup",
         )
-        self.checked(
-            ["cp", str(self.runner_source), f"{self.container}:{self.runner}"],
+        self.checked_copy_in(
+            self.runner_source,
+            self.runner,
             f"{self.label} runner copy",
         )
         for name, destination, description in self.assets:
-            self.checked(
-                [
-                    "cp",
-                    str(self.runner_source.with_name(name)),
-                    f"{self.container}:{destination}",
-                ],
+            self.checked_copy_in(
+                self.runner_source.with_name(name),
+                destination,
                 f"{self.label} {description}",
             )
         for command in task.setup_commands:
-            self.checked(
-                [
-                    "exec",
-                    "-w",
-                    config.workspace_container_path,
-                    self.container,
-                    "/bin/bash",
-                    "-c",
-                    command,
-                ],
+            self.checked_exec(
+                ["/bin/bash", "-c", command],
                 "task setup",
+                workdir=config.workspace_container_path,
                 timeout=self.remaining(),
             )
-        self.version = self.checked(
-            ["exec", self.container, self.python, self.runner, "--check"],
+        self.version = self.checked_exec(
+            [self.python, self.runner, "--check"],
             f"{self.label} {self.version_check}",
         ).stdout.strip()
 
@@ -407,25 +462,24 @@ class BridgeSession(InteractiveSession):
         )
         process = None
         try:
-            self.checked(
-                [
-                    "cp",
-                    str(config_path),
-                    f"{self.container}:{self.state_dir}/turn.json",
-                ],
-                f"{self.label} turn configuration",
-            )
-            args = [
-                "exec",
-                "-w",
-                config.workspace_container_path,
+            self.harness.runtime.copy_in(
+                config_path,
                 self.container,
-                self.python,
-                self.runner,
-                "--config",
-                self.state_dir + "/turn.json",
-            ]
-            process = self.harness.runtime.popen(args, log_path, append=True)
+                f"{self.state_dir}/turn.json",
+                timeout=60,
+            )
+            process = self.harness.runtime.exec_logged(
+                self.container,
+                [
+                    self.python,
+                    self.runner,
+                    "--config",
+                    self.state_dir + "/turn.json",
+                ],
+                log_path,
+                workdir=config.workspace_container_path,
+                append=True,
+            )
             try:
                 return_code = process.wait(
                     timeout=max(0.001, timeout - (time.monotonic() - started))
@@ -434,15 +488,15 @@ class BridgeSession(InteractiveSession):
                 process.kill()
                 process.wait(timeout=10)
                 # Stop the container's exec process before collecting partial artifacts.
-                self.harness.runtime.run(["kill", self.container], timeout=30)
+                self.harness.runtime.kill(self.container, timeout=30)
                 raise TimeoutError(f"{self.label} turn timed out") from None
-            response = self.checked(
-                ["exec", self.container, "cat", self.state_dir + "/result.json"],
+            response = self.checked_exec(
+                ["cat", self.state_dir + "/result.json"],
                 f"{self.label} turn result",
             )
             result = json.loads(response.stdout)
             if result.get("timeout") is True:
-                self.harness.runtime.run(["kill", self.container], timeout=30)
+                self.harness.runtime.kill(self.container, timeout=30)
                 raise TimeoutError(f"{self.label} turn timed out")
             if (
                 return_code

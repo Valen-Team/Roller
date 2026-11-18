@@ -5,7 +5,7 @@ import os
 import socket
 import subprocess
 import threading
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 # Every container carries its collector, so `roller clean` and an interrupted
@@ -51,7 +51,14 @@ def stop_launches(timeout: float = 10.0) -> set[str]:
 
 
 class DockerRuntime:
-    """Small Docker subprocess boundary that is replaceable in tests."""
+    """Small Docker subprocess boundary that is replaceable in tests.
+
+    The named methods below are the verbs Roller calls. They build Docker's own
+    argument list, so nothing outside this module has to know the CLI. Their
+    argv is exactly what callers wrote by hand before they existed, which is
+    what keeps the recorded command lines — and the tests that assert on them —
+    unchanged.
+    """
 
     def __init__(self, binary: str = "docker") -> None:
         self.binary = binary
@@ -62,6 +69,228 @@ class DockerRuntime:
         if args and args[0] == "run":
             return self._start_container(args, timeout)
         return self._execute(args, timeout)
+
+    # -- images ---------------------------------------------------------
+
+    def image_id(self, image: str, timeout: float | None = None) -> str | None:
+        """Id the tag points at now, or ``None`` when the image is not local."""
+
+        result = self.run(
+            ["image", "inspect", image, "--format", "{{.Id}}"], timeout=timeout
+        )
+        return (result.stdout.strip() or None) if result.returncode == 0 else None
+
+    def image_field(
+        self, image: str, field: str, timeout: float | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        """``docker image inspect --format '{{.<field>}}'``, result as returned."""
+
+        return self.run(
+            ["image", "inspect", image, "--format", f"{{{{.{field}}}}}"],
+            timeout=timeout,
+        )
+
+    def pull(
+        self, image: str, timeout: float | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run(["pull", image], timeout=timeout)
+
+    def build(
+        self,
+        args: Sequence[str],
+        timeout: float | None = None,
+        *,
+        engine: Sequence[str] = (),
+    ) -> subprocess.CompletedProcess[str]:
+        """``docker build`` with its options; ``args`` covers ``-f``..context.
+
+        ``engine`` holds flags that belong before the subcommand rather than to
+        it — rootless Podman needs ``--storage-opt`` there.
+        """
+
+        return self.run([*engine, "build", *args], timeout=timeout)
+
+    def version(self, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+        """Server version, and therefore whether a daemon answers at all."""
+
+        return self.run(["version", "--format", "{{.Server.Version}}"], timeout=timeout)
+
+    # -- containers -----------------------------------------------------
+
+    def start(
+        self,
+        name: str,
+        image: str,
+        command: Sequence[str],
+        *,
+        labels: Mapping[str, str] | None = None,
+        env: Sequence[tuple[str, str]] | None = None,
+        volumes: Sequence[str] | None = None,
+        network: str | None = None,
+        user: str | None = None,
+        detach: bool = True,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Start a container and return once it is running.
+
+        ``env`` keeps its order and repeats: callers rely on both (a later
+        ``-e NAME=`` shadows an earlier one). ``volumes`` are ``source:target``
+        with an optional ``:ro``. The run bookkeeping in ``_start_container``
+        still sees ``run`` as the first word, so the owner labels stay put.
+        """
+
+        return self.run(
+            self.start_args(
+                name,
+                image,
+                command,
+                labels=labels,
+                env=env,
+                volumes=volumes,
+                network=network,
+                user=user,
+                detach=detach,
+            ),
+            timeout=timeout,
+        )
+
+    def start_args(
+        self,
+        name: str,
+        image: str | None,
+        command: Sequence[str] = (),
+        *,
+        labels: Mapping[str, str] | None = None,
+        env: Sequence[tuple[str, str]] | None = None,
+        volumes: Sequence[str] | None = None,
+        network: str | None = None,
+        user: str | None = None,
+        detach: bool = True,
+    ) -> list[str]:
+        """The argv ``start`` builds, for callers that need it up front.
+
+        ``image=None`` stops the argv after the container's options, which is
+        what a caller that appends the image and command itself needs.
+        """
+
+        args = ["run"]
+        if detach:
+            args.append("-d")
+        args += ["--name", name]
+        for label, value in (labels or {}).items():
+            args += ["--label", f"{label}={value}"]
+        if user is not None:
+            args += ["--user", user]
+        if network:
+            args += ["--network", network]
+        for label, value in env or ():
+            args += ["-e", f"{label}={value}"]
+        for volume in volumes or ():
+            args += ["-v", volume]
+        if image is not None:
+            args += [image, *command]
+        return args
+
+    def exec(
+        self,
+        container: str,
+        command: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        workdir: str | None = None,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run one command in a running container."""
+
+        return self.run(
+            self.exec_args(container, command, env=env, workdir=workdir),
+            timeout=timeout,
+        )
+
+    def exec_args(
+        self,
+        container: str,
+        command: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        workdir: str | None = None,
+    ) -> list[str]:
+        """The argv ``exec`` builds, for callers that need it up front."""
+
+        args = ["exec"]
+        for name, value in (env or {}).items():
+            args += ["-e", f"{name}={value}"]
+        if workdir is not None:
+            args += ["-w", workdir]
+        args.append(container)
+        args.extend(command)
+        return args
+
+    def exec_logged(
+        self,
+        container: str,
+        command: Sequence[str],
+        log_path: Path,
+        *,
+        env: Mapping[str, str] | None = None,
+        workdir: str | None = None,
+        append: bool = False,
+    ) -> subprocess.Popen[str]:
+        """Run one command in a container with its output going to ``log_path``."""
+
+        return self.popen(
+            self.exec_args(container, command, env=env, workdir=workdir),
+            log_path,
+            append=append,
+        )
+
+    def kill(
+        self, container: str, timeout: float | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run(["kill", container], timeout=timeout)
+
+    def remove(
+        self, name: str, timeout: float | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run(["rm", "-f", name], timeout=timeout)
+
+    def remove_all(
+        self, names: Sequence[str], timeout: float | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run(["rm", "-f", *names], timeout=timeout)
+
+    def ps(
+        self, format_spec: str, timeout: float | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run(["ps", "-a", "--format", format_spec], timeout=timeout)
+
+    # -- files ----------------------------------------------------------
+
+    def copy_out(
+        self,
+        container: str,
+        source: str,
+        destination: Path | str,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Copy one path out of a container."""
+
+        return self.run(
+            ["cp", f"{container}:{source}", str(destination)], timeout=timeout
+        )
+
+    def copy_in(
+        self,
+        source: Path | str,
+        container: str,
+        destination: str,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Copy one path from the host into a container."""
+
+        return self.run(
+            ["cp", str(source), f"{container}:{destination}"], timeout=timeout
+        )
 
     def _execute(
         self, args: Sequence[str], timeout: float | None
@@ -154,6 +383,8 @@ def remove_container(
     last_error: subprocess.TimeoutExpired | None = None
     for timeout in timeouts:
         try:
+            # ``run`` rather than ``remove``: callers pass test doubles that
+            # only implement the process boundary.
             last_result = runtime.run(["rm", "-f", name], timeout=timeout)
             last_error = None
         except subprocess.TimeoutExpired as exc:

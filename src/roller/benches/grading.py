@@ -217,8 +217,8 @@ class ContainerGrader:
     ) -> GradeOutcome:
         started = time.monotonic()
         workspace = self.spec.workspace_path or workspace_path
-        prepare = runtime.run(
-            ["exec", container, "mkdir", "-p", GRADER_CONTAINER_DIR], timeout=30
+        prepare = runtime.exec(
+            container, ["mkdir", "-p", GRADER_CONTAINER_DIR], timeout=30
         )
         if prepare.returncode != 0:
             detail = (prepare.stderr or prepare.stdout or "").strip()[-500:]
@@ -250,8 +250,8 @@ class ContainerGrader:
             handle.write(runner_source)
             host_runner = handle.name
         try:
-            copied = runtime.run(
-                ["cp", host_runner, f"{container}:{RUNNER_CONTAINER_PATH}"], timeout=60
+            copied = runtime.copy_in(
+                host_runner, container, RUNNER_CONTAINER_PATH, timeout=60
             )
             if copied.returncode != 0:
                 detail = (copied.stderr or copied.stdout or "").strip()[-500:]
@@ -261,6 +261,8 @@ class ContainerGrader:
                     error=detail or "grader copy failed",
                 )
             try:
+                # Raw argv: ``_env_args`` forwards each variable by name alone
+                # (``-e NAME``), which an env mapping cannot express.
                 result = runtime.run(
                     [
                         "exec",
@@ -313,16 +315,12 @@ class ContainerGrader:
             # ``docker cp`` needs the destination's parent to exist, and for a
             # directory source the destination itself.
             container_dir = destination if host.is_dir() else parent
-            made = runtime.run(
-                ["exec", container, "mkdir", "-p", container_dir], timeout=30
-            )
+            made = runtime.exec(container, ["mkdir", "-p", container_dir], timeout=30)
             if made.returncode != 0:
                 detail = (made.stderr or made.stdout or "").strip()[-300:]
                 return f"could not create {container_dir}: {detail}"
             host_argument = f"{host}/." if host.is_dir() else str(host)
-            copied = runtime.run(
-                ["cp", host_argument, f"{container}:{destination}"], timeout=120
-            )
+            copied = runtime.copy_in(host_argument, container, destination, timeout=120)
             if copied.returncode != 0:
                 detail = (copied.stderr or copied.stdout or "").strip()[-300:]
                 return f"could not copy {source} to {destination}: {detail}"
@@ -351,7 +349,7 @@ class ContainerGrader:
             f"cp {shlex.quote(transcript_container_path)} "
             f"{shlex.quote(TRANSCRIPT_CONTAINER_PATH)}; fi"
         )
-        result = runtime.run(["exec", container, "/bin/sh", "-c", script], timeout=60)
+        result = runtime.exec(container, ["/bin/sh", "-c", script], timeout=60)
         if result.returncode != 0:
             logger.warning(
                 "[%s] transcript staging failed: %s",
@@ -429,6 +427,8 @@ def prepare_benchmark_workspace(
         f"echo 'benchmark workspace alias target already exists' >&2; exit 1; "
         f"else ln -s {shlex.quote(actual)} {shlex.quote(expected)}; fi"
     )
+    # Raw: the workspace alias runs before any grading, where callers hand in
+    # the runtime itself rather than one of the grading verbs' shapes.
     result = runtime.run(
         ["exec", container, "/bin/sh", "-c", script],
         timeout=30,

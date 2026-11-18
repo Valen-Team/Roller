@@ -144,8 +144,8 @@ class PiSession(BridgeSession):
         try:
             log = self.output_dir / "rollout" / f"pi.runtime.attempt-{self.attempt}.log"
             log.parent.mkdir(parents=True, exist_ok=True)
-            self.harness.runtime.run(
-                ["cp", f"{self.container}:{STATE}/runtime.log", str(log)], timeout=30
+            self.harness.runtime.copy_out(
+                self.container, f"{STATE}/runtime.log", log, timeout=30
             )
             if log.is_file():
                 self.redact_file(log, errors="replace")

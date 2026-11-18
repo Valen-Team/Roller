@@ -31,9 +31,7 @@ class CaptureRuntime:
     def copy_native(self, runtime, container: str, source: str, name: str) -> None:
         destination = self.recorder.directory / "native"
         destination.mkdir(parents=True, exist_ok=True)
-        result = runtime.run(
-            ["cp", f"{container}:{source}", str(destination / name)], timeout=30
-        )
+        result = runtime.copy_out(container, source, destination / name, timeout=30)
         if result.returncode:
             self.errors.append(f"native evidence collection failed: {name}")
 

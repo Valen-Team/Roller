@@ -16,6 +16,7 @@ from test_gateway_ports import isolate_gateway_ports
 
 from roller.cli import _build_parser, _collect
 from roller.collector import CollectionConfig, Collector
+from roller.harnesses.docker import DockerRuntime
 from roller.harnesses.hermes import RUNNER_PATH, HermesConfig, HermesHarness
 from roller.hermes_actf import (
     convert_hermes_trace,
@@ -499,7 +500,7 @@ class HermesBridgeTests(unittest.TestCase):
             self.assertEqual(rows[1]["tools"], [TOOL])
 
 
-class FakeRuntime:
+class FakeRuntime(DockerRuntime):
     def __init__(self):
         self.calls = []
         self.turn_result = {"ok": True, "content": "TOKEN"}

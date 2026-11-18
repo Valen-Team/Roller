@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from roller.bundles import TaskBundleStore
+from roller.harnesses.docker import DockerRuntime
 from roller.harnesses.openclaw import (
     DEFAULT_OPENCLAW_IMAGE,
     OPENCLAW_STATE_CONTAINER_PATH,
@@ -74,11 +75,12 @@ class GatewayReadinessTests(unittest.TestCase):
         self.assertTrue(raised.exception.__suppress_context__)
 
     def test_slow_probe_retries_within_startup_budget(self):
-        runtime = mock.Mock()
-        runtime.run.side_effect = [
-            subprocess.TimeoutExpired("docker exec", 2),
-            subprocess.CompletedProcess([], 0),
-        ]
+        runtime = ScriptedRuntime(
+            [
+                subprocess.TimeoutExpired("docker exec", 2),
+                subprocess.CompletedProcess([], 0),
+            ]
+        )
         process = mock.Mock()
         process.poll.return_value = None
         harness = OpenClawHarness(
@@ -88,11 +90,17 @@ class GatewayReadinessTests(unittest.TestCase):
             "roller.harnesses.openclaw.time.monotonic", side_effect=[0, 0, 2]
         ):
             harness._wait_for_gateway("container", process)
-        self.assertEqual(runtime.run.call_count, 2)
+        self.assertEqual(len(runtime.calls), 2)
 
     def test_probe_timeouts_still_respect_startup_deadline(self):
-        runtime = mock.Mock()
-        runtime.run.side_effect = subprocess.TimeoutExpired("docker exec", 2)
+        # Every probe times out: the loop must stop on the deadline, not on the
+        # probe's own timeout.
+        runtime = ScriptedRuntime(
+            [
+                subprocess.TimeoutExpired("docker exec", 2),
+                subprocess.TimeoutExpired("docker exec", 2),
+            ]
+        )
         process = mock.Mock()
         process.poll.return_value = None
         harness = OpenClawHarness(
@@ -103,7 +111,7 @@ class GatewayReadinessTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "gateway did not listen.*3s"):
                 harness._wait_for_gateway("container", process)
-        self.assertEqual(runtime.run.call_count, 2)
+        self.assertEqual(len(runtime.calls), 2)
 
 
 class StartupBudgetTests(unittest.TestCase):
@@ -194,8 +202,40 @@ class FakeProcess:
         self.returncode = -9
 
 
-class FakeDockerRuntime:
+class ScriptedRuntime(DockerRuntime):
+    """Replays a fixed list of outcomes from the process boundary.
+
+    Every verb reaches this ``run``, so a scripted timeout is seen through
+    ``exec`` exactly as a real one would be.
+    """
+
+    def __init__(self, outcomes: list[object]) -> None:
+        super().__init__()
+        self.outcomes = list(outcomes)
+        self.calls: list[list[str]] = []
+
+    def run(self, args, timeout=None):
+        self.calls.append(list(args))
+        outcome = (
+            self.outcomes.pop(0)
+            if self.outcomes
+            else subprocess.CompletedProcess(list(args), 0, "", "")
+        )
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+class FakeDockerRuntime(DockerRuntime):
+    """A runtime whose process boundary answers instead of running Docker.
+
+    The named verbs are inherited from ``DockerRuntime`` and reach this ``run``
+    unchanged, so the assertions below see the same argv a real container
+    would have been given.
+    """
+
     def __init__(self, version: str = "2026.1.0") -> None:
+        super().__init__()
         self.version = version
         self.commands: list[list[str]] = []
         self.agent_messages: list[str] = []
@@ -1274,7 +1314,9 @@ class OpenClawHelpersTests(unittest.TestCase):
             session.gateway_process = FakeProcess(gateway=True)
             harness.capture = mock.Mock(errors=[])
             with mock.patch.object(
-                harness, "_checked", side_effect=TimeoutError("pending announcement")
+                harness,
+                "_checked_call",
+                side_effect=TimeoutError("pending announcement"),
             ):
                 turn = session.send("first", 30)
             self.assertEqual(turn.content, "done")
