@@ -45,6 +45,15 @@ def test_private_keys_in_json_and_multiline_text(tmp_path: Path):
             assert json.loads(target.read_text())["keep"] == "yes"
 
 
+def test_text_naming_a_key_header_keeps_the_rest_of_the_file(tmp_path: Path):
+    code = "re.findall(r'-----BEGIN PRIVATE KEY-----(.*?)-----END', raw)"
+    text = json.dumps({"code": code}, indent=2) + "\nkeep this\n"
+    source, target = tmp_path / "source", tmp_path / "target"
+    source.write_text(text)
+    _copy_file(source, target, Rules(replace=export_audit.replacements()), "source")
+    assert target.read_text() == text
+
+
 def test_report_keeps_content_and_does_not_repeat_values(tmp_path: Path):
     output = tmp_path / "dataset"
     output.mkdir()

@@ -38,6 +38,7 @@ To check a change against a real Harness, build its image as described in the Ha
 | Harness adapters | `src/roller/harnesses/`, with trace converters in `src/roller/*_actf.py` |
 | Code that runs inside the containers | `src/roller/assets/` |
 | Bench adapters | `src/roller/benches/` |
+| Session import | `src/roller/importer.py` |
 | SFT export | `src/roller/sft.py`, `src/roller/compaction_sft.py`, `src/roller/sft_dataset.py` |
 | Viewer | `src/roller/viewer/` |
 | Documentation | `roller/` and its Chinese counterpart in the [website repository](https://github.com/Valen-Team/valen-team.github.io) |

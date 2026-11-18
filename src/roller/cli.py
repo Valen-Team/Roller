@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from roller import hf_dataset, sft_dataset
+from roller import importer as importer_module
 from roller.atif import export_run
 from roller.benches import (
     binding_from_task_row,
@@ -245,6 +246,53 @@ def _build_parser() -> argparse.ArgumentParser:
         "--preserve-task-keys",
         action="store_true",
         help="with --format hf, preserve deliberate benchmark key fixtures while still redacting known collection credentials and paths",
+    )
+
+    importer = subparsers.add_parser(
+        "import",
+        help="import the local sessions of Claude Code and Codex as a Roller run",
+    )
+    importer.add_argument(
+        "paths",
+        nargs="*",
+        metavar="PATH",
+        help=(
+            "session files or directories to import (default: the session "
+            "directories of Claude Code and Codex)"
+        ),
+    )
+    importer.add_argument(
+        "--harness",
+        choices=importer_module.HARNESSES,
+        help="import only the sessions of one harness (default: both)",
+    )
+    importer.add_argument(
+        "--output", default="runs", help="output root directory (default: runs)"
+    )
+    importer.add_argument(
+        "--run-name", default="imported", help="run directory name (default: imported)"
+    )
+    importer.add_argument(
+        "--since",
+        metavar="YYYY-MM-DD",
+        help="import only the sessions that started on or after this date",
+    )
+    importer.add_argument(
+        "--project",
+        action="append",
+        metavar="GLOB",
+        help="import only the sessions of matching projects; repeatable",
+    )
+    importer.add_argument(
+        "--parallel",
+        type=int,
+        default=4,
+        help="sessions converted at once (default: 4)",
+    )
+    importer.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="list the sessions by project without writing anything",
     )
 
     cleaner = subparsers.add_parser(
@@ -2795,6 +2843,27 @@ def _export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _import(args: argparse.Namespace) -> int:
+    sessions, subagents = importer_module.discover(
+        [Path(path).expanduser() for path in args.paths]
+        or importer_module.default_roots(args.harness),
+        args.harness,
+        args.since,
+        args.project,
+    )
+    if args.dry_run:
+        for line in importer_module.dry_run_lines(sessions):
+            print(line)
+        return 0
+    run_dir = Path(args.output) / args.run_name
+    summary = importer_module.import_sessions(run_dir, sessions, args.parallel)
+    summary.subagents = subagents
+    for line in summary.lines():
+        print(line)
+    print(f"Run: {run_dir}")
+    return 1 if summary.failed else 0
+
+
 def _clean(args: argparse.Namespace) -> int:
     path = Path(args.path).expanduser().resolve() if args.path else None
     if path is not None and not path.is_dir():
@@ -2823,6 +2892,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             exit_code = _view(args)
         elif args.command == "export":
             exit_code = _export(args)
+        elif args.command == "import":
+            exit_code = _import(args)
         elif args.command == "init":
             exit_code = _init(args)
         elif args.command == "clean":

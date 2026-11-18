@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -191,6 +192,10 @@ class Redaction:
     hosts: tuple[str, ...] = ()
     # The name of the exporting machine, when it was looked for.
     machine: str = ""
+    # Imported sessions: the user names of their home directories, and the
+    # number of account identifiers they recorded.
+    users: tuple[str, ...] = ()
+    identities: int = 0
 
     def lines(self) -> list[str]:
         lines = []
@@ -199,6 +204,8 @@ class Redaction:
             f"{len(self.hosts)} NO_PROXY hosts" if self.hosts else "",
             "the name of this machine" if self.machine else "",
             f"{len(self.paths)} host paths" if self.paths else "",
+            f"{len(self.users)} home directories" if self.users else "",
+            f"{self.identities} account identifiers" if self.identities else "",
             f"the values of {', '.join(self.credentials)}" if self.credentials else "",
         ]
         if any(replaced):
@@ -254,6 +261,35 @@ _CONFIGURED_PATHS = (
     ("*", "config_path", True, "<config-dir>"),
     ("*", "settings_path", True, "<config-dir>"),
 )
+
+
+# A shorter user name is an ordinary word, replaced only in its home paths;
+# so is a shorter git user name, which is left alone.
+_USER_LENGTH = 4
+_COMMON_USERS = {"root", "ubuntu", "user"}
+
+
+def _home_users(path: Any) -> list[str]:
+    """The user name of a home directory that ``path`` lies in."""
+
+    match = (
+        re.match(r"/(?:Users|home)/([^/]+)", path) if isinstance(path, str) else None
+    )
+    return [match[1]] if match and match[1] not in _COMMON_USERS else []
+
+
+def _git_identity() -> tuple[str, str]:
+    """The global git user name and email of this machine."""
+
+    def value(key: str) -> str:
+        return subprocess.run(
+            ["git", "config", "--global", key],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+
+    return value("user.name"), value("user.email")
 
 
 def _host_path(value: Any, is_file: bool) -> str | None:
@@ -338,10 +374,27 @@ def environment_redaction(
 
     urls: set[str] = set()
     names: set[str] = set()
+    users: list[str] = []
+    identities: set[str] = set()
+    imported = False
     for path in run_dir.glob("samples/*/*/info.json"):
         provenance = _json(path).get("provenance") or {}
         urls.update(url for url in provenance.get("api_base_urls") or [] if url)
         names.update(name for name in provenance.get("environment_names") or [] if name)
+        source = provenance.get("import")
+        if isinstance(source, dict):
+            imported = True
+            users += _home_users(source.get("cwd"))
+            identities.update(value for value in source.get("identity") or [] if value)
+    if imported:
+        # An imported session names no variables; every credential of the
+        # exporting environment may have reached it.
+        names.update(
+            name
+            for name, value in environ.items()
+            if value and name.lower().replace("_", "").endswith(_CREDENTIAL_NAMES)
+        )
+        users = list(dict.fromkeys(_home_users(str(Path.home())) + sorted(users)))
 
     literals: dict[str, str] = {}
     # The pattern of a literal that must not match inside a longer word.
@@ -435,8 +488,33 @@ def environment_redaction(
                 literals[path] = placeholder
                 paths.append(path)
 
+    for value in identities:
+        literals[value] = REDACTED
+    if imported:
+        name, email = _git_identity()
+        if len(name) >= _USER_LENGTH:
+            literals.setdefault(name, REDACTED)
+            patterns.setdefault(name, _name(name))
+        if email:
+            literals.setdefault(email, REDACTED)
+    homes: list[tuple[re.Pattern[str], str]] = []
+    for number, user in enumerate(users, 1):
+        placeholder = "user" if number == 1 else f"user-{number}"
+        escaped = re.escape(user)
+        homes += [
+            (re.compile(rf"/(Users|home)/{escaped}(?![\w.-])"), rf"/\1/{placeholder}"),
+            (
+                re.compile(rf"-(Users|home)-{escaped}(?![A-Za-z0-9])"),
+                rf"-\1-{placeholder}",
+            ),
+        ]
+        if len(user) >= _USER_LENGTH:
+            homes.append((re.compile(f"(?i:{_name(user)})"), placeholder))
+
     if not literals:
-        return Rules(), Redaction(unset=tuple(unset))
+        return Rules(replace=tuple(homes)), Redaction(
+            unset=tuple(unset), users=tuple(users)
+        )
     pattern = re.compile(
         "|".join(
             patterns.get(text) or re.escape(text)
@@ -444,8 +522,10 @@ def environment_redaction(
         )
     )
     return (
-        Rules(replace=((pattern, lambda match: literals[match.group(0)]),)),
+        Rules(replace=((pattern, lambda match: literals[match.group(0)]), *homes)),
         Redaction(
+            users=tuple(users),
+            identities=len(identities),
             endpoints=tuple(endpoints),
             paths=tuple(paths),
             credentials=tuple(credentials),
@@ -464,7 +544,7 @@ def _copy_file(source: Path, target: Path, rules: Rules, label: str) -> list[str
         found: list[str] = []
         private_key = False
         detect_keys = any(
-            pattern in export_audit.TOKEN_PATTERNS for pattern, _ in rules.replace
+            pattern is export_audit.TOKENS for pattern, _ in rules.replace
         )
         try:
             with (
@@ -484,9 +564,9 @@ def _copy_file(source: Path, target: Path, rules: Rules, label: str) -> list[str
                         start = re.search(
                             r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----", line
                         )
-                        if start and not re.search(
-                            r"-----END [A-Z0-9 ]*PRIVATE KEY-----", line[start.end() :]
-                        ):
+                        # A key spans lines in a text file, where its header
+                        # ends a line; text that only names the header stays.
+                        if start and not line[start.end() :].strip():
                             private_key = True
                             line = line[: start.start()] + REDACTED + "\n"
                     for pattern, text in rules.replace:
