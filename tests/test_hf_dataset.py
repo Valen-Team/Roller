@@ -1039,3 +1039,96 @@ class HuggingFaceExportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImportedRunRedactionTests(unittest.TestCase):
+    def _session(self, path: Path, session_id: str, cwd: str, text: str) -> None:
+        records = [
+            {
+                "type": "bridge-session",
+                "sessionId": session_id,
+                "ownerAccountUuid": "acct-1111-2222",
+            },
+            {
+                "type": "user",
+                "uuid": f"{session_id}-1",
+                "timestamp": "2026-11-01T10:00:00Z",
+                "sessionId": session_id,
+                "cwd": cwd,
+                "message": {"role": "user", "content": text},
+            },
+            {
+                "type": "assistant",
+                "uuid": f"{session_id}-2",
+                "timestamp": "2026-11-01T10:00:01Z",
+                "sessionId": session_id,
+                "cwd": cwd,
+                "message": {
+                    "id": "m1",
+                    "role": "assistant",
+                    "model": "claude-test",
+                    "content": [{"type": "text", "text": "ok"}],
+                },
+            },
+        ]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+        )
+
+    def test_home_paths_user_names_and_accounts_of_imported_sessions(self) -> None:
+        from roller.importer import discover, import_sessions
+
+        token = "tok-abcdefghijklmnop"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._session(
+                root / "src" / "-Users-alice-work-demo" / "s1.jsonl",
+                "s1",
+                "/Users/alice/work/demo",
+                "Read /Users/alice/notes.txt and "
+                "~/.claude/projects/-Users-alice-work-demo/s1.jsonl. "
+                f"Alice wrote it. ALICE SMITH, alice@example.org, {token}",
+            )
+            self._session(
+                root / "src" / "-home-bob-proj" / "s2.jsonl",
+                "s2",
+                "/home/bob/proj",
+                "Open /home/bob/proj/a.py; bob stays a word",
+            )
+            run = root / "run"
+            import_sessions(run, discover([root / "src"])[0], parallel=1)
+            output = root / "hf"
+            with (
+                mock.patch.object(Path, "home", return_value=Path("/Users/alice")),
+                mock.patch(
+                    "roller.hf_dataset._git_identity",
+                    return_value=("Alice Smith", "alice@example.org"),
+                ),
+            ):
+                _, redaction = export_run(
+                    run,
+                    output,
+                    environ={"MY_API_TOKEN": token, "SHORT_KEY": "abc"},
+                    machine="",
+                    runs=True,
+                )
+            text = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in output.rglob("*")
+                if path.is_file()
+            )
+            for leaked in ("alice", "/home/bob", "acct-1111-2222", token):
+                self.assertNotIn(leaked, text.lower())
+            self.assertIn("/Users/user/notes.txt", text)
+            self.assertIn("-Users-user-work-demo", text)
+            self.assertIn("/home/user-2/proj/a.py", text)
+            self.assertIn("bob stays a word", text)
+            self.assertEqual(redaction.users, ("alice", "bob"))
+            self.assertEqual(redaction.identities, 1)
+            self.assertEqual(redaction.credentials, ("MY_API_TOKEN",))
+            report = json.loads(
+                (root / "hf.redaction-report.json").read_text(encoding="utf-8")
+            )
+            self.assertNotIn("home_path", report["counts"])
+            self.assertNotIn("email", report["counts"])

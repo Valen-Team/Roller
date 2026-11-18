@@ -56,6 +56,7 @@ Roller 提供以下能力：
 
 ## 最新动态
 
+- **2026-11-18**：[会话导入](https://valen-team.github.io/zh-Hans/roller/traces/import/)。`roller import` 把本机已有的 Claude Code 和 Codex 会话导入成 Roller run，不需要 Docker、模型服务和任务列表。Viewer 以及 ATIF、SFT、Hugging Face 导出都能直接读取；Hugging Face 导出会替换会话里的 home 目录、用户名和账号标识。
 - **2026-11-17**：[使用 OpenClaw 和 Codex 采集 WildClawBench](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/)：四个自部署模型、可浏览的轨迹与评分、公开任务镜像和可运行的采集示例。Codex 新增可选的工具图片兼容设置；HF 导出支持保留 benchmark 刻意设置的测试 key。
 
 - **2026-11-16**：[Hugging Face 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#hugging-face-export)。`roller export RUN_DIR --format hf` 把一次 run 打包成数据集目录，Hub 用轨迹查看器直接打开，run 的模型端点、主机路径和凭据取值在导出时已替换。首个数据集是 [Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories)，[Cookbook](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/) 记录了它背后的完整运行。
@@ -199,6 +200,26 @@ roller view runs/quickstart
 
 [快速上手指南 →](https://valen-team.github.io/zh-Hans/roller/start/getting-started/)
 
+<a id="import"></a>
+
+## 导入本机会话
+
+`roller import` 把本机已有的 Claude Code 和 Codex 会话导入成 Roller run。每个会话生成一个 sample，包含原生会话、ACTF 轨迹，能转换时还有 SFT 记录。不需要 Docker、模型服务和任务列表。
+
+```bash
+uv tool install "git+https://github.com/Valen-Team/Roller"
+roller import --dry-run
+roller import --output runs --run-name my-sessions
+roller view runs/my-sessions
+roller export runs/my-sessions --format hf --output my-sessions-hf
+```
+
+- 读取 `~/.claude/projects`、`~/.codex/sessions` 和 `~/.codex/archived_sessions`，包括 Codex 压缩的 `.jsonl.zst` 会话。设置 `CLAUDE_CONFIG_DIR`、`CODEX_HOME` 可以改变这些目录。子代理会话不单独生成 sample。
+- 命令行里给出路径时导入这些文件或目录；`--harness`、`--since`、`--project` 用于筛选。再次运行会导入新会话，并重新导入文件有变化的会话。
+- Hugging Face 导出会替换会话里的 home 目录和用户名、会话记录的账号标识、全局 git 姓名和邮箱，以及导出环境里凭据变量的值。其余邮箱、仓库地址、内网主机和形状不固定的密钥不会替换：上传前查看 `<output>.redaction-report.json`，用 `--redact-rules` 补充规则，再用密钥扫描工具扫一遍输出目录。
+
+[会话导入指南 →](https://valen-team.github.io/zh-Hans/roller/traces/import/)
+
 <a id="harnesses"></a>
 
 ## Harness
@@ -339,6 +360,7 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
 | [轨迹产出文件指南](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/) | 各产出文件及其生成条件；原生轨迹、统一轨迹、SFT 与 wire trace 的对比 |
 | [SFT 数据格式](https://valen-team.github.io/zh-Hans/roller/traces/sft-format/) | 记录结构、图片和压缩分段 |
 | [Viewer](https://valen-team.github.io/zh-Hans/roller/traces/viewer/) | 启动、端口和远程访问 |
+| [会话导入](https://valen-team.github.io/zh-Hans/roller/traces/import/) | 导入本机 Claude Code 和 Codex 会话，以及上传前的脱敏 |
 | [Bench 接入与评分](https://valen-team.github.io/zh-Hans/roller/benches/bench-format/) | bench 运行、评分和新 bench 的接入 |
 | [Examples](examples/README.md) | 各 Harness 的可运行命令 |
 | [Coverage 功能测试](examples/coverage/README.md) | 覆盖全部 7 种 Harness 的 1624 个功能测试任务 |

@@ -215,6 +215,9 @@ def _message_content(value: Any, field: str, images: list[str]) -> str:
             # sequence, the Nth placeholder must keep mapping to images[N-1].
             images.append(_image_data_uri(block, block_field))
             parts.append(IMAGE_PLACEHOLDER)
+        elif block.get("type") == "tool_reference":
+            # A tool search result names the tool it loaded; keep it as text.
+            parts.append(json.dumps(block, ensure_ascii=False))
         else:
             raise SFTUnsupportedContentError(
                 f"{block_field} is non-text; SFT export would lose data"
@@ -314,7 +317,12 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
         capture = trajectory.get("tools_capture", {})
         if not isinstance(capture, Mapping):
             raise SFTConversionError("Codex tools_capture must be an object")
-        if capture.get("status") != "captured":
+        # Collection captures the tools of each request; an imported session
+        # has them merged from its own records or inferred from its calls.
+        if capture.get("status") != "captured" and not (
+            capture.get("source") == "session"
+            and capture.get("status") in {"captured_merged", "inferred"}
+        ):
             raise SFTConversionError(
                 capture.get("error")
                 or "Codex tools were not captured; schema inference is disabled"

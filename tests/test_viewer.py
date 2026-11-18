@@ -462,3 +462,39 @@ class ViewerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImportedRunViewerTests(unittest.TestCase):
+    def test_imported_sessions_show_titles_newest_first(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_json(root / "info.json", {"source": "import"})
+            for index, (task, started) in enumerate(
+                [
+                    ("old", "2026-10-01T08:00:00+00:00"),
+                    ("new", "2026-11-02T08:00:00+00:00"),
+                ],
+                1,
+            ):
+                write_json(
+                    root / "samples" / "m" / f"{index:08d}_{task}" / "info.json",
+                    {
+                        "task_id": task,
+                        "source_index": index,
+                        "model": "m",
+                        "status": "ok",
+                        "title": f"Fix {task} bug",
+                        "project": f"proj-{task}",
+                        "timing": {"started_at": started},
+                    },
+                )
+            source = RollerRun(root)
+            items = source.list_tasks()["items"]
+            self.assertEqual([item["task_id"] for item in items], ["new", "old"])
+            self.assertEqual(
+                (items[0]["title"], items[0]["project"], items[0]["started_at"]),
+                ("Fix new bug", "proj-new", "2026-11-02T08:00:00+00:00"),
+            )
+            self.assertEqual(items[0]["rollouts"][0]["title"], "Fix new bug")
+            found = source.list_tasks(query="proj-old")["items"]
+            self.assertEqual([item["task_id"] for item in found], ["old"])

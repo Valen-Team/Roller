@@ -56,6 +56,7 @@ Roller provides the following capabilities:
 
 ## News
 
+- **2026-11-18**: [Session import](https://valen-team.github.io/roller/traces/import/). `roller import` turns the Claude Code and Codex sessions on this machine into a Roller run, with no Docker, model endpoint or task list. The Viewer and the ATIF, SFT and Hugging Face exports read it like a collected run, and the Hugging Face export replaces the home directories, user names and account identifiers of the sessions.
 - **2026-11-17**: [WildClawBench with OpenClaw and Codex](https://valen-team.github.io/roller/cookbook/wildclawbench-open-models/): four self-hosted models, browsable trajectories and scores, public task images and runnable collection examples. Codex has an optional tool-image compatibility setting; HF export can preserve deliberate benchmark test keys.
 
 - **2026-11-16**: [Hugging Face export](https://valen-team.github.io/roller/traces/trajectory-outputs/#hugging-face-export). `roller export RUN_DIR --format hf` packages a run as a dataset folder that the Hub opens in its trace viewer, with the model endpoints, host paths and credential values of the run replaced. The first dataset is [Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories), and a [cookbook recipe](https://valen-team.github.io/roller/cookbook/wildclawbench-open-models/) follows the run behind it.
@@ -199,6 +200,26 @@ Open the URL printed in the terminal (default `http://127.0.0.1:17865`). The Vie
 
 [Getting started guide →](https://valen-team.github.io/roller/start/getting-started/)
 
+<a id="import"></a>
+
+## Import local sessions
+
+`roller import` turns the Claude Code and Codex sessions already on this machine into a Roller run. Each session becomes one sample with its native session, its ACTF trajectory and, when one can be made, its SFT record. No Docker, model endpoint or task list is needed.
+
+```bash
+uv tool install "git+https://github.com/Valen-Team/Roller"
+roller import --dry-run
+roller import --output runs --run-name my-sessions
+roller view runs/my-sessions
+roller export runs/my-sessions --format hf --output my-sessions-hf
+```
+
+- Roller reads `~/.claude/projects` and `~/.codex/sessions` and `~/.codex/archived_sessions`, including the compressed `.jsonl.zst` Codex sessions. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` move these directories. Subagent sessions are not imported as samples of their own.
+- Paths on the command line import other files or directories; `--harness`, `--since` and `--project` narrow the selection. Running the command again imports new sessions and re-imports the ones whose files changed.
+- The Hugging Face export replaces the home directories and user names of the sessions, the account identifiers they recorded, the global git name and email, and the values of credential variables in the exporting environment. Other email addresses, repository URLs, internal hosts and secrets without a known shape stay: read `<output>.redaction-report.json`, add `--redact-rules` for what remains, and scan the folder with a secret scanner before uploading.
+
+[Session import guide →](https://valen-team.github.io/roller/traces/import/)
+
 <a id="harnesses"></a>
 
 ## Harnesses
@@ -339,6 +360,7 @@ New users should start with [Getting started](https://valen-team.github.io/rolle
 | [Trajectory outputs](https://valen-team.github.io/roller/traces/trajectory-outputs/) | Output files and their conditions; comparison of raw, normalized, SFT and wire traces |
 | [SFT format](https://valen-team.github.io/roller/traces/sft-format/) | Record structure, images and compaction segments |
 | [Viewer](https://valen-team.github.io/roller/traces/viewer/) | Startup, ports and remote access |
+| [Session import](https://valen-team.github.io/roller/traces/import/) | Importing local Claude Code and Codex sessions, and redacting them for upload |
 | [Bench integration and scoring](https://valen-team.github.io/roller/benches/bench-format/) | Bench runs, grading and new bench adapters |
 | [Examples](examples/README.md) (Chinese) | Runnable commands for each Harness |
 | [Coverage suite](examples/coverage/README.en.md) | 1,624 functional test tasks across all seven Harnesses |

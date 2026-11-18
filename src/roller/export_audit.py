@@ -55,8 +55,17 @@ _EMAIL = re.compile(
 _IP = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.]|\.\d)")
 
 
+# The token shapes as one pattern, so an export reads each line once for them.
+TOKENS = re.compile(
+    _BOUNDARY
+    + "(?:"
+    + "|".join(pattern.pattern[len(_BOUNDARY) :] for pattern in TOKEN_PATTERNS)
+    + ")"
+)
+
+
 def replacements():
-    return tuple((pattern, REDACTED) for pattern in TOKEN_PATTERNS) + CONTEXT_PATTERNS
+    return ((TOKENS, REDACTED), *CONTEXT_PATTERNS)
 
 
 def write_report(output: Path) -> Path:

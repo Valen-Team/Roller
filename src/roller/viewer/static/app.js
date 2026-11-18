@@ -141,7 +141,7 @@
     modelDefault: ["model default", "模型默认"],
 
     // Search and filters
-    searchPlaceholder: ["Search tasks, models or errors", "搜索 task、模型或错误信息"],
+    searchPlaceholder: ["Search tasks, titles, projects, models or errors", "搜索 task、标题、项目、模型或错误信息"],
     status: ["Status", "状态"],
     allStatuses: ["All statuses", "全部状态"],
     model: ["Model", "模型"],
@@ -404,6 +404,9 @@
     return tokens ? `${formatNumber(tokens)} tok` : rollout.has_actf ? "ACTF" : t("noTrace");
   };
 
+  // An imported session shows its title, with its project and start date below.
+  const sessionLine = (item) => [item.project, (item.started_at || "").slice(0, 10)].filter(Boolean).join(" · ");
+
   const renderTasks = () => {
     const payload = state.tasks;
     if (!payload) return;
@@ -418,8 +421,9 @@
         <article class="task-group">
           <div class="task-title">
             <span class="task-index">${escapeHtml(task.source_index ?? "—")}</span>
-            <strong title="${escapeHtml(task.task_id)}">${escapeHtml(task.task_id)}</strong>
+            <strong title="${escapeHtml(task.task_id)}">${escapeHtml(task.title || task.task_id)}</strong>
           </div>
+          ${task.title ? `<div class="task-session">${escapeHtml(sessionLine(task))}</div>` : ""}
           ${task.rollouts.map((rollout) => `
             <button class="rollout-row ${state.selectedId === rollout.id ? "selected" : ""}" data-rollout="${rollout.id}" type="button">
               <span class="status-dot ${statusClass(rollout.status)}" title="${escapeHtml(rollout.status)}"></span>
@@ -533,7 +537,8 @@
         <div class="trajectory-title-row">
           <div>
             <span class="eyebrow">${escapeHtml(rollout.model || "ROLLOUT")}</span>
-            <h2>${escapeHtml(rollout.task_id)}</h2>
+            <h2>${escapeHtml(rollout.title || rollout.task_id)}</h2>
+            ${rollout.title ? `<p>${escapeHtml(sessionLine(rollout))}</p>` : ""}
             <p>${escapeHtml(rollout.path)}</p>
           </div>
           <div class="trajectory-chips">

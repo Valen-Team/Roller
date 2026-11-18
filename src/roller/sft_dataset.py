@@ -78,6 +78,8 @@ def index_row(
     """Describe the sample that an SFT record came from."""
 
     bench, score = bench_score(result)
+    trajectory = result.get("trajectory") or {}
+    source = (result.get("provenance") or {}).get("import") or {}
     return {
         "task_id": result.get("task_id"),
         "model": result.get("model"),
@@ -89,6 +91,18 @@ def index_row(
         "category": bench.get("category"),
         "score": score,
         "score_key": bench.get("score_key"),
+        # Imported sessions say where their tools and system prompt came from
+        # and which session they continue.
+        **{
+            key: trajectory[key]
+            for key in ("tools_source", "system_prompt_source")
+            if key in trajectory
+        },
+        **(
+            {"parent_session_id": source["parent_session_id"]}
+            if "parent_session_id" in source
+            else {}
+        ),
     }
 
 

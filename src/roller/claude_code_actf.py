@@ -318,6 +318,32 @@ def extract_anthropic_wire_context(
     return system_prompt, tools
 
 
+def session_request_context(
+    events: Iterable[Mapping[str, Any]],
+) -> tuple[str, list[dict[str, Any]] | None]:
+    """Read the system prompt and tools of the ``api-request-shape`` records.
+
+    The system prompt is that of the first request. Tools loaded later in the
+    session join the list in the order they first appear, each with its last
+    definition. A session without these records gives ``("", None)``.
+    """
+
+    system_prompt: str | None = None
+    tools: dict[str, dict[str, Any]] = {}
+    for event in events:
+        shape = event.get("shape") if event.get("type") == "api-request-shape" else None
+        if not isinstance(shape, Mapping):
+            continue
+        if system_prompt is None:
+            system_prompt = _content_text(shape.get("system"))
+        for raw_tool in shape.get("tools") or []:
+            if (tool := _normalize_tool(raw_tool)) is not None:
+                tools[tool["function"]["name"]] = tool
+    if system_prompt is None:
+        return "", None
+    return system_prompt, list(tools.values())
+
+
 def _matches_expected_user(raw: str, expected: str) -> bool:
     return raw == expected or raw.strip() == expected.strip()
 
@@ -624,8 +650,11 @@ def convert_claude_code_trace(
                             notification_inputs[
                                 text[text.index("<task-notification>") :]
                             ] = text
+    events = _read_events(source)
+    if wire_trace is None:
+        system_prompt, tools = session_request_context(events)
     trajectory = claude_code_events_to_actf(
-        _read_events(source),
+        events,
         user_messages=user_messages,
         system_prompt=system_prompt,
         tools=tools,
