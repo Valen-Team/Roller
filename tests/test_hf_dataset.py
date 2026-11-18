@@ -273,6 +273,22 @@ def _lines(path: Path) -> list[dict]:
 
 
 class HuggingFaceExportTests(unittest.TestCase):
+    def test_model_aliases_can_share_one_public_part(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = _run(root)
+            _sample(run, "vllm/model-a-replica", 5, "plan__run_02", harness="openclaw")
+            rules = Rules(
+                replace=((re.compile("model-a(?:-replica)?"), "public-model"),)
+            )
+            output = root / "dataset"
+            _export(run, output, rules)
+            rows = _rows(output, "openclaw-public-model")
+            self.assertEqual(len(rows), 3)
+            self.assertEqual({row["model"] for row in rows}, {"vllm/public-model"})
+            self.assertEqual(len({row["trace"] for row in rows}), 3)
+            self.assertTrue(all((output / row["trace"]).is_file() for row in rows))
+
     def test_model_alias_rules_also_apply_to_generated_names_and_sample_paths(
         self,
     ) -> None:
