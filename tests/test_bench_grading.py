@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import threading
+import tracemalloc
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -57,6 +58,38 @@ def _row(name: str, *, env=(), metadata=None, grade: bool = True) -> dict:
         metadata=metadata or {},
     )
     return {"id": "task", "prompt": "x", "bench": binding.as_dict()}
+
+
+class GraderTranscriptTests(unittest.TestCase):
+    def test_large_native_jsonl_transcript_is_loaded_by_row(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "transcript.jsonl"
+            image = "a" * (256 * 1024)
+            with path.open("w", encoding="utf-8") as output:
+                output.write('{"text":"🧩"}\n')
+                for _ in range(12):
+                    output.write(json.dumps({"image": image}) + "\n")
+            spec = GradeSpec(
+                "def grade(transcript, workspace_path):\n"
+                "    return {'rows': len(transcript), 'image': len(transcript[-1]['image'])}\n"
+            )
+            with mock.patch.object(grading, "TRANSCRIPT_CONTAINER_PATH", str(path)):
+                runner = compile(
+                    grading.build_runner_source(spec, temporary), "<grader>", "exec"
+                )
+            stdout = io.StringIO()
+            tracemalloc.start()
+            try:
+                with contextlib.redirect_stdout(stdout):
+                    exec(runner, {})
+                _, peak = tracemalloc.get_traced_memory()
+            finally:
+                tracemalloc.stop()
+            self.assertEqual(
+                grading.parse_grader_stdout(stdout.getvalue()),
+                {"rows": 13, "image": len(image)},
+            )
+            self.assertLess(peak, 3 * path.stat().st_size)
 
 
 class GraderEnvironmentTests(unittest.TestCase):

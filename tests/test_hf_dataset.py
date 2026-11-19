@@ -528,6 +528,40 @@ class HuggingFaceExportTests(unittest.TestCase):
                 ],
             )
 
+    def test_failed_deepseek_sample_exports_its_redacted_native_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = _run(root)
+            output = root / "dataset"
+            sample = _sample(
+                run,
+                "deepseek-model",
+                5,
+                "chat__run_01",
+                harness="deepseek",
+                status="error",
+            )
+            events = [
+                {"type": "metadata", "schema": "roller.deepseek-events/v1"},
+                {"type": "request", "url": f"http://{SECRET_HOST}:8000/v1"},
+            ]
+            (sample / "trace.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in events), encoding="utf-8"
+            )
+
+            _export(run, output)
+
+            row = _rows(output, "deepseek-deepseek-model")[0]
+            self.assertEqual(row["status"], "error")
+            self.assertIsNone(row["messages"])
+            self.assertEqual(
+                _lines(output / row["trace"]),
+                [
+                    events[0],
+                    {"type": "request", "url": "http://endpoint-1.example/v1"},
+                ],
+            )
+
     def test_codex_trace_survives_hub_line_splitting(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = _run(Path(tmp))

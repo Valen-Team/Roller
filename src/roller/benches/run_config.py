@@ -261,6 +261,8 @@ _EXECUTION_VALUES = {
     "container_user": "--container-user",
     "network": "--network",
     "docker_binary": "--docker-binary",
+    "sandbox_provider": "--sandbox-provider",
+    "sandbox_template": "--sandbox-template",
     "max_input_file_bytes": "--max-input-file-bytes",
     "max_task_input_bytes": "--max-task-input-bytes",
 }

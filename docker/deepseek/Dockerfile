@@ -20,9 +20,11 @@ RUN set -eu; \
         fi; \
     done
 
-RUN if ! (command -v bash && command -v git && command -v rg && command -v file && command -v unzip && command -v ps); then \
+RUN venv_package=; \
+    if ! python3 -c 'import ensurepip' 2>/dev/null; then venv_package=python3-venv; fi; \
+    if [ -n "$venv_package" ] || ! (command -v bash && command -v git && command -v rg && command -v file && command -v unzip && command -v ps); then \
         apt-get update && apt-get install -y --no-install-recommends \
-            bash ca-certificates git ripgrep file unzip procps \
+            bash ca-certificates git ripgrep file unzip procps $venv_package \
         && rm -rf /var/lib/apt/lists/*; \
     fi
 # The official platform wheel includes the native dsh runtime and its PTY.
