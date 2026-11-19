@@ -597,6 +597,42 @@ class CaptureTests(unittest.TestCase):
             self.assertEqual(rerun[0]["status"], "ok")
             self.assertEqual(state["runs"], 2)
 
+    def test_collector_exports_observed_calls_from_failed_samples(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            sample = run / "samples/model/00000000_sample"
+            directory, _ = self.make_capture(sample)
+            manifest = finalize_claude_capture(
+                directory, execution_status="error", recorder_error="unfinished call"
+            )
+            self.assertEqual(manifest["capture_status"], "partial")
+            result = {
+                "task_id": "sample",
+                "model": "model",
+                "status": "error",
+                "error": "unfinished call",
+                "runtime": {
+                    "capture": {
+                        "manifest": "capture/attempt-0001/manifest.json",
+                        "capture_status": manifest["capture_status"],
+                    }
+                },
+            }
+            collector = Collector(CollectionConfig(run_dir=run), lambda slot: None)
+            collector._write_sft_dataset([result])
+
+            calls = read_jsonl(run / "calls.jsonl")
+            observed = read_jsonl(directory / "calls.jsonl")
+            self.assertEqual(len(calls), 4)
+            self.assertEqual(
+                [row["call_id"] for row in calls], [row["call_id"] for row in observed]
+            )
+            for call, source in zip(calls, observed, strict=True):
+                self.assertEqual(call["output"], source["output"])
+                self.assertEqual(call["sample_status"], "error")
+                self.assertEqual(call["sample_capture_status"], "partial")
+            self.assertEqual(read_jsonl(run / "sft.jsonl"), [])
+
     def test_child_model_and_tools_are_not_replaced_with_root_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory, _ = self.make_capture(Path(tmp))

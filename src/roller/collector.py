@@ -40,6 +40,7 @@ from roller.integrity import (
     validate_resumable_sample,
 )
 from roller.models import HarnessResult, RunRequest
+from roller.sandbox import SandboxRun
 from roller.sft import SFTConversionError, write_sft
 from roller.sft_dataset import write_sft_dataset
 from roller.storage import atomic_write_json, safe_component, write_jsonl
@@ -196,6 +197,7 @@ class CollectionConfig:
     max_consecutive_errors: int = 0
     # On Resume, rerun bench samples whose agent finished but whose grading failed.
     resume_unscored: bool = False
+    sandbox_run: SandboxRun | None = None
 
     def __post_init__(self) -> None:
         if self.parallel < 1:
@@ -793,8 +795,6 @@ class Collector:
 
         def calls() -> Iterator[dict[str, Any]]:
             for result in results:
-                if result.get("status") not in {"ok", "skipped"}:
-                    continue
                 capture = result.get("runtime", {}).get("capture")
                 if not isinstance(capture, dict) or not capture.get("manifest"):
                     continue
@@ -806,14 +806,16 @@ class Collector:
                         yield {
                             **call,
                             "sample": sample.relative_to(self.run_dir).as_posix(),
+                            "sample_status": result["status"],
+                            "sample_capture_status": capture.get("capture_status"),
                             "capture_manifest": capture["manifest"],
                             "task_id": result["task_id"],
                             "model_label": result.get("model_label"),
                             "sample_index": result.get("sample_index", 0),
                         }
 
-        # Separate schema; historical assistant content is input, output is the
-        # current response. Never append these records to legacy sft.jsonl.
+        # A failed conversation can still contain valid individual HTTP calls.
+        # SFT eligibility is decided separately for the whole conversation.
         if any(isinstance(r.get("runtime", {}).get("capture"), dict) for r in results):
             write_jsonl(self.run_dir / "calls.jsonl", calls())
 
@@ -910,6 +912,8 @@ class Collector:
             # Queued requests never start; running ones still finalize.
             # Workers still waiting for a launch turn give it up.
             self._launch_gate.cancel()
+            if self.config.sandbox_run is not None:
+                self.config.sandbox_run.stop_launching()
             return sum(future.cancel() for future in futures)
 
         def stored(request: RunRequest) -> dict[str, Any] | None:
@@ -918,7 +922,8 @@ class Collector:
             except Exception as exc:
                 return collector_error(request, exc)
 
-        begin_collection(self.run_dir)
+        if self.config.sandbox_run is None:
+            begin_collection(self.run_dir)
         try:
             try:
                 pending = requests
@@ -1000,13 +1005,18 @@ class Collector:
                             if event == signal.SIGINT
                             else CollectionStopped(f"received {name}", 128 + event)
                         )
-                        logger.warning(
-                            "%s: stopped %d running rollout(s) and removed %d "
-                            "container(s) of this run",
-                            name,
-                            len(self._running),
-                            remove_own_containers(),
-                        )
+                        if self.config.sandbox_run is None:
+                            logger.warning(
+                                "%s: stopped %d running rollout(s) and removed %d container(s) of this run",
+                                name,
+                                len(self._running),
+                                remove_own_containers(),
+                            )
+                        else:
+                            self.config.sandbox_run.abort()
+                            logger.warning(
+                                "%s: released managed sandboxes of this run", name
+                            )
                         break
                     outstanding -= 1
                     request = futures[event]
@@ -1081,7 +1091,7 @@ class Collector:
                 for signum, handler in handlers.items():
                     signal.signal(signum, handler)
                 pool.shutdown(wait=not abandon, cancel_futures=True)
-                if not abandon:
+                if not abandon and self.config.sandbox_run is None:
                     begin_collection(None)
             if stop is not None:
                 raise stop

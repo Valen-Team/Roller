@@ -834,12 +834,16 @@ def _write_trace(
     Preserve native OpenClaw, Codex and Claude Code records, escaping Unicode
     line separators for the Hub. An OpenClaw session header also gets
     ``header``, which names the harness and gives the session an id that is
-    unique in the run. Convert other samples from ACTF.
+    unique in the run. Convert other samples from ACTF. A DeepSeek sample
+    without an ACTF keeps its native journal as evidence of the partial run.
     """
 
     raw = sample_dir / "trace.jsonl"
     schema = (info.get("trajectory") or {}).get("raw_schema")
-    if schema in NATIVE_TRACES and raw.is_file():
+    preserve_native = schema in NATIVE_TRACES or (
+        schema == "roller.deepseek-events/v1" and not trajectory.get("steps")
+    )
+    if preserve_native and raw.is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
         sessions = 0
         with (

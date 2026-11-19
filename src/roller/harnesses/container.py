@@ -177,7 +177,7 @@ def build_provenance(
     request: RunRequest,
     *,
     harness: str,
-    docker_image: str,
+    docker_image: str | None,
     docker_image_digest: str | None,
     api_base_urls: list[str],
     environment: dict[str, str],

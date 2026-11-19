@@ -2,10 +2,12 @@
 
 Notable changes to Roller. Versions follow the tags of this repository and the `roller-agent` releases on PyPI.
 
-## Unreleased
+## 0.5.0
 
 ### Added
 
+- Single-agent WildClawBench collection with DeepSeek Harness can use a remote sandbox. `roller collect` and `roller bench run` accept an execution provider and template. Docker remains the default. The `e2b` extra enables E2B and the WildClawBench cookbook includes the template recipe.
+- The WildClawBench cookbook includes a DeepSeek collection script and an assets-only preparation mode for collectors without a Docker daemon.
 - `roller import` imports the local Claude Code and Codex sessions, compressed Codex sessions included, as a run that the Viewer and every export read. Imported samples record a title, a project and where their tools and system prompt came from (`tools_source`, `system_prompt_source`), which `sft_index.jsonl` carries.
 - The Hugging Face export of imported sessions replaces their home directories, user names and account identifiers, the global git name and email, and the values of credential variables in the exporting environment.
 - SFT records keep `tool_reference` blocks of tool results as JSON text.
@@ -22,6 +24,8 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ### Fixed
 
+- DeepSeek exports retain the native journal when an attempt has no ACTF trajectory. Runtime and capture artifacts remain available when output collection fails.
+- Benchmark graders read JSONL journals one record at a time, including journals with large image payloads.
 - HF export no longer drops the rest of a file after text that names a private key header without its key, which broke the JSON of the trajectory.
 - HF export matches the credential shapes in one pass per line, which halves its time on large runs.
 - Grader proxy bypass expands configured CIDR ranges to matching endpoint hosts.

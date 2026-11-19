@@ -678,6 +678,28 @@ class DeepSeekHarnessTests(unittest.TestCase):
             self.assertEqual((Path(tmp) / "results/answer.txt").read_text(), "TOKEN")
             self.assertTrue(any(a[:2] == ["rm", "-f"] for a in runtime.calls))
 
+    def test_output_transfer_failure_keeps_the_converted_trajectory(self):
+        harness = DeepSeekHarness(
+            DeepSeekConfig(api_key_env="LOCAL_TEST_KEY", wire_trace_mode="off"),
+            0,
+            FakeRuntime(),
+        )
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}),
+            patch(
+                "roller.harnesses.bridge.collect_outputs",
+                side_effect=EOFError("truncated output archive"),
+            ),
+        ):
+            result = harness.run(
+                RunRequest(0, Task("test", ("one",), 0), "model", 60), Path(tmp), 1
+            )
+            self.assertEqual(result.status, "error")
+            self.assertIn("truncated output archive", result.error)
+            self.assertTrue((Path(tmp) / result.trace_path).is_file())
+            self.assertTrue((Path(tmp) / result.trajectory_path).is_file())
+
     def test_invalid_settings_and_mixed_dry_run(self):
         for settings in (
             {"max_steps": 0},
