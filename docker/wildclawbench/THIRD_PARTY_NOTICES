@@ -19,5 +19,11 @@ https://github.com/openai/codex
 https://github.com/nodejs/node
 https://github.com/BurntSushi/ripgrep
 
+The OpenCode derivative adds OpenCode (MIT), uv (MIT or Apache-2.0), and
+ripgrep (MIT/Unlicense). The image contains their license notices and the
+installed metadata for OpenCode's plugin dependencies:
+https://github.com/anomalyco/opencode
+https://github.com/astral-sh/uv
+
 Roller code and build scripts are Apache-2.0:
 https://github.com/Valen-Team/Roller/blob/main/LICENSE
