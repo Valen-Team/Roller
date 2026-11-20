@@ -172,6 +172,9 @@ class OpenCodeSession(BridgeSession):
             OPENCODE_DISABLE_AUTOCOMPACT="1",
             OPENCODE_DISABLE_FFF="1",
             OPENCODE_DISABLE_DEFAULT_PLUGINS="1",
+            OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=str(
+                self.harness.config.output_tokens
+            ),
             ROLLER_OPENCODE_JOURNAL=STATE + "/trace.jsonl",
         )
 

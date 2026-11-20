@@ -38,6 +38,7 @@ from urllib.parse import urlsplit
 from roller import export_audit
 from roller.benches.report import SCORE_FILE, read_scores, sample_score
 from roller.collector import CollectionConfig, Collector
+from roller.harnesses.opencode import LOCAL_PROXY_BYPASS, _ensure_local_proxy_bypass
 from roller.redaction import REDACTED
 from roller.sft import SFTConversionError, _image_data_uri
 from roller.storage import safe_component
@@ -377,10 +378,16 @@ def environment_redaction(
     users: list[str] = []
     identities: set[str] = set()
     imported = False
+    opencode_proxy = False
     for path in run_dir.glob("samples/*/*/info.json"):
-        provenance = _json(path).get("provenance") or {}
+        info = _json(path)
+        provenance = info.get("provenance") or {}
         urls.update(url for url in provenance.get("api_base_urls") or [] if url)
-        names.update(name for name in provenance.get("environment_names") or [] if name)
+        environment_names = provenance.get("environment_names") or []
+        names.update(name for name in environment_names if name)
+        opencode_proxy |= info.get("harness") == "opencode" and any(
+            name.lower() == "no_proxy" for name in environment_names if name
+        )
         source = provenance.get("import")
         if isinstance(source, dict):
             imported = True
@@ -497,6 +504,22 @@ def environment_redaction(
             patterns.setdefault(name, _name(name))
         if email:
             literals.setdefault(email, REDACTED)
+    contextual: list[tuple[re.Pattern[str], str]] = []
+    if opencode_proxy:
+        proxy = {
+            name: environ[name] for name in ("NO_PROXY", "no_proxy") if name in environ
+        }
+        _ensure_local_proxy_bypass(proxy)
+        values = {proxy["NO_PROXY"], ",".join(LOCAL_PROXY_BYPASS)}
+        pattern = "|".join(
+            re.escape(value) for value in sorted(values, key=len, reverse=True)
+        )
+        contextual.append(
+            (
+                re.compile(rf"(?i)(\bno_proxy\s*=\s*)(?:{pattern})(?![\w.,:/-])"),
+                r"\1localhost,127.0.0.1",
+            )
+        )
     homes: list[tuple[re.Pattern[str], str]] = []
     for number, user in enumerate(users, 1):
         placeholder = "user" if number == 1 else f"user-{number}"
@@ -512,7 +535,7 @@ def environment_redaction(
             homes.append((re.compile(f"(?i:{_name(user)})"), placeholder))
 
     if not literals:
-        return Rules(replace=tuple(homes)), Redaction(
+        return Rules(replace=(*contextual, *homes)), Redaction(
             unset=tuple(unset), users=tuple(users)
         )
     pattern = re.compile(
@@ -522,7 +545,13 @@ def environment_redaction(
         )
     )
     return (
-        Rules(replace=((pattern, lambda match: literals[match.group(0)]), *homes)),
+        Rules(
+            replace=(
+                *contextual,
+                (pattern, lambda match: literals[match.group(0)]),
+                *homes,
+            )
+        ),
         Redaction(
             users=tuple(users),
             identities=len(identities),
@@ -834,14 +863,19 @@ def _write_trace(
     Preserve native OpenClaw, Codex and Claude Code records, escaping Unicode
     line separators for the Hub. An OpenClaw session header also gets
     ``header``, which names the harness and gives the session an id that is
-    unique in the run. Convert other samples from ACTF. A DeepSeek sample
-    without an ACTF keeps its native journal as evidence of the partial run.
+    unique in the run. Convert other samples from ACTF. DeepSeek and OpenCode
+    samples without ACTF keep their native journals.
     """
 
     raw = sample_dir / "trace.jsonl"
     schema = (info.get("trajectory") or {}).get("raw_schema")
-    preserve_native = schema in NATIVE_TRACES or (
-        schema == "roller.deepseek-events/v1" and not trajectory.get("steps")
+    opencode_native = schema == "roller.opencode-events/v1" and not trajectory.get(
+        "steps"
+    )
+    preserve_native = (
+        schema in NATIVE_TRACES
+        or (schema == "roller.deepseek-events/v1" and not trajectory.get("steps"))
+        or opencode_native
     )
     if preserve_native and raw.is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -850,6 +884,11 @@ def _write_trace(
             raw.open(encoding="utf-8", newline="") as reader,
             path.open("w", encoding="utf-8", newline="") as writer,
         ):
+            if opencode_native:
+                envelope = {**header, "type": "session", "source_schema": schema}
+                writer.write(
+                    _trace_line(json.dumps(envelope, ensure_ascii=False)) + "\n"
+                )
             for line in reader:
                 if schema == "openclaw-session-jsonl" and '"session"' in line:
                     row = json.loads(line)

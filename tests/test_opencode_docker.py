@@ -214,6 +214,8 @@ class OpenCodeDockerTests(unittest.TestCase):
                 f"http://127.0.0.1:{server.server_port}/v1",
                 "--opencode-api-key-env",
                 "ROLLER_LOCAL_KEY",
+                "--opencode-output-tokens",
+                "32768",
                 "--wire-trace",
                 "full",
                 "--timeout",
@@ -271,6 +273,9 @@ class OpenCodeDockerTests(unittest.TestCase):
                 ]
                 self.assertEqual(native_requests, wire_requests)
                 self.assertEqual(native_requests, requests)
+                self.assertEqual(
+                    {request.get("max_tokens") for request in requests}, {32768}
+                )
                 self.assertIn(
                     "You are running a Roller task", sft["messages"][0]["content"]
                 )

@@ -1,18 +1,18 @@
-# WildClawBench on OpenClaw, Codex, Claude Code and DeepSeek
+# WildClawBench on five Harnesses
 
 [English tutorial](https://valen-team.github.io/roller/cookbook/wildclawbench-open-models/) · [中文教程](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/) · [Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories)
 
 Collect, grade and browse 28 WildClawBench tasks with DeepSeek-V4.1-Flash-1017,
 GLM-5.3-Flash, Kimi K3 and Kimi K3.1 Pro. Each model runs each task three times:
 84 attempts per model and harness, or 336 per harness. Hugging Face hosts the
-OpenClaw, Codex, Claude Code and DeepSeek Harness collections, including
-successful, timed-out and failed attempts.
+OpenClaw, Codex, Claude Code, DeepSeek Harness and OpenCode collections, for
+1,680 successful, timed-out and failed attempts in total.
 
 ## Setup
 
 Use a Git checkout for the options in this example. Install with `pip install -e .`
-from the root of the checkout and download
-[WildClawBench](https://github.com/InternLM/WildClawBench) with its task assets.
+from the root of the checkout. Follow the [upstream setup](https://github.com/InternLM/WildClawBench#download-task-data)
+to prepare the benchmark checkout and its `workspace/` task assets.
 Start Docker for local execution, or follow the E2B template setup for DeepSeek.
 Run the commands below from `examples/cookbook/wildclawbench-open-models`.
 The image build instructions are in
@@ -27,7 +27,8 @@ export JUDGE_MODEL=glm-5.3-flash
 
 Use your own model and judge endpoints. For internal services reached through a
 proxy, put their hostnames in `NO_PROXY`. The harnesses use the same task
-list and judge. The scripts disable retries for agents and graders.
+list and judge. The scripts disable agent retries. The OpenCode script allows
+one grader retry in the original task environment.
 
 ## Claude Code
 
@@ -124,6 +125,31 @@ from the template. Pass `--deepseek-input-modalities text,image` for models
 that accept images and use the context and output limits of your endpoint.
 Pass `--deepseek-max-steps` to set a per-turn step limit for the batch.
 
+## OpenCode
+
+Use a streaming Chat Completions endpoint with tool-call and image support.
+Build the WildClawBench task image with OpenCode 1.18.30, then run one model
+per invocation:
+
+```bash
+docker build --platform linux/amd64 \
+  --build-arg BASE_IMAGE=ghcr.io/valen-team/roller-wildclaw-base:1.3-clean.1 \
+  -t roller-wildclaw-opencode:1.3-opencode1.18.30 ../../../docker/opencode
+export OPENCODE_IMAGE=roller-wildclaw-opencode:1.3-opencode1.18.30
+export MODEL=glm-5.3-flash
+export MODEL_BASE=http://localhost:8000/v1
+export OPENAI_API_KEY=not-required
+export MODEL_CONTEXT_WINDOW=98304
+./collect-opencode.sh --dry-run
+./collect-opencode.sh
+```
+
+The script uses 256 steps, a 32,768-token output cap, high reasoning effort
+and full request and call capture with the standard OpenCode tools. Set the
+context window to match the endpoint. For a small trial, set `TASK_IDS_FILE`,
+`RUNS_PER_TASK=1` and `PARALLEL=1`. The published OpenCode batch used isolated
+sandboxes. This recipe uses Docker.
+
 ## Export and append a batch
 
 ```bash
@@ -144,6 +170,6 @@ review the resulting files and add environment-specific replacements to
 `redact.json`. Raw runs stay unchanged. The exported table keeps execution status,
 score, grader error and output filenames.
 
-The four Harness batches are an observed comparison under their documented
+The five Harness batches are an observed comparison under their documented
 settings. Their prompts, tools, context management, software versions and
 backend compatibility behavior differ.

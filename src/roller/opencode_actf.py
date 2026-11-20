@@ -247,13 +247,21 @@ def opencode_events_to_actf(
     if not systems:
         raise ValueError("OpenCode journal has no captured system prompt")
     rows, calls_seen = [], set()
+    sft_unavailable_reason = None
     for native in native_messages(events, root_only=True):
         info, parts = native["info"], native["parts"]
         role = info["role"]
         if role not in {"user", "assistant"}:
             raise ValueError(f"unsupported OpenCode message role: {role}")
-        if info.get("error"):
-            raise ValueError("OpenCode native assistant contains an error")
+        if error := info.get("error"):
+            if not (
+                role == "assistant"
+                and isinstance(error, dict)
+                and error.get("name") == "ContextOverflowError"
+            ):
+                raise ValueError("OpenCode native assistant contains an error")
+            info = {**info, "finish": info.get("finish") or "error"}
+            sft_unavailable_reason = "OpenCode recorded a context overflow"
         content, results = [], []
         for part in parts:
             kind = part["type"]
@@ -271,7 +279,7 @@ def opencode_events_to_actf(
                 content.append({"type": "thinking", "thinking": part["text"]})
             elif kind == "tool" and role == "assistant":
                 state = part["state"]
-                if state["status"] not in {"completed", "error"}:
+                if state["status"] not in {"completed", "error", "running"}:
                     raise ValueError("OpenCode tool did not complete")
                 call_id, name, arguments = part["callID"], part["tool"], state["input"]
                 if not isinstance(arguments, dict):
@@ -291,6 +299,11 @@ def opencode_events_to_actf(
                         "arguments": arguments,
                     }
                 )
+                if state["status"] == "running":
+                    sft_unavailable_reason = (
+                        "OpenCode journal ended with a running tool call"
+                    )
+                    continue
                 result = (
                     state.get("error")
                     if state["status"] == "error"
@@ -377,12 +390,15 @@ def opencode_events_to_actf(
             }
         )
         rows.extend(results)
-    return openclaw_events_to_actf(
+    trajectory = openclaw_events_to_actf(
         rows,
         system_prompts=["\n\n".join(systems)],
         tools=list(schemas.values()),
         keep_thinking=keep_thinking,
     )
+    if sft_unavailable_reason:
+        trajectory["sft_unavailable_reason"] = sft_unavailable_reason
+    return trajectory
 
 
 def convert_opencode_trace(

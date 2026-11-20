@@ -96,7 +96,7 @@ roller export runs/my-sessions --format hf --output my-sessions-hf
 roller export runs/my-sessions                      # ATIF, the trajectory format of Harbor
 ```
 
-Read the report, add `--redact-rules FILE` for what remains, and scan the folder with a secret scanner before uploading. [Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories) is a dataset published this way, and the [cookbook](https://valen-team.github.io/roller/cookbook/wildclawbench-open-models/) follows the run behind it.
+Read the report, add `--redact-rules FILE` for what remains, and scan the folder with a secret scanner before uploading. [Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories) contains 1,680 attempts across OpenClaw, Codex, Claude Code, DeepSeek Harness and OpenCode. The [cookbook](https://valen-team.github.io/roller/cookbook/wildclawbench-open-models/) includes runnable collection recipes.
 
 [Hugging Face export →](https://valen-team.github.io/roller/traces/trajectory-outputs/#hugging-face-export) · [ATIF export →](https://valen-team.github.io/roller/traces/trajectory-outputs/#atif-export)
 
