@@ -201,6 +201,8 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "capture_calls": ("--claude-capture-calls", "switch"),
         "unique_tool_ids": ("--claude-unique-tool-ids", "switch"),
         "pdf_as_images": ("--claude-pdf-as-images", "switch"),
+        "chat_completions": ("--claude-chat-completions", "switch"),
+        "token_ids": ("--claude-token-ids", "switch"),
     },
     "hermes": {
         "max_iterations": ("--hermes-max-iterations", "value"),

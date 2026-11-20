@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from roller import hf_dataset, sft_dataset
+from roller import hf_dataset, sft_dataset, token_dataset
 from roller import importer as importer_module
 from roller.atif import export_run
 from roller.benches import (
@@ -120,6 +120,7 @@ from roller.harnesses.pi import (
     pi_effort,
 )
 from roller.image_build import prepare_task_images
+from roller.messages_bridge import logprobs_mode
 from roller.models import TaskBundle
 from roller.run_lock import (
     RUN_LOCK_SCHEMA,
@@ -195,12 +196,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     export.add_argument(
         "--format",
-        choices=("atif", "hf", "sft"),
+        choices=("atif", "hf", "sft", "tokens"),
         default="atif",
         help=(
             "target format: atif, the trajectory format Harbor reads (default), "
-            "hf, a Hugging Face dataset folder, or sft, the SFT records of the "
-            "run with an index of the task, model and bench score of each"
+            "hf, a Hugging Face dataset folder, sft, the SFT records of the "
+            "run with an index of the task, model and bench score of each, or "
+            "tokens, the token ids and logprobs --claude-token-ids recorded, "
+            "joined into one sequence per conversation"
         ),
     )
     export.add_argument(
@@ -1011,6 +1014,24 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     claude.add_argument(
+        "--claude-chat-completions",
+        action="store_true",
+        help=(
+            "translate Claude Code's Messages requests to Chat Completions at the "
+            "request recording proxy, for endpoints that serve only that API"
+        ),
+    )
+    claude.add_argument(
+        "--claude-token-ids",
+        action="store_true",
+        help=(
+            "save the prompt and completion token ids of every model call with "
+            "the logprobs of the sampled tokens in token_ids.jsonl; needs "
+            "--claude-chat-completions and an endpoint that returns token ids, "
+            "such as vLLM"
+        ),
+    )
+    claude.add_argument(
         "--claude-pdf-as-images",
         action="store_true",
         help="render inline PDF documents as page text and images for Messages backends without document support",
@@ -1809,6 +1830,8 @@ def _collect(args: argparse.Namespace) -> int:
             permission_mode=args.claude_permission_mode,
             unique_tool_ids=args.claude_unique_tool_ids,
             pdf_as_images=args.claude_pdf_as_images,
+            chat_completions=args.claude_chat_completions,
+            token_ids=args.claude_token_ids,
             wire_trace_mode=args.wire_trace,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
@@ -2115,6 +2138,27 @@ def _collect(args: argparse.Namespace) -> int:
             ),
             **({"unique_tool_ids": True} if claude_code_config.unique_tool_ids else {}),
             **({"pdf_as_images": True} if claude_code_config.pdf_as_images else {}),
+            **(
+                {"chat_completions": True}
+                if claude_code_config.chat_completions
+                else {}
+            ),
+            **(
+                {
+                    "token_ids": True,
+                    # "processed" or "raw", per model: see logprobs_mode.
+                    "token_logprobs": {
+                        model: logprobs_mode(
+                            claude_code_config.api_base,
+                            model,
+                            host_api_key("Claude Code", claude_api_key_env),
+                        )
+                        for model in sorted({request.model for request in requests})
+                    },
+                }
+                if claude_code_config.token_ids
+                else {}
+            ),
         }
 
     if hermes_config is not None:
@@ -2899,6 +2943,13 @@ def _export(args: argparse.Namespace) -> int:
         raise ValueError(
             "--redact-rules, --include-runs and --preserve-task-keys apply to --format hf"
         )
+    if args.format == "tokens":
+        samples, joined, tokens = token_dataset.export_run(run_dir, output)
+        print(
+            f"Exported {samples} samples as {joined} sequences of {tokens} tokens "
+            f"to {output / token_dataset.TOKENS_FILE}"
+        )
+        return 0
     if args.format == "sft":
         summary = sft_dataset.export_run(run_dir, output, args.min_score)
         for line in summary.lines(output, args.min_score):

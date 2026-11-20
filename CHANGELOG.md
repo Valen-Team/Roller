@@ -4,6 +4,10 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ## Unreleased
 
+### Added
+
+- Claude Code Harness collects token-in, token-out data from a Chat Completions endpoint that returns token ids, such as vLLM. `--claude-chat-completions` translates the Messages requests of Claude Code to Chat Completions at the request recording proxy, with the same prompt vLLM renders for its own Messages endpoint. `--claude-token-ids` saves the prompt and completion token ids of every model call with the logprob of each sampled token in `token_ids.jsonl`, and the run records whether the endpoint reports logprobs before or after temperature and top-p. `roller export --format tokens` joins the calls of a conversation into one sequence in which every token appears once, with the positions the model generated marked.
+
 ### Changed
 
 - Roller now calls Docker through the named verbs of `DockerRuntime` (`exec`, `copy_in`, `copy_out`, `kill`, `remove`, `ps`, `image_id`, …) instead of writing `docker` argument lists at each call site. The argv and recorded provenance are unchanged, and the Docker command line is spelled in one module.

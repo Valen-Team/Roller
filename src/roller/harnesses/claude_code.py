@@ -50,6 +50,8 @@ DEFAULT_CLAUDE_CODE_IMAGE = "roller-claude-code:2.1.222"
 CLAUDE_HOME_CONTAINER_PATH = "/roller/claude-home"
 # Native and delivered IDs of every tool call --claude-unique-tool-ids repaired.
 TOOL_ID_MAPPINGS_NAME = "tool_id_mappings.jsonl"
+# Token ids and logprobs of every call --claude-token-ids recorded.
+TOKEN_IDS_NAME = "token_ids.jsonl"
 # Stream-json user message of a turn that carries images.
 CLAUDE_INPUT_CONTAINER_PATH = "/roller/claude-input.jsonl"
 
@@ -143,6 +145,10 @@ class ClaudeCodeConfig:
     # Let the proxy replace tool-use IDs the endpoint issues more than once.
     unique_tool_ids: bool = False
     pdf_as_images: bool = False
+    # The proxy sends Messages requests to the endpoint's Chat Completions API.
+    chat_completions: bool = False
+    # Record the prompt and completion token ids of each call with logprobs.
+    token_ids: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -194,6 +200,15 @@ class ClaudeCodeConfig:
             raise ValueError(
                 "Claude tool ID repair requires --claude-api-base and wire tracing"
             )
+        if self.chat_completions and (
+            not self.api_base or self.wire_trace_mode == "off"
+        ):
+            raise ValueError(
+                "Claude Chat Completions translation requires --claude-api-base "
+                "and wire tracing"
+            )
+        if self.token_ids and not self.chat_completions:
+            raise ValueError("--claude-token-ids requires --claude-chat-completions")
         if self.pdf_as_images:
             if not self.api_base or self.wire_trace_mode == "off":
                 raise ValueError(
@@ -253,6 +268,8 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         log_path.unlink(missing_ok=True)
         mappings_path = output_dir / TOOL_ID_MAPPINGS_NAME
         mappings_path.unlink(missing_ok=True)
+        token_ids_path = output_dir / TOKEN_IDS_NAME
+        token_ids_path.unlink(missing_ok=True)
         if self.config.capture_calls:
             self.capture = CaptureRuntime(
                 output_dir, attempt, "claude-code", self.config.capture_debug
@@ -273,6 +290,8 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             if self.config.unique_tool_ids
             else None,
             anthropic_pdf_as_images=self.config.pdf_as_images,
+            messages_as_chat=self.config.chat_completions,
+            token_ids_path=token_ids_path if self.config.token_ids else None,
         )
         self._wire_proxy.start()
 
