@@ -2,19 +2,17 @@ from __future__ import annotations
 
 import json
 import tempfile
-import threading
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from roller.messages_bridge import logprobs_mode
 from roller.storage import write_jsonl
 from roller.token_dataset import export_run, sequences
 
 
-def call(seq, prompt, completion, finish="tool_calls"):
+def call(seq, prompt, completion, finish="tool_calls", continues=None):
     return {
         "request_seq": seq,
+        "continues": continues,
         "prompt_token_ids": prompt,
         "completion_token_ids": completion,
         "logprobs": [-0.5] * len(completion),
@@ -28,7 +26,7 @@ CALLS = [
     call(1, [1, 2], [3, 4]),
     # A subagent starts between two calls of the root conversation.
     call(2, [7, 8], [9], "stop"),
-    call(3, [1, 2, 3, 4, 5], [6], "stop"),
+    call(3, [5], [6], "stop", continues=1),
     # A compacted context does not continue what came before.
     call(4, [1, 9], [9], "stop"),
 ]
@@ -80,7 +78,7 @@ class SequenceTests(unittest.TestCase):
                     for seq, participant in PARTICIPANTS.items()
                 ],
             )
-            configuration = {"claude-code": {"token_logprobs": {"glm": "processed"}}}
+            configuration = {"token_ids": {"logprobs": {"glm": "processed"}}}
             (run / "info.json").write_text(json.dumps({"configuration": configuration}))
             result = {"task_id": "task", "model": "glm", "status": "ok"}
             for directory in (sample, sample.with_name("00000001_untraced")):
@@ -98,43 +96,6 @@ class SequenceTests(unittest.TestCase):
         )
         self.assertEqual(row["request"], {"model": "glm", "max_tokens": 64})
         self.assertEqual(row["sequences"], sequences(CALLS, PARTICIPANTS))
-
-
-class LogprobsModeTests(unittest.TestCase):
-    def mode(self, processed: bool, token_ids=(1, 2)) -> str:
-        class Endpoint(BaseHTTPRequestHandler):
-            def log_message(self, *args):
-                pass
-
-            def do_POST(self):
-                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                gap = 0.8 / body["temperature"] if processed else 0.8
-                top = [{"logprob": -0.2}, {"logprob": -0.2 - gap}]
-                payload = json.dumps(
-                    {
-                        "prompt_token_ids": list(token_ids),
-                        "choices": [{"logprobs": {"content": [{"top_logprobs": top}]}}],
-                    }
-                ).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
-        return logprobs_mode(f"http://127.0.0.1:{server.server_port}", "glm", "key")
-
-    def test_gap_that_grows_as_temperature_drops_is_processed(self):
-        self.assertEqual(self.mode(processed=True), "processed")
-        self.assertEqual(self.mode(processed=False), "raw")
-
-    def test_endpoint_without_token_ids_is_refused(self):
-        with self.assertRaisesRegex(RuntimeError, "returned no token ids"):
-            self.mode(processed=True, token_ids=())
 
 
 if __name__ == "__main__":

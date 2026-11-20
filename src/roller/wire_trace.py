@@ -18,7 +18,7 @@ import json
 import threading
 import time
 import zlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,13 +31,13 @@ from roller.capture import CallRecorder
 from roller.codex_tools import tool_snapshot
 from roller.messages_bridge import (
     MessagesStream,
-    TokenIds,
     chat_request,
     messages_error,
     messages_response,
     sse,
 )
 from roller.response_metadata import ResponseMetadata
+from roller.token_ids import TokenIds, TokenLog
 from roller.tool_id_identity import ToolIdRegistry
 
 HOP_BY_HOP_HEADERS = {
@@ -460,6 +460,38 @@ def extract_wire_tools(path: Path) -> list[Any] | None:
     return list(merged.values()) or None
 
 
+def _rewrite_json(payload: bytes, rewrite: Callable[[Any], Any]) -> bytes:
+    """A JSON body after ``rewrite``, which changes it in place.
+
+    The bytes are returned as they came when they are not JSON or ``rewrite``
+    returns nothing true.
+    """
+
+    try:
+        body = json.loads(payload)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return payload
+    if not rewrite(body):
+        return payload
+    return json.dumps(body, ensure_ascii=False).encode("utf-8")
+
+
+def _rewrite_event(line: bytes, rewrite: Callable[[Any], Any]) -> bytes:
+    """A stream line after ``rewrite`` of the JSON in its ``data`` field."""
+
+    content = line.rstrip(b"\r\n")
+    if not content.startswith(b"data:"):
+        return line
+    try:
+        event = json.loads(content[5:])
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return line
+    if not rewrite(event):
+        return line
+    data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    return b"data: " + data.encode("utf-8") + line[len(content) :]
+
+
 class _ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -626,18 +658,17 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         self.close_connection = True
         upstream_path = proxy.upstream_path(self.command, self.path)
         bridged = upstream_path != proxy.forward_path(self.path)
+        # The Chat Completions request the proxy writes itself, if it does.
+        chat = chat_request(json.loads(body)) if bridged else None
         tokens = None
-        sampling: dict[str, Any] = {}
-        if bridged:
-            chat = chat_request(json.loads(body))
-            if proxy.token_ids_path is not None:
-                tokens = TokenIds()
-                chat.update(return_token_ids=True, logprobs=True)
-            sampling = {
-                key: value
-                for key, value in chat.items()
-                if key not in ("messages", "tools")
-            }
+        if (
+            proxy.token_log is not None
+            and self.command == "POST"
+            and urlsplit(upstream_path).path.rstrip("/").endswith("/chat/completions")
+        ):
+            chat = chat or json.loads(body)
+            tokens = TokenIds(chat)
+        if chat is not None:
             body = json.dumps(chat, ensure_ascii=False).encode("utf-8")
         url = proxy.upstream_origin + upstream_path
         outgoing = urllib_request.Request(url, data=body, method=self.command)
@@ -649,8 +680,8 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 and normalized_key not in proxy.drop_request_headers
             ):
                 outgoing.add_header(key, value)
-        if proxy.tool_id_mappings_path is not None or bridged:
-            # Tool IDs are repaired, and a response translated, uncompressed.
+        if proxy.tool_id_mappings_path is not None or chat is not None:
+            # The proxy reads the JSON of these responses, so uncompressed.
             outgoing.add_header("Accept-Encoding", "identity")
         if bridged and self.headers.get("x-api-key"):
             outgoing.add_header("Authorization", f"Bearer {self.headers['x-api-key']}")
@@ -723,32 +754,35 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
-        normalize_reasoning = (
-            proxy.normalize_reasoning_replay
-            and self.path.split("?", 1)[0].rstrip("/").endswith("/chat/completions")
-            and content_encoding in ("", "identity")
-        )
-        repair_tool_ids = (
-            proxy.tool_id_mappings_path is not None
-            and self.command == "POST"
-            and self.path.split("?", 1)[0].rstrip("/").endswith("/messages")
-            and content_encoding in ("", "identity")
-        )
+        events = "text/event-stream" in content_type
+        # Rewrites of the response's JSON. The first shapes what the records
+        # keep too; the second only what the Harness reads.
+        recorded = delivered = None
+        if content_encoding in ("", "identity") and not bridged:
+            route = self.path.split("?", 1)[0].rstrip("/")
+            if tokens is not None:
+                recorded = tokens.take
+            elif (
+                proxy.tool_id_mappings_path is not None
+                and self.command == "POST"
+                and route.endswith("/messages")
+            ):
+                # Records and captures keep the IDs Claude Code received.
+                recorded = proxy.repair_tool_ids
+            if proxy.normalize_reasoning_replay and route.endswith("/chat/completions"):
+                delivered = normalize_chat_completion_reasoning_response
         try:
-            if bridged and status == 200 and "text/event-stream" in content_type:
+            if bridged and status == 200 and events:
                 stream = MessagesStream()
 
-                def deliver(events: list[dict[str, Any]]) -> None:
-                    payload = b"".join(map(sse, events))
+                def deliver(translated: list[dict[str, Any]]) -> None:
+                    payload = b"".join(map(sse, translated))
                     if payload:
                         observe(payload)
                         self.wfile.write(payload)
                         self.wfile.flush()
 
-                while True:
-                    line = response.readline()
-                    if not line:
-                        break
+                for line in iter(response.readline, b""):
                     data = line[5:].strip() if line.startswith(b"data:") else b""
                     if not data or data == b"[DONE]":
                         continue
@@ -770,51 +804,17 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 observe(payload)
                 self.wfile.write(payload)
                 self.wfile.flush()
-            elif repair_tool_ids and "text/event-stream" in content_type:
-                while True:
-                    line = response.readline()
-                    if not line:
-                        break
-                    # Records and captures keep the IDs Claude Code received.
-                    line = self._repair_sse_tool_id_line(proxy, line)
-                    observe(line)
-                    self.wfile.write(line)
+            elif (recorded or delivered) and (events or "json" in content_type):
+                rewrite = _rewrite_event if events else _rewrite_json
+                frames = iter(response.readline, b"") if events else [response.read()]
+                for frame in frames:
+                    if recorded:
+                        frame = rewrite(frame, recorded)
+                    observe(frame)
+                    if delivered:
+                        frame = rewrite(frame, delivered)
+                    self.wfile.write(frame)
                     self.wfile.flush()
-            elif repair_tool_ids and "json" in content_type:
-                payload = response.read()
-                try:
-                    message = json.loads(payload)
-                    if proxy.repair_tool_ids(message):
-                        payload = json.dumps(message, ensure_ascii=False).encode(
-                            "utf-8"
-                        )
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    pass
-                observe(payload)
-                self.wfile.write(payload)
-                self.wfile.flush()
-            elif normalize_reasoning and "text/event-stream" in content_type:
-                while True:
-                    line = response.readline()
-                    if not line:
-                        break
-                    observe(line)
-                    self.wfile.write(self._normalize_sse_reasoning_line(line))
-                    self.wfile.flush()
-            elif normalize_reasoning and "json" in content_type:
-                payload = response.read()
-                observe(payload)
-                try:
-                    payload = json.dumps(
-                        normalize_chat_completion_reasoning_response(
-                            json.loads(payload)
-                        ),
-                        ensure_ascii=False,
-                    ).encode("utf-8")
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    pass
-                self.wfile.write(payload)
-                self.wfile.flush()
             else:
                 while True:
                     # read1 forwards available SSE bytes without waiting for a
@@ -849,68 +849,11 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                     error=capture_error,
                 )
             record_response()
-            if tokens is not None and tokens.completion:
-                proxy.write_token_ids(
-                    {
-                        "request_seq": request_seq,
-                        "prompt_token_ids": tokens.prompt,
-                        "completion_token_ids": tokens.completion,
-                        "logprobs": tokens.logprobs,
-                        "finish_reason": tokens.finish_reason,
-                        "complete": complete,
-                        "request": sampling,
-                    }
-                )
+            if tokens is not None and tokens.completion and request_seq is not None:
+                proxy.token_log.write(request_seq, tokens, complete)
             close_response = getattr(response, "close", None)
             if callable(close_response):
                 close_response()
-
-    @staticmethod
-    def _repair_sse_tool_id_line(proxy: WireTraceProxy, line: bytes) -> bytes:
-        newline = (
-            b"\r\n"
-            if line.endswith(b"\r\n")
-            else b"\n"
-            if line.endswith(b"\n")
-            else b""
-        )
-        content = line[: -len(newline)] if newline else line
-        if not content.startswith(b"data:") or b"tool_use" not in content:
-            return line
-        try:
-            event = json.loads(content[5:])
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return line
-        if not proxy.repair_tool_ids(event):
-            return line
-        repaired = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-        return b"data: " + repaired.encode("utf-8") + newline
-
-    @staticmethod
-    def _normalize_sse_reasoning_line(line: bytes) -> bytes:
-        newline = (
-            b"\r\n"
-            if line.endswith(b"\r\n")
-            else b"\n"
-            if line.endswith(b"\n")
-            else b""
-        )
-        content = line[: -len(newline)] if newline else line
-        if not content.startswith(b"data:"):
-            return line
-        data = content[5:].lstrip()
-        if not data or data == b"[DONE]":
-            return line
-        try:
-            parsed = json.loads(data)
-            normalized = json.dumps(
-                normalize_chat_completion_reasoning_response(parsed),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return line
-        return b"data: " + normalized + newline
 
     def _dispatch(self) -> None:
         try:
@@ -991,8 +934,8 @@ class WireTraceProxy:
         self.anthropic_pdf_as_images = anthropic_pdf_as_images
         # Send Messages requests to the upstream's Chat Completions endpoint.
         self.messages_as_chat = messages_as_chat
-        # Receives the token ids and logprobs of each translated call.
-        self.token_ids_path = token_ids_path
+        # Receives the token ids and logprobs of each Chat Completions call.
+        self.token_log = TokenLog(token_ids_path) if token_ids_path else None
         # Set to repair repeated Anthropic tool-use IDs; receives one row per repair.
         self.tool_id_mappings_path = tool_id_mappings_path
         self.tool_ids = ToolIdRegistry()
@@ -1071,11 +1014,6 @@ class WireTraceProxy:
             return self.forward_path(path)
         route = route[: -len("/messages")] + "/chat/completions"
         return urlunsplit(("", "", route, target.query, ""))
-
-    def write_token_ids(self, row: Mapping[str, Any]) -> None:
-        assert self.token_ids_path is not None
-        with self._lock, self.token_ids_path.open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(row, separators=(",", ":")) + "\n")
 
     def open_upstream(
         self, outgoing: urllib_request.Request, request_seq: int | None

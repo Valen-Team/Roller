@@ -41,6 +41,7 @@ from roller.models import HarnessResult, RunRequest
 from roller.native_images import claude_user_message
 from roller.storage import safe_component
 from roller.thinking import normalize_thinking, resolve_thinking
+from roller.token_ids import TOKEN_IDS_FILE
 from roller.usage import ZERO_USAGE, extract_claude_code_usage
 from roller.wire_trace import WireTraceProxy, redact_jsonl_file
 
@@ -50,8 +51,6 @@ DEFAULT_CLAUDE_CODE_IMAGE = "roller-claude-code:2.1.222"
 CLAUDE_HOME_CONTAINER_PATH = "/roller/claude-home"
 # Native and delivered IDs of every tool call --claude-unique-tool-ids repaired.
 TOOL_ID_MAPPINGS_NAME = "tool_id_mappings.jsonl"
-# Token ids and logprobs of every call --claude-token-ids recorded.
-TOKEN_IDS_NAME = "token_ids.jsonl"
 # Stream-json user message of a turn that carries images.
 CLAUDE_INPUT_CONTAINER_PATH = "/roller/claude-input.jsonl"
 
@@ -147,7 +146,7 @@ class ClaudeCodeConfig:
     pdf_as_images: bool = False
     # The proxy sends Messages requests to the endpoint's Chat Completions API.
     chat_completions: bool = False
-    # Record the prompt and completion token ids of each call with logprobs.
+    # The proxy records the token ids and logprobs of each call.
     token_ids: bool = False
 
     def __post_init__(self) -> None:
@@ -207,8 +206,11 @@ class ClaudeCodeConfig:
                 "Claude Chat Completions translation requires --claude-api-base "
                 "and wire tracing"
             )
-        if self.token_ids and not self.chat_completions:
-            raise ValueError("--claude-token-ids requires --claude-chat-completions")
+        if self.token_ids and not (self.chat_completions and self.capture_calls):
+            raise ValueError(
+                "Claude Code --token-ids requires --claude-chat-completions "
+                "and --capture-calls"
+            )
         if self.pdf_as_images:
             if not self.api_base or self.wire_trace_mode == "off":
                 raise ValueError(
@@ -268,7 +270,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         log_path.unlink(missing_ok=True)
         mappings_path = output_dir / TOOL_ID_MAPPINGS_NAME
         mappings_path.unlink(missing_ok=True)
-        token_ids_path = output_dir / TOKEN_IDS_NAME
+        token_ids_path = output_dir / TOKEN_IDS_FILE
         token_ids_path.unlink(missing_ok=True)
         if self.config.capture_calls:
             self.capture = CaptureRuntime(

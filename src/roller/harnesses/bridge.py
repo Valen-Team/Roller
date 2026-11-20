@@ -54,6 +54,7 @@ from roller.sandbox import (
 )
 from roller.storage import atomic_write_json
 from roller.thinking import resolve_thinking
+from roller.token_ids import TOKEN_IDS_FILE
 from roller.usage import ZERO_USAGE
 from roller.wire_trace import WireTraceProxy, redact_jsonl_file
 
@@ -110,6 +111,8 @@ def validate_bridge_config(config: Any, label: str) -> None:
         raise ValueError(
             f"{label} call capture requires --api-base, --network host and wire tracing"
         )
+    if config.token_ids and (remote or not config.capture_calls):
+        raise ValueError(f"{label} --token-ids requires --capture-calls and Docker")
 
 
 def positive_int(value: Any) -> bool:
@@ -407,6 +410,8 @@ class BridgeSession(InteractiveSession):
         if self.sandbox_run is None and (
             config.wire_trace_mode == "full" or config.capture_calls
         ):
+            token_ids_path = self.output_dir / TOKEN_IDS_FILE
+            token_ids_path.unlink(missing_ok=True)
             self.proxy = WireTraceProxy(
                 api_base,
                 self.output_dir / "wire_trace.jsonl",
@@ -415,6 +420,7 @@ class BridgeSession(InteractiveSession):
                 capture_identity_header="x-roller-native-session-id"
                 if self.capture
                 else None,
+                token_ids_path=token_ids_path if config.token_ids else None,
             )
             self.proxy.start()
             api_base = self.proxy.proxy_base_url
