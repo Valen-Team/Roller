@@ -6,6 +6,7 @@ import ipaddress
 import json
 import re
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 
 from roller.redaction import REDACTED
@@ -68,8 +69,13 @@ def replacements():
     return ((TOKENS, REDACTED), *CONTEXT_PATTERNS)
 
 
-def write_report(output: Path) -> Path:
-    """Scan exported text; record locations and kinds without copying sensitive values."""
+def write_report(output: Path, users: Sequence[str] = ()) -> Path:
+    """Scan exported text; record locations and kinds without copying sensitive values.
+
+    ``users`` are the user names the export replaced; any one left, in any case
+    and inside any word, is a ``user_name``.
+    """
+    names = re.compile("|".join(map(re.escape, users)), re.I) if users else None
     findings = []
     counts: Counter[str] = Counter()
     skipped = []
@@ -101,6 +107,8 @@ def write_report(output: Path) -> Path:
                         kinds.append("credential")
                     if "-----BEGIN" in line and "PRIVATE KEY" in line:
                         kinds.append("private_key")
+                    if names and names.search(line):
+                        kinds.append("user_name")
                     for kind in kinds:
                         counts[kind] += 1
                         if len(findings) < 1000:

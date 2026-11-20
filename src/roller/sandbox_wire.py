@@ -9,6 +9,7 @@ from pathlib import Path
 
 from roller.capture import CallRecorder
 from roller.storage import atomic_write_json
+from roller.token_ids import TOKEN_IDS_FILE
 from roller.wire_trace import WireTraceProxy
 
 
@@ -21,6 +22,9 @@ def main(directory: Path) -> None:
         mode="full",
         capture_recorder=recorder,
         capture_identity_header="x-roller-native-session-id" if recorder else None,
+        token_ids_path=directory / TOKEN_IDS_FILE
+        if settings.get("token_ids")
+        else None,
     )
     proxy.start()
     try:

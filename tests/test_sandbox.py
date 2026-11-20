@@ -111,3 +111,38 @@ def test_sandbox_archive_refuses_to_traverse_a_link(tmp_path: Path):
     with pytest.raises(ValueError, match="not a file or directory"):
         unpack_archive(archive, tmp_path / "target")
     assert not (tmp_path / "escaped").exists()
+
+
+def test_sandbox_wire_records_token_ids_when_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from roller import sandbox_wire
+
+    made = []
+
+    class Proxy:
+        proxy_base_url = "http://127.0.0.1:1"
+
+        def __init__(self, *args, **kwargs):
+            made.append(kwargs)
+            (tmp_path / "stop").touch()
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(sandbox_wire, "WireTraceProxy", Proxy)
+    for token_ids in (False, True):
+        (tmp_path / "stop").unlink(missing_ok=True)
+        (tmp_path / "config.json").write_text(
+            json.dumps(
+                {"api_base": "http://model", "calls": False, "token_ids": token_ids}
+            )
+        )
+        sandbox_wire.main(tmp_path)
+    assert [kwargs["token_ids_path"] for kwargs in made] == [
+        None,
+        tmp_path / "token_ids.jsonl",
+    ]

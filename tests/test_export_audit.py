@@ -72,6 +72,24 @@ def test_report_keeps_content_and_does_not_repeat_values(tmp_path: Path):
     assert json.loads((output / "sample.jsonl").read_text())["text"] == text
 
 
+def test_report_counts_replaced_user_names_left_in_words(tmp_path: Path):
+    output = tmp_path / "dataset"
+    output.mkdir()
+    (output / "sample.jsonl").write_text(
+        json.dumps({"text": "hostnameAlice uid 1000"})
+        + "\n"
+        + json.dumps({"text": "/Users/user"})
+        + "\n"
+    )
+    report = export_audit.write_report(output, ["alice"])
+    payload = json.loads(report.read_text())
+    assert payload["counts"] == {"user_name": 1}
+    assert payload["findings"] == [
+        {"file": "sample.jsonl", "line": 1, "kind": "user_name"}
+    ]
+    assert "alice" not in report.read_text().lower()
+
+
 def test_report_handles_long_image_data_without_an_email(tmp_path: Path):
     output = tmp_path / "dataset"
     output.mkdir()

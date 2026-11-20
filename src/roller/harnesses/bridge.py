@@ -111,8 +111,8 @@ def validate_bridge_config(config: Any, label: str) -> None:
         raise ValueError(
             f"{label} call capture requires --api-base, --network host and wire tracing"
         )
-    if config.token_ids and (remote or not config.capture_calls):
-        raise ValueError(f"{label} --token-ids requires --capture-calls and Docker")
+    if config.token_ids and not config.capture_calls:
+        raise ValueError(f"{label} --token-ids requires --capture-calls")
 
 
 def positive_int(value: Any) -> bool:
@@ -372,7 +372,12 @@ class BridgeSession(InteractiveSession):
         with tempfile.TemporaryDirectory() as temporary:
             settings = Path(temporary) / "config.json"
             atomic_write_json(
-                settings, {"api_base": api_base, "calls": self.capture is not None}
+                settings,
+                {
+                    "api_base": api_base,
+                    "calls": self.capture is not None,
+                    "token_ids": self.harness.config.token_ids,
+                },
             )
             self.upload(
                 settings, f"{directory}/config.json", "wire recorder configuration"
@@ -677,6 +682,9 @@ class BridgeSession(InteractiveSession):
             wire = self.output_dir / "wire_trace.jsonl"
             box.download(source, wire, timeout=120)
             redact_jsonl_file(wire)
+        source = f"{directory}/{TOKEN_IDS_FILE}"
+        if box.run(["test", "-f", source], timeout=15).returncode == 0:
+            box.download(source, self.output_dir / TOKEN_IDS_FILE, timeout=120)
 
     def _collect_remote_outputs(self):
         assert self.sandbox is not None

@@ -72,12 +72,12 @@ Set `OPENCODE_IMAGE` to this tag when running the
 ### Remote execution
 
 Roller can run single-agent WildClawBench tasks with DeepSeek through an
-installed sandbox provider. Install the same Roller checkout in the remote
+installed sandbox provider. Install the same Roller version in the remote
 template so it contains `roller.sandbox_wire`. The template must also have
 the task environment and the pinned DeepSeek SDK and runtime.
 
 ```bash
-python -m pip install 'git+https://github.com/Valen-Team/Roller.git'
+python -m pip install roller-agent
 roller collect --bench wildclawbench --bench-root "$WILDCLAWBENCH_ROOT" \
   --bench-task-id "$TASK_ID" --harness deepseek --model "$MODEL" \
   --api-base "$MODEL_BASE" --wire-trace full --capture-calls \
