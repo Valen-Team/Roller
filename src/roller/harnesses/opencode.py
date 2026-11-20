@@ -215,10 +215,7 @@ class OpenCodeSession(BridgeSession):
 
         if not self.container_started or self._result is not None:
             raise RuntimeError("OpenCode session is not active")
-        self.checked(
-            ["exec", self.container, "rm", "-f", STATE + "/session.json"],
-            "OpenCode session reset",
-        )
+        self.command(["rm", "-f", STATE + "/session.json"], "OpenCode session reset")
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:
         return convert_opencode_trace(

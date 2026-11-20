@@ -36,6 +36,10 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 - Resume accepts task/model supersets and compatible patch upgrades, and rebuilds derived SFT artifacts without rerunning valid samples.
 - HF exports exclude previous export directories and review reports from shared run files.
 
+### Changed
+
+- Roller now calls Docker through the named verbs of `DockerRuntime` (`exec`, `copy_in`, `copy_out`, `kill`, `remove`, `ps`, `image_id`, …) instead of writing `docker` argument lists at each call site. The argv and recorded provenance are unchanged, and the Docker command line is spelled in one module.
+
 ## 0.4.0 - 2026-11-16
 
 Roller 0.4.0 exports a run for publishing. `roller export` writes ATIF, the trajectory format of Harbor, and with `--format hf` a Hugging Face dataset folder that the Hub opens in its trace viewer, with the endpoints, host names, host paths and credentials of the collection environment replaced. Five Harness images are prebuilt at `ghcr.io/valen-team`.

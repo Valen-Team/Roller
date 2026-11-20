@@ -47,7 +47,7 @@ class Container:
 def roller_containers(runtime: DockerRuntime, timeout: float = 30) -> list[Container]:
     """Every container Roller started on this Docker host, running or not."""
 
-    result = runtime.run(["ps", "-a", "--format", _PS_FORMAT], timeout=timeout)
+    result = runtime.ps(_PS_FORMAT, timeout=timeout)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()[-500:]
         raise RuntimeError(f"could not list containers: {detail}")
@@ -64,8 +64,8 @@ def _remove(
 ) -> None:
     if not containers:
         return
-    result = runtime.run(
-        ["rm", "-f", *(container.id for container in containers)], timeout=timeout
+    result = runtime.remove_all(
+        [container.id for container in containers], timeout=timeout
     )
     if result.returncode != 0:
         # A rollout thread may have removed its own container in the meantime.

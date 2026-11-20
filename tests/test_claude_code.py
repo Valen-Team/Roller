@@ -17,6 +17,7 @@ from roller.harnesses.claude_code import (
     normalize_anthropic_base_url,
     redact_anthropic_base_url,
 )
+from roller.harnesses.docker import DockerRuntime
 from roller.models import InputFile, RunRequest, Task
 
 
@@ -109,7 +110,8 @@ class ClaudeCodeHarnessTests(unittest.TestCase):
 
     def test_attached_images_are_sent_as_a_stream_json_first_message(self) -> None:
         harness = ClaudeCodeHarness(ClaudeCodeConfig(wire_trace_mode="off"), 0)
-        harness.runtime = MagicMock()
+        harness.runtime.run = MagicMock()
+        harness.runtime.popen = MagicMock()
         harness.runtime.popen.return_value.wait.return_value = 0
         copied: list[dict] = []
 
@@ -276,7 +278,8 @@ class ClaudeCodeHarnessTests(unittest.TestCase):
         self.assertEqual([row["uuid"] for row in rows], ["u1", "u2", "dupe"])
 
     def test_collects_main_trace_under_subagents_output_directory(self) -> None:
-        runtime = MagicMock()
+        runtime = DockerRuntime()
+        runtime.run = MagicMock()
 
         def copy_session(args, timeout):
             staging = Path(args[-1]) / "-roller-workspace"

@@ -1047,25 +1047,16 @@ def _remove_leftover_containers(binary: str, run_dir: Path) -> None:
 def _docker_preflight(binary: str, image: str) -> str:
     if shutil.which(binary) is None:
         raise RuntimeError(f"Docker executable not found: {binary}")
+    runtime = DockerRuntime(binary)
     try:
-        result = subprocess.run(
-            [binary, "version", "--format", "{{.Server.Version}}"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
+        result = runtime.version(timeout=15)
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"Docker preflight failed: {exc}") from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"Docker daemon is unavailable: {detail}")
     try:
-        inspected = subprocess.run(
-            [binary, "image", "inspect", image, "--format", "{{.Id}}"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
+        inspected = runtime.image_field(image, "Id", timeout=15)
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"Docker image preflight failed for {image}: {exc}") from exc
     image_digest = inspected.stdout.strip()

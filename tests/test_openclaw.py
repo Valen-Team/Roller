@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from roller.bundles import TaskBundleStore
+from roller.harnesses.docker import DockerRuntime
 from roller.harnesses.openclaw import (
     DEFAULT_OPENCLAW_IMAGE,
     OPENCLAW_STATE_CONTAINER_PATH,
@@ -74,11 +75,13 @@ class GatewayReadinessTests(unittest.TestCase):
         self.assertTrue(raised.exception.__suppress_context__)
 
     def test_slow_probe_retries_within_startup_budget(self):
-        runtime = mock.Mock()
-        runtime.run.side_effect = [
-            subprocess.TimeoutExpired("docker exec", 2),
-            subprocess.CompletedProcess([], 0),
-        ]
+        runtime = DockerRuntime()
+        runtime.run = mock.Mock(
+            side_effect=[
+                subprocess.TimeoutExpired("docker exec", 2),
+                subprocess.CompletedProcess([], 0),
+            ]
+        )
         process = mock.Mock()
         process.poll.return_value = None
         harness = OpenClawHarness(
@@ -91,8 +94,8 @@ class GatewayReadinessTests(unittest.TestCase):
         self.assertEqual(runtime.run.call_count, 2)
 
     def test_probe_timeouts_still_respect_startup_deadline(self):
-        runtime = mock.Mock()
-        runtime.run.side_effect = subprocess.TimeoutExpired("docker exec", 2)
+        runtime = DockerRuntime()
+        runtime.run = mock.Mock(side_effect=subprocess.TimeoutExpired("docker exec", 2))
         process = mock.Mock()
         process.poll.return_value = None
         harness = OpenClawHarness(
@@ -194,8 +197,16 @@ class FakeProcess:
         self.returncode = -9
 
 
-class FakeDockerRuntime:
+class FakeDockerRuntime(DockerRuntime):
+    """A runtime whose process boundary answers instead of running Docker.
+
+    The named verbs are inherited from ``DockerRuntime`` and reach this ``run``
+    unchanged, so the assertions below see the same argv a real container
+    would have been given.
+    """
+
     def __init__(self, version: str = "2026.1.0") -> None:
+        super().__init__()
         self.version = version
         self.commands: list[list[str]] = []
         self.agent_messages: list[str] = []

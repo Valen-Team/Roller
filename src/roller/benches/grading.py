@@ -177,10 +177,8 @@ class _GraderExecution:
 
     def run(self, command, *, timeout, cwd=None, options=()):
         if self.sandbox is None:
-            directory = ["-w", cwd] if cwd else []
-            return self.runtime.run(
-                ["exec", *options, *directory, self.container, *command],
-                timeout=timeout,
+            return self.runtime.exec(
+                self.container, command, workdir=cwd, options=options, timeout=timeout
             )
         env = {name: os.environ[name] for name in PROXY_ENV_NAMES if name in os.environ}
         for option in options[1::2]:
@@ -192,8 +190,8 @@ class _GraderExecution:
     def upload(self, source: Path, target: str, *, timeout, contents=False):
         if self.sandbox is None:
             argument = f"{source}/." if contents else str(source)
-            return self.runtime.run(
-                ["cp", argument, f"{self.container}:{target}"], timeout=timeout
+            return self.runtime.copy_in(
+                argument, self.container, target, timeout=timeout
             )
         try:
             self.sandbox.upload(source, target, contents=contents, timeout=timeout)

@@ -86,38 +86,34 @@ def docker_run_args(
     environment in provenance.
     """
 
-    args = ["run", "-d", "--name", container, "--label", f"ai.roller.harness={harness}"]
-    if config.container_user is not None:
-        args += ["--user", config.container_user]
-    if config.network:
-        args += ["--network", config.network]
-    for name, value in sorted(environment.items()):
-        args += ["-e", f"{name}={value}"]
-    for name, value in (extra_env or {}).items():
-        args += ["-e", f"{name}={value}"]
     bundle, task = request.bundle, request.task
+    volumes: list[str] = []
     if bundle is not None:
-        args += [
-            "-v",
+        volumes += [
             f"{bundle.inputs_root}:{INPUTS_CONTAINER_PATH}:ro",
-            "-v",
             f"{bundle.context_root}:{CONTEXT_CONTAINER_PATH}:ro",
         ]
         if not bundle.legacy_workspace and task.input_mode == "mount":
             for spec in task.inputs:
                 source = bundle.inputs_root / spec.path
                 if source.exists():
-                    args += [
-                        "-v",
-                        f"{source}:{config.workspace_container_path}/{spec.path}:ro",
-                    ]
+                    volumes.append(
+                        f"{source}:{config.workspace_container_path}/{spec.path}:ro"
+                    )
     elif task.workspace is not None:
         if not task.workspace.is_dir():
             raise FileNotFoundError(
                 f"task workspace is not a directory: {task.workspace}"
             )
-        args += ["-v", f"{task.workspace}:{WORKSPACE_INPUT_CONTAINER_PATH}:ro"]
-    return args
+        volumes.append(f"{task.workspace}:{WORKSPACE_INPUT_CONTAINER_PATH}:ro")
+    return DockerRuntime.start_args(
+        container,
+        labels={"ai.roller.harness": harness},
+        env=[*sorted(environment.items()), *(extra_env or {}).items()],
+        volumes=volumes,
+        network=config.network,
+        user=config.container_user,
+    )
 
 
 def collect_outputs(
@@ -137,12 +133,10 @@ def collect_outputs(
         shutil.rmtree(staging_root)
     staging_root.mkdir(parents=True, exist_ok=True)
     try:
-        result = runtime.run(
-            [
-                "cp",
-                f"{container}:{workspace}/{request.task.output_dir}/.",
-                str(staging_root),
-            ],
+        result = runtime.copy_out(
+            container,
+            f"{workspace}/{request.task.output_dir}/.",
+            staging_root,
             timeout=timeout,
         )
         copy_error = None if result.returncode == 0 else error_text(result, error_limit)
@@ -268,10 +262,7 @@ class ContainerCommands:
         Running by id keeps the recorded id equal to the image in use even if
         the tag moves between this inspection and container creation.
         """
-        result = self.runtime.run(
-            ["image", "inspect", self.config.docker_image, "--format", "{{.Id}}"]
-        )
-        digest = (result.stdout.strip() or None) if result.returncode == 0 else None
+        digest = self.runtime.image_id(self.config.docker_image)
         warn_if_image_changed(
             logger, self.config.docker_image, self.config.preflight_image_digest, digest
         )

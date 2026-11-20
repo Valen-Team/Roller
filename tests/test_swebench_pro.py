@@ -25,6 +25,7 @@ from roller.benches.swebench_pro import (
     ensure_harness_image,
 )
 from roller.cli import main
+from roller.harnesses.docker import DockerRuntime
 from roller.harnesses.hermes import HermesConfig, HermesHarness
 from roller.harnesses.openclaw import OpenClawConfig, OpenClawHarness
 from roller.models import HarnessResult, RunRequest, Task
@@ -255,7 +256,7 @@ class SWEBenchProAdapterTests(unittest.TestCase):
                 SWEBenchProAdapter(cache_root=root / "cache").load(root)
 
 
-class _FakeDockerRuntime:
+class _FakeDockerRuntime(DockerRuntime):
     def __init__(self, harness_image: str, architectures=None) -> None:
         self.images = {harness_image: "sha256:harness"}
         self.architectures = architectures or {}
@@ -281,7 +282,7 @@ class _FakeDockerRuntime:
         raise AssertionError(arguments)
 
 
-class _RetryingFakeDockerRuntime:
+class _RetryingFakeDockerRuntime(DockerRuntime):
     def __init__(self) -> None:
         self.image_id = None
         self.pull_attempts = 0
@@ -457,7 +458,7 @@ class SWEBenchProImageTests(unittest.TestCase):
         pulling = threading.Event()
         release = threading.Event()
 
-        class Runtime:
+        class Runtime(DockerRuntime):
             def __init__(self) -> None:
                 self.pulled: set[str] = set()
 
@@ -525,8 +526,10 @@ class SWEBenchProGraderTests(unittest.TestCase):
             subprocess.TimeoutExpired(["image", "inspect"], 60),
         ):
             with self.subTest(failure=type(failure).__name__):
-                runtime = Mock()
-                runtime.run.return_value = subprocess.CompletedProcess([], 0, "", "")
+                runtime = DockerRuntime()
+                runtime.run = Mock(
+                    return_value=subprocess.CompletedProcess([], 0, "", "")
+                )
                 inner = HermesHarness(HermesConfig(), 0, runtime)
                 binding = BenchBinding(
                     "swebench-pro",
@@ -564,8 +567,10 @@ class SWEBenchProGraderTests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as tmp,
             ):
                 output_dir = Path(tmp)
-                runtime = Mock()
-                runtime.run.return_value = subprocess.CompletedProcess([], 0, "", "")
+                runtime = DockerRuntime()
+                runtime.run = Mock(
+                    return_value=subprocess.CompletedProcess([], 0, "", "")
+                )
                 inner = HermesHarness(HermesConfig(), 0, runtime)
                 binding = BenchBinding(
                     "swebench-pro",
@@ -689,7 +694,7 @@ class SWEBenchProGraderTests(unittest.TestCase):
             self.assertEqual((tests / "hidden.txt").read_text(), "HIDDEN\n")
 
     def test_fresh_grader_cleanup_failure_does_not_mask_score(self) -> None:
-        class RecordingRuntime:
+        class RecordingRuntime(DockerRuntime):
             def __init__(self) -> None:
                 self.calls: list[list[str]] = []
 
@@ -744,7 +749,7 @@ class SWEBenchProGraderTests(unittest.TestCase):
         self.assertIn(["rm", "-f", grader_container], runtime.calls)
 
     def test_dropped_binary_changes_are_recorded_in_the_score(self) -> None:
-        class Runtime:
+        class Runtime(DockerRuntime):
             def __init__(self) -> None:
                 self.patch = None
 
@@ -802,7 +807,7 @@ class SWEBenchProGraderTests(unittest.TestCase):
         self.assertIn("assets/logo.png, bin/tool", logs.output[0])
 
     def test_failed_artifact_copy_keeps_the_computed_grade(self) -> None:
-        class Runtime:
+        class Runtime(DockerRuntime):
             def run(self, args, timeout=None):
                 del timeout
                 arguments = list(args)

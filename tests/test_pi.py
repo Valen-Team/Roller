@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from roller.cli import _build_parser, _collect
+from roller.harnesses.docker import DockerRuntime
 from roller.harnesses.pi import RUNNER_PATH, PiConfig, PiHarness
 from roller.models import RunRequest, Task
 from roller.pi_actf import convert_pi_trace, extract_pi_usage, pi_events_to_actf
@@ -347,7 +348,7 @@ class PiTraceTests(unittest.TestCase):
                     convert_pi_trace(source, Path(tmp) / "actf.json")
 
 
-class FakeRuntime:
+class FakeRuntime(DockerRuntime):
     def __init__(self):
         self.calls = []
         self.result = {"ok": True, "content": "TOKEN"}

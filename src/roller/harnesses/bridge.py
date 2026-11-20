@@ -302,9 +302,8 @@ class BridgeSession(InteractiveSession):
         timeout: float = 60,
     ) -> subprocess.CompletedProcess[str]:
         if self.sandbox is None:
-            directory = ["-w", cwd] if cwd else []
             return self.checked(
-                ["exec", *directory, self.container, *argv],
+                self.harness.runtime.exec_args(self.container, argv, workdir=cwd),
                 description,
                 timeout=timeout,
             )
@@ -318,7 +317,10 @@ class BridgeSession(InteractiveSession):
 
     def upload(self, source: Path, target: str, description: str) -> None:
         if self.sandbox is None:
-            self.checked(["cp", str(source), f"{self.container}:{target}"], description)
+            self.checked(
+                self.harness.runtime.copy_in_args(source, self.container, target),
+                description,
+            )
         else:
             self.sandbox.upload(source, target, timeout=min(60, self.remaining()))
 
@@ -423,7 +425,7 @@ class BridgeSession(InteractiveSession):
         else:
             environment.update(self.harness_environment(api_base))
             self.image_digest = self.checked(
-                ["image", "inspect", config.docker_image, "--format", "{{.Id}}"],
+                self.harness.runtime.image_field_args(config.docker_image, "Id"),
                 f"{self.label} image inspection",
             ).stdout.strip()
             warn_if_image_changed(
@@ -512,14 +514,13 @@ class BridgeSession(InteractiveSession):
             self.upload(config_path, remote_config, f"{self.label} turn configuration")
             argv = [self.python, self.runner, "--config", remote_config]
             if self.sandbox is None:
-                args = [
-                    "exec",
-                    "-w",
-                    config.workspace_container_path,
+                process = self.harness.runtime.exec_logged(
                     self.container,
-                    *argv,
-                ]
-                process = self.harness.runtime.popen(args, log_path, append=True)
+                    argv,
+                    log_path,
+                    workdir=config.workspace_container_path,
+                    append=True,
+                )
             else:
                 self._start_remote_native(remote_config)
                 process = self.sandbox.spawn(
@@ -592,7 +593,7 @@ class BridgeSession(InteractiveSession):
 
     def _stop_turn(self) -> None:
         if self.sandbox is None:
-            self.harness.runtime.run(["kill", self.container], timeout=30)
+            self.harness.runtime.kill(self.container, timeout=30)
         else:
             self._stop_remote_native()
 
@@ -609,13 +610,8 @@ class BridgeSession(InteractiveSession):
         trace = self.output_dir / "rollout" / "trace.jsonl"
         trace.parent.mkdir(parents=True, exist_ok=True)
         if self.sandbox is None:
-            copied = runtime.run(
-                [
-                    "cp",
-                    f"{self.container}:{self.transcript_container_path}",
-                    str(trace),
-                ],
-                timeout=30,
+            copied = runtime.copy_out(
+                self.container, self.transcript_container_path, trace, timeout=30
             )
             if copied.returncode:
                 problems.append(f"no {self.label} journal was collected")

@@ -355,14 +355,9 @@ class QwenClawGradedHarness(GradedHarness):
     def _prepare_session(self, session) -> None:
         super()._prepare_session(session)
         workspace = workspace_container_path(session)
-        result = self.inner.runtime.run(
-            [
-                "exec",
-                session.container,
-                "/bin/sh",
-                "-c",
-                workspace_compatibility_script(workspace),
-            ],
+        result = self.inner.runtime.exec(
+            session.container,
+            ["/bin/sh", "-c", workspace_compatibility_script(workspace)],
             timeout=30,
         )
         if result.returncode != 0:
@@ -382,12 +377,10 @@ class QwenClawGradedHarness(GradedHarness):
             ) as handle:
                 json.dump(events, handle, ensure_ascii=False)
                 handle.flush()
-                copied = self.inner.runtime.run(
-                    [
-                        "cp",
-                        handle.name,
-                        f"{session.container}:/tmp/roller-qwenclaw-transcript.json",
-                    ],
+                copied = self.inner.runtime.copy_in(
+                    handle.name,
+                    session.container,
+                    "/tmp/roller-qwenclaw-transcript.json",
                     timeout=60,
                 )
                 if copied.returncode:

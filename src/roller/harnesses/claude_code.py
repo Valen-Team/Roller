@@ -375,7 +375,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             f"ln -s {shlex.quote(output_root)} {OUTPUTS_CONTAINER_PATH}"
         )
         self._checked(
-            ["exec", container, "/bin/bash", "-c", script],
+            self.runtime.exec_args(container, ["/bin/bash", "-c", script]),
             "Claude Code workspace setup",
         )
 
@@ -390,42 +390,34 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
                 f"{CLAUDE_HOME_CONTAINER_PATH}/skills/; fi"
             )
             self._checked(
-                ["exec", container, "/bin/bash", "-c", script],
+                self.runtime.exec_args(container, ["/bin/bash", "-c", script]),
                 "Claude Code context injection",
             )
         for command in request.task.setup_commands:
             self._checked(
-                [
-                    "exec",
-                    "-w",
-                    self.config.workspace_container_path,
+                self.runtime.exec_args(
                     container,
-                    "/bin/bash",
-                    "-lc",
-                    command,
-                ],
+                    ["/bin/bash", "-lc", command],
+                    workdir=self.config.workspace_container_path,
+                ),
                 f"task setup command {command!r}",
             )
 
     def _prepare_settings(self, container: str) -> None:
         self._checked(
-            [
-                "exec",
-                container,
-                "mkdir",
-                "-p",
-                CLAUDE_HOME_CONTAINER_PATH,
-            ],
+            self.runtime.exec_args(
+                container, ["mkdir", "-p", CLAUDE_HOME_CONTAINER_PATH]
+            ),
             "Claude Code config directory setup",
         )
         if self.config.settings_path is None:
             return
         self._checked(
-            [
-                "cp",
-                str(self.config.settings_path),
-                f"{container}:{CLAUDE_HOME_CONTAINER_PATH}/settings.json",
-            ],
+            self.runtime.copy_in_args(
+                self.config.settings_path,
+                container,
+                f"{CLAUDE_HOME_CONTAINER_PATH}/settings.json",
+            ),
             "Claude Code settings copy",
         )
 
@@ -445,12 +437,6 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         """
 
         command = [
-            "exec",
-            "-e",
-            f"CLAUDE_CONFIG_DIR={CLAUDE_HOME_CONTAINER_PATH}",
-            "-w",
-            self.config.workspace_container_path,
-            container,
             "claude",
             "--verbose",
             "--output-format=stream-json",
@@ -471,18 +457,23 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             command.append("--continue")
         if input_path is None:
             command.extend(["--print", prompt])
-            return command
-        command.extend(["--print", "--input-format=stream-json"])
-        # ``docker exec`` forwards no stdin; read the message from the file.
-        index = command.index("claude")
-        command[index:] = [
-            "/bin/sh",
-            "-c",
-            'exec "$@" < "$0"',
-            input_path,
-            *command[index:],
-        ]
-        return command
+        else:
+            command.extend(["--print", "--input-format=stream-json"])
+            # ``docker exec`` forwards no stdin; read the message from the file.
+            index = command.index("claude")
+            command[index:] = [
+                "/bin/sh",
+                "-c",
+                'exec "$@" < "$0"',
+                input_path,
+                *command[index:],
+            ]
+        return self.runtime.exec_args(
+            container,
+            command,
+            env={"CLAUDE_CONFIG_DIR": CLAUDE_HOME_CONTAINER_PATH},
+            workdir=self.config.workspace_container_path,
+        )
 
     def _copy_image_input(
         self, container: str, request: RunRequest, prompt: str, staging: Path
@@ -495,7 +486,9 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         )
         try:
             self._checked(
-                ["cp", str(payload_path), f"{container}:{CLAUDE_INPUT_CONTAINER_PATH}"],
+                self.runtime.copy_in_args(
+                    payload_path, container, CLAUDE_INPUT_CONTAINER_PATH
+                ),
                 "Claude Code image input copy",
             )
         finally:
@@ -529,7 +522,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         except subprocess.TimeoutExpired as exc:
             process.kill()
             process.wait()
-            self.runtime.run(["exec", container, "pkill", "-f", "claude"])
+            self.runtime.exec(container, ["pkill", "-f", "claude"])
             raise TimeoutError("Claude Code turn timed out") from exc
         finally:
             self.runtime.close_log(process)
@@ -583,12 +576,10 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             shutil.rmtree(staging_root)
         staging_root.mkdir(parents=True, exist_ok=True)
         try:
-            copied = self.runtime.run(
-                [
-                    "cp",
-                    f"{container}:{CLAUDE_HOME_CONTAINER_PATH}/projects/.",
-                    str(staging_root),
-                ],
+            copied = self.runtime.copy_out(
+                container,
+                f"{CLAUDE_HOME_CONTAINER_PATH}/projects/.",
+                staging_root,
                 timeout=60,
             )
             if copied.returncode != 0:
@@ -750,7 +741,7 @@ class ClaudeCodeSession(InteractiveSession):
         self.harness._prepare_context_and_setup(self.container, self.request)
         self.harness._prepare_settings(self.container)
         self.claude_version = self.harness._checked(
-            ["exec", self.container, "claude", "--version"],
+            self.harness.runtime.exec_args(self.container, ["claude", "--version"]),
             "Claude Code version check",
         ).stdout.strip()
         self.started = True

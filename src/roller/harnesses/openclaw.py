@@ -639,6 +639,24 @@ exec node --input-type=module -e "$1"
         self._checked(args, "container startup", timeout=60)
         return environment
 
+    def _exec_checked(
+        self,
+        container: str,
+        command: Sequence[str],
+        description: str,
+        *,
+        env: Mapping[str, str] | None = None,
+        workdir: str | None = None,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """``_checked`` for one command in the container."""
+
+        return self._checked(
+            self.runtime.exec_args(container, command, env=env, workdir=workdir),
+            description,
+            timeout,
+        )
+
     def _prepare_workspace(self, container: str, request: RunRequest) -> None:
         workspace = self.config.workspace_container_path
         output_root = f"{workspace}/{request.task.output_dir}"
@@ -664,7 +682,7 @@ exec node --input-type=module -e "$1"
             f"mkdir -p /roller/task && rm -rf {OUTPUTS_CONTAINER_PATH} && "
             f"ln -s {quoted_output_root} {OUTPUTS_CONTAINER_PATH}"
         )
-        self._checked(["exec", container, "/bin/bash", "-c", script], "workspace setup")
+        self._exec_checked(container, ["/bin/bash", "-c", script], "workspace setup")
         link_script = (
             f"mkdir -p {OPENCLAW_STATE_CONTAINER_PATH} /root/.openclaw && "
             f"rm -rf {OPENCLAW_STATE_CONTAINER_PATH}/workspace && "
@@ -672,8 +690,9 @@ exec node --input-type=module -e "$1"
             f"rm -rf {OPENCLAW_WORKSPACE_LINK} && "
             f"ln -s {workspace} {OPENCLAW_WORKSPACE_LINK}"
         )
-        self._checked(
-            ["exec", container, "/bin/bash", "-c", link_script],
+        self._exec_checked(
+            container,
+            ["/bin/bash", "-c", link_script],
             "OpenClaw workspace link",
         )
 
@@ -713,20 +732,16 @@ exec node --input-type=module -e "$1"
                 json.dump(config_to_write, stream, ensure_ascii=False)
                 temporary_path = Path(stream.name)
             self._checked(
-                ["cp", str(temporary_path), f"{container}:/tmp/roller-models.json"],
+                self.runtime.copy_in_args(
+                    temporary_path, container, "/tmp/roller-models.json"
+                ),
                 "model config copy",
             )
-            self._checked(
-                [
-                    "exec",
-                    "-e",
-                    f"ROLLER_OPENCLAW_CONFIG_PATH={state_dir}/openclaw.json",
-                    container,
-                    "python3",
-                    "-c",
-                    self._MODEL_INJECT_SCRIPT,
-                ],
+            self._exec_checked(
+                container,
+                ["python3", "-c", self._MODEL_INJECT_SCRIPT],
                 "model config injection",
+                env={"ROLLER_OPENCLAW_CONFIG_PATH": f"{state_dir}/openclaw.json"},
             )
         finally:
             if temporary_path is not None:
@@ -735,21 +750,21 @@ exec node --input-type=module -e "$1"
     def _configure(
         self, container: str, request: RunRequest, environment: Mapping[str, str]
     ) -> str:
-        version = self._checked(
-            ["exec", container, "openclaw", "--version"], "OpenClaw version"
+        version = self._exec_checked(
+            container, ["openclaw", "--version"], "OpenClaw version"
         ).stdout.strip()
         state_dir = self._state_dir_for_version(version)
         thinking = self._effective_thinking(request)
         validate_openclaw_thinking(version, thinking)
         self._inject_models(container, request, state_dir)
-        self._checked(
-            ["exec", container, "openclaw", "models", "set", request.model],
+        self._exec_checked(
+            container,
+            ["openclaw", "models", "set", request.model],
             "model setup",
         )
-        self._checked(
+        self._exec_checked(
+            container,
             [
-                "exec",
-                container,
                 "openclaw",
                 "config",
                 "set",
@@ -758,14 +773,14 @@ exec node --input-type=module -e "$1"
             ],
             "gateway port setup",
         )
-        self._checked(
-            ["exec", container, "openclaw", "config", "set", "gateway.mode", "local"],
+        self._exec_checked(
+            container,
+            ["openclaw", "config", "set", "gateway.mode", "local"],
             "gateway mode setup",
         )
-        self._checked(
+        self._exec_checked(
+            container,
             [
-                "exec",
-                container,
                 "openclaw",
                 "config",
                 "set",
@@ -774,10 +789,9 @@ exec node --input-type=module -e "$1"
             ],
             "gateway bind setup",
         )
-        self._checked(
+        self._exec_checked(
+            container,
             [
-                "exec",
-                container,
                 "openclaw",
                 "config",
                 "set",
@@ -787,10 +801,9 @@ exec node --input-type=module -e "$1"
             "OpenClaw workspace setup",
         )
         if thinking:
-            self._checked(
+            self._exec_checked(
+                container,
                 [
-                    "exec",
-                    container,
                     "openclaw",
                     "config",
                     "set",
@@ -800,10 +813,9 @@ exec node --input-type=module -e "$1"
                 "thinking mode setup",
             )
         if self.config.search_provider:
-            self._checked(
+            self._exec_checked(
+                container,
                 [
-                    "exec",
-                    container,
                     "openclaw",
                     "config",
                     "set",
@@ -816,10 +828,9 @@ exec node --input-type=module -e "$1"
             # Persist the fully assembled system prompt (per LLM call) via
             # OpenClaw's diagnostics.cacheTrace so downstream consumers never
             # need to reconstruct or hardcode it.
-            self._checked(
+            self._exec_checked(
+                container,
                 [
-                    "exec",
-                    container,
                     "openclaw",
                     "config",
                     "set",
@@ -828,10 +839,9 @@ exec node --input-type=module -e "$1"
                 ],
                 "cache trace setup",
             )
-            self._checked(
+            self._exec_checked(
+                container,
                 [
-                    "exec",
-                    container,
                     "openclaw",
                     "config",
                     "set",
@@ -844,10 +854,9 @@ exec node --input-type=module -e "$1"
         # persists a session, and later turns rebuild context from that copy.
         # Task text must survive verbatim; trajectories are sensitive anyway.
         try:
-            self._checked(
+            self._exec_checked(
+                container,
                 [
-                    "exec",
-                    container,
                     "openclaw",
                     "config",
                     "set",
@@ -869,10 +878,9 @@ exec node --input-type=module -e "$1"
         # finishes. Each poll is a model call outside the task, and its
         # session shows up as a second root participant in the capture.
         try:
-            self._checked(
+            self._exec_checked(
+                container,
                 [
-                    "exec",
-                    container,
                     "openclaw",
                     "config",
                     "set",
@@ -890,10 +898,9 @@ exec node --input-type=module -e "$1"
                 exc,
             )
         if self.config.set_image_model:
-            image_result = self.runtime.run(
+            image_result = self.runtime.exec(
+                container,
                 [
-                    "exec",
-                    container,
                     "openclaw",
                     "config",
                     "set",
@@ -907,34 +914,31 @@ exec node --input-type=module -e "$1"
                     "[%s] image model setup was not supported", request.task.id
                 )
         if environment.get("OPENROUTER_API_KEY"):
-            self._checked(
-                [
-                    "exec",
-                    "-e",
-                    f"ROLLER_OPENROUTER_KEY={environment['OPENROUTER_API_KEY']}",
-                    "-e",
-                    f"ROLLER_OPENCLAW_AUTH_PATH={state_dir}/agents/main/agent/auth-profiles.json",
-                    container,
-                    "python3",
-                    "-c",
-                    self._AUTH_INJECT_SCRIPT,
-                ],
+            self._exec_checked(
+                container,
+                ["python3", "-c", self._AUTH_INJECT_SCRIPT],
                 "OpenRouter auth setup",
+                env={
+                    "ROLLER_OPENROUTER_KEY": environment["OPENROUTER_API_KEY"],
+                    "ROLLER_OPENCLAW_AUTH_PATH": (
+                        f"{state_dir}/agents/main/agent/auth-profiles.json"
+                    ),
+                },
             )
         for key, value in self.config.config_set:
             # ``--`` keeps a value such as ``-1`` from being read as an option.
-            self._checked(
-                ["exec", container, "openclaw", "config", "set", "--", key, value],
+            self._exec_checked(
+                container,
+                ["openclaw", "config", "set", "--", key, value],
                 f"OpenClaw config setting {key!r}",
             )
         return version
 
     def _prepare_context_and_setup(self, container: str, request: RunRequest) -> None:
         if request.bundle is not None:
-            self._checked(
+            self._exec_checked(
+                container,
                 [
-                    "exec",
-                    container,
                     "/bin/bash",
                     "-c",
                     f'cp -a {CONTEXT_CONTAINER_PATH}/. "$HOME"/ && '
@@ -946,34 +950,30 @@ exec node --input-type=module -e "$1"
         else:
             persona = request.task.raw.get("persona")
             if isinstance(persona, str) and persona.strip():
-                self._checked(
+                self._exec_checked(
+                    container,
                     [
-                        "exec",
-                        "-e",
-                        f"ROLLER_WORKSPACE={self.config.workspace_container_path}",
-                        "-e",
-                        f"ROLLER_PERSONA={persona.strip()}",
-                        container,
                         "python3",
                         "-c",
                         self._PERSONA_SCRIPT,
                     ],
                     "persona setup",
+                    env={
+                        "ROLLER_WORKSPACE": self.config.workspace_container_path,
+                        "ROLLER_PERSONA": persona.strip(),
+                    },
                 )
         for command in request.task.setup_commands:
-            self._checked(
+            self._exec_checked(
+                container,
                 [
-                    "exec",
-                    "-e",
-                    f"ROLLER_GATEWAY_PORT={self.gateway_port}",
-                    "-w",
-                    self.config.workspace_container_path,
-                    container,
                     "/bin/bash",
                     "-lc",
                     command,
                 ],
                 f"task setup command {command!r}",
+                env={"ROLLER_GATEWAY_PORT": str(self.gateway_port)},
+                workdir=self.config.workspace_container_path,
             )
 
     def _gateway_port_probe(self) -> str:
@@ -993,8 +993,9 @@ exec node --input-type=module -e "$1"
         if self.config.network != "host":
             return  # the gateway does not share the host's ports
         try:
-            result = self.runtime.run(
-                ["exec", container, "python3", "-c", self._gateway_port_probe()],
+            result = self.runtime.exec(
+                container,
+                ["python3", "-c", self._gateway_port_probe()],
                 timeout=self._bounded(10, "OpenClaw gateway port check"),
             )
         except subprocess.TimeoutExpired:
@@ -1018,8 +1019,8 @@ exec node --input-type=module -e "$1"
                     f"OpenClaw gateway exited early with code {process.returncode}"
                 )
             try:
-                result = self.runtime.run(
-                    ["exec", container, "python3", "-c", probe], timeout=2
+                result = self.runtime.exec(
+                    container, ["python3", "-c", probe], timeout=2
                 )
             except subprocess.TimeoutExpired:
                 # Docker exec can be slow while other Harness containers start.
@@ -1056,29 +1057,29 @@ exec node --input-type=module -e "$1"
         state_dir: str | None = None,
         session_id: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        args = [
-            "exec",
-            "-e",
-            f"ROLLER_SESSION_SCOPE={json.dumps(self._session_scope(session_id), separators=(',', ':'))}",
-        ]
+        env = {
+            "ROLLER_SESSION_SCOPE": json.dumps(
+                self._session_scope(session_id), separators=(",", ":")
+            )
+        }
         if output_path is not None:
-            args.extend(["-e", f"ROLLER_TRACE_OUTPUT={output_path}"])
+            env["ROLLER_TRACE_OUTPUT"] = output_path
         if state_dir is not None:
             # OpenClaw 2026.3.11 ignores OPENCLAW_STATE_DIR for gateway
             # commands but the transcript SDK follows it. Keep both sides on
             # the same state directory when using the legacy image.
-            args.extend(["-e", f"OPENCLAW_STATE_DIR={state_dir}"])
-        args.extend(
+            env["OPENCLAW_STATE_DIR"] = state_dir
+        return self.runtime.exec(
+            container,
             [
-                container,
                 "/bin/sh",
                 "-lc",
                 self._OPENCLAW_NODE_EVAL_SCRIPT,
                 "roller-transcript-sdk",
                 script,
-            ]
+            ],
+            env=env,
         )
-        return self.runtime.run(args)
 
     def _latest_assistant_content(
         self,
@@ -1102,8 +1103,9 @@ exec node --input-type=module -e "$1"
                 "__ROLLER_SESSION_FILE__",
                 repr(f"{session_id or self.config.session_id}.jsonl"),
             )
-            result = self._checked(
-                ["exec", container, "python3", "-c", script],
+            result = self._exec_checked(
+                container,
+                ["python3", "-c", script],
                 "assistant response extraction",
             )
         try:
@@ -1151,20 +1153,19 @@ exec node --input-type=module -e "$1"
             state_dir=state_dir,
         )
         result = (
-            self.runtime.run(
-                ["cp", f"{container}:{container_trace}", str(attempt_trace_path)]
-            )
+            self.runtime.copy_out(container, container_trace, attempt_trace_path)
             if container_trace
             else subprocess.CompletedProcess([], 1, "", "")
         )
         if result.returncode != 0:
-            latest = self.runtime.run(
-                ["exec", container, "python3", "-c", self._LATEST_SESSION_SCRIPT]
+            latest = self.runtime.exec(
+                container,
+                ["python3", "-c", self._LATEST_SESSION_SCRIPT],
             )
             fallback_path = latest.stdout.strip() if latest.returncode == 0 else ""
             if fallback_path:
-                result = self.runtime.run(
-                    ["cp", f"{container}:{fallback_path}", str(attempt_trace_path)]
+                result = self.runtime.copy_out(
+                    container, fallback_path, attempt_trace_path
                 )
         if (
             result.returncode != 0
@@ -1208,10 +1209,9 @@ exec node --input-type=module -e "$1"
             return None
         quoted = " ".join(shlex.quote(path) for path in sources)
         combined = shlex.quote(TRANSCRIPT_EXPORT_CONTAINER_PATH)
-        result = self.runtime.run(
+        result = self.runtime.exec(
+            container,
             [
-                "exec",
-                container,
                 "/bin/sh",
                 "-c",
                 f"cat {quoted} > {combined}",
@@ -1226,8 +1226,8 @@ exec node --input-type=module -e "$1"
         if not self.config.capture_cache_trace:
             return None
         destination.unlink(missing_ok=True)
-        result = self.runtime.run(
-            ["cp", f"{container}:{CACHE_TRACE_CONTAINER_PATH}", str(destination)]
+        result = self.runtime.copy_out(
+            container, CACHE_TRACE_CONTAINER_PATH, destination
         )
         if result.returncode != 0 or not destination.is_file():
             return None
@@ -1251,9 +1251,7 @@ exec node --input-type=module -e "$1"
                 / f"{index:02d}_{safe_component(Path(container_path).name or 'root')}"
             )
             destination.parent.mkdir(parents=True, exist_ok=True)
-            result = self.runtime.run(
-                ["cp", f"{container}:{container_path}", str(destination)]
-            )
+            result = self.runtime.copy_out(container, container_path, destination)
             records.append(
                 {
                     "container_path": container_path,
@@ -1385,8 +1383,9 @@ class OpenClawSession(InteractiveSession):
             patch = (
                 Path(__file__).resolve().parents[1] / "assets/openclaw_capture.py"
             ).read_text()
-            self.harness._checked(
-                ["exec", self.container, "python3", "-c", patch],
+            self.harness._exec_checked(
+                self.container,
+                ["python3", "-c", patch],
                 "OpenClaw native session capture hook",
             )
         # The legacy 2026.3.11 image keeps its gateway config under
@@ -1394,10 +1393,9 @@ class OpenClawSession(InteractiveSession):
         # the CLI. Set both token locations explicitly so gateway and agent
         # clients authenticate with the same per-rollout token.
         for setting in ("gateway.auth.token", "gateway.remote.token"):
-            self.harness._checked(
+            self.harness._exec_checked(
+                self.container,
                 [
-                    "exec",
-                    self.container,
                     "openclaw",
                     "config",
                     "set",
@@ -1407,16 +1405,9 @@ class OpenClawSession(InteractiveSession):
                 f"gateway token setup ({setting})",
             )
         self.harness._ensure_gateway_port_free(self.container)
-        self.gateway_process = self.harness.runtime.popen(
+        self.gateway_process = self.harness.runtime.exec_logged(
+            self.container,
             [
-                "exec",
-                "-e",
-                f"OPENCLAW_GATEWAY_TOKEN={self.gateway_token}",
-                "-e",
-                f"OPENCLAW_STATE_DIR={self.state_dir}",
-                "-w",
-                self.harness.config.workspace_container_path,
-                self.container,
                 "/bin/bash",
                 "-lc",
                 "set -a; "
@@ -1426,6 +1417,11 @@ class OpenClawSession(InteractiveSession):
                 f"exec openclaw gateway --port {self.harness.gateway_port}",
             ],
             self.output_dir / "rollout" / f"gateway.attempt-{self.attempt}.log",
+            env={
+                "OPENCLAW_GATEWAY_TOKEN": self.gateway_token,
+                "OPENCLAW_STATE_DIR": self.state_dir,
+            },
+            workdir=self.harness.config.workspace_container_path,
         )
         self.harness._wait_for_gateway(self.container, self.gateway_process)
 
@@ -1438,14 +1434,6 @@ class OpenClawSession(InteractiveSession):
             raise TimeoutError("interactive turn has no time remaining")
         turn_started = time.monotonic()
         command = [
-            "exec",
-            "-e",
-            f"OPENCLAW_GATEWAY_TOKEN={self.gateway_token}",
-            "-e",
-            f"OPENCLAW_STATE_DIR={self.state_dir}",
-            "-w",
-            self.harness.config.workspace_container_path,
-            self.container,
             "openclaw",
             "agent",
             "--session-id",
@@ -1470,9 +1458,15 @@ class OpenClawSession(InteractiveSession):
         agent_log_path = (
             self.output_dir / "rollout" / f"agent.attempt-{self.attempt}.log"
         )
-        process = self.harness.runtime.popen(
+        process = self.harness.runtime.exec_logged(
+            self.container,
             command,
             agent_log_path,
+            env={
+                "OPENCLAW_GATEWAY_TOKEN": self.gateway_token,
+                "OPENCLAW_STATE_DIR": self.state_dir,
+            },
+            workdir=self.harness.config.workspace_container_path,
             append=bool(self.messages),
         )
         try:
@@ -1480,9 +1474,7 @@ class OpenClawSession(InteractiveSession):
         except subprocess.TimeoutExpired as exc:
             process.kill()
             process.wait()
-            self.harness.runtime.run(
-                ["exec", self.container, "pkill", "-f", "openclaw agent"]
-            )
+            self.harness.runtime.exec(self.container, ["pkill", "-f", "openclaw agent"])
             raise TimeoutError("OpenClaw interactive turn timed out") from exc
         finally:
             self.harness.runtime.close_log(process)
@@ -1509,22 +1501,20 @@ class OpenClawSession(InteractiveSession):
                 script = (
                     Path(__file__).resolve().parents[1] / "assets/openclaw_drain.mjs"
                 ).read_text()
-                self.harness._checked(
+                self.harness._exec_checked(
+                    self.container,
                     [
-                        "exec",
-                        "-e",
-                        f"OPENCLAW_STATE_DIR={self.state_dir}",
-                        "-e",
-                        f"ROLLER_CAPTURE_ROOT_SESSION={self.session_id}",
-                        "-e",
-                        f"ROLLER_CAPTURE_TIMEOUT_MS={max(1, int(remaining * 1000))}",
-                        self.container,
                         "node",
                         "--input-type=module",
                         "-e",
                         script,
                     ],
                     "OpenClaw subagent completion drain",
+                    env={
+                        "OPENCLAW_STATE_DIR": self.state_dir,
+                        "ROLLER_CAPTURE_ROOT_SESSION": self.session_id,
+                        "ROLLER_CAPTURE_TIMEOUT_MS": str(max(1, int(remaining * 1000))),
+                    },
                     timeout=remaining,
                 )
             except Exception as exc:
@@ -1648,14 +1638,9 @@ class OpenClawSession(InteractiveSession):
                 "stream-contexts.jsonl",
             )
             if (
-                self.harness.runtime.run(
-                    [
-                        "exec",
-                        self.container,
-                        "test",
-                        "-f",
-                        "/tmp/roller-tool-id-aliases.jsonl",
-                    ]
+                self.harness.runtime.exec(
+                    self.container,
+                    ["test", "-f", "/tmp/roller-tool-id-aliases.jsonl"],
                 ).returncode
                 == 0
             ):
@@ -1735,8 +1720,8 @@ class OpenClawSession(InteractiveSession):
                     # Preserve the filesystem for debugging without leaving
                     # the host-network gateway alive to occupy a future
                     # worker's deterministic port.
-                    stop_result = self.harness.runtime.run(
-                        ["stop", "--time", "1", self.container], timeout=30
+                    stop_result = self.harness.runtime.stop(
+                        self.container, 1, timeout=30
                     )
                     if stop_result.returncode != 0:
                         logger.warning(

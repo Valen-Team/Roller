@@ -10,6 +10,7 @@ from collections.abc import Iterable, Mapping
 from functools import cache
 from pathlib import Path
 
+from roller.harnesses.docker import DockerRuntime
 from roller.models import ContainerImageBuild, RunRequest
 
 _OPENCODE_OVERLAY = """\
@@ -32,41 +33,28 @@ _OVERLAYS = {"opencode": _OPENCODE_OVERLAY}
 
 
 @cache
-def _build_command_prefix(binary: str) -> list[str]:
-    """Return a build prefix compatible with Docker and rootless Podman.
+def _engine_options(binary: str) -> tuple[str, ...]:
+    """Options that precede ``build`` for Docker and rootless Podman.
 
     Some upstream benchmark images contain ownership IDs outside the host's
     subordinate-ID range. Docker can unpack those layers directly; rootless
     Podman needs its documented single-UID fallback.
     """
 
-    result = subprocess.run(
-        [binary, "--version"],
-        capture_output=True,
-        check=False,
-        text=True,
-        timeout=30,
-    )
+    result = DockerRuntime(binary).client_version(timeout=30)
     if result.returncode == 0 and "podman" in result.stdout.lower():
-        return [binary, "--storage-opt", "overlay.ignore_chown_errors=true", "build"]
-    return [binary, "build"]
+        return ("--storage-opt", "overlay.ignore_chown_errors=true")
+    return ()
 
 
 def _inspect_image(binary: str, image: str) -> str | None:
+    runtime = DockerRuntime(binary)
     for attempt in range(3):
         try:
-            result = subprocess.run(
-                [binary, "image", "inspect", image, "--format", "{{.Id}}"],
-                capture_output=True,
-                check=False,
-                text=True,
-                timeout=120,
-            )
+            return runtime.image_id(image, timeout=120)
         except subprocess.TimeoutExpired:
             if attempt == 2:
                 return None
-            continue
-        return result.stdout.strip() if result.returncode == 0 else None
     return None
 
 
@@ -85,13 +73,7 @@ def _build(
     ) as stream:
         stream.write(dockerfile_source.rstrip() + "\n")
         dockerfile = Path(stream.name)
-    command = [
-        *_build_command_prefix(binary),
-        "--file",
-        str(dockerfile),
-        "--tag",
-        image,
-    ]
+    command = ["--file", str(dockerfile), "--tag", image]
     for name, value in build_args:
         command.extend(["--build-arg", f"{name}={value}"])
     # Docker treats these predefined proxy args specially: they are available
@@ -119,7 +101,12 @@ def _build(
     try:
         for attempt in range(2):
             try:
-                result = subprocess.run(command, check=False, timeout=timeout_seconds)
+                result = DockerRuntime(binary).build(
+                    command,
+                    timeout=timeout_seconds,
+                    engine=_engine_options(binary),
+                    capture=False,
+                )
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError(
                     f"Docker image build exceeded {timeout_seconds}s: {image}"

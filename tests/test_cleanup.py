@@ -22,7 +22,8 @@ def test_cleanup_dry_run_does_not_remove_dead_owners_files_or_containers(tmp_pat
     (bundle / "owner.json").write_text(
         json.dumps({"pid": 123, "host": HOST, "run_dir": str(tmp_path / "run")})
     )
-    runtime = Mock()
+    runtime = DockerRuntime()
+    runtime.run = Mock()
     runtime.run.return_value = Mock(
         returncode=0,
         stdout=f"abc\ttest\tcodex\t\t123\t{HOST}\t{tmp_path / 'run'}\n",
