@@ -535,7 +535,7 @@ class ExportTests(unittest.TestCase):
         code, printed = _cli("export", "--help")
 
         self.assertEqual(code, 0)
-        self.assertIn("{atif,hf,sft}", "\n".join(printed))
+        self.assertIn("{atif,hf,sft,tokens}", "\n".join(printed))
         self.assertIn("--min-score X", "\n".join(printed))
 
     def test_hugging_face_run_directories_index_their_own_samples(self) -> None:

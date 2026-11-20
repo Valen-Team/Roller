@@ -29,6 +29,14 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from roller.anthropic_pdf import render_anthropic_pdfs
 from roller.capture import CallRecorder
 from roller.codex_tools import tool_snapshot
+from roller.messages_bridge import (
+    MessagesStream,
+    TokenIds,
+    chat_request,
+    messages_error,
+    messages_response,
+    sse,
+)
 from roller.response_metadata import ResponseMetadata
 from roller.tool_id_identity import ToolIdRegistry
 
@@ -472,7 +480,7 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             "method": self.command,
             "path": self.path,
         }
-        upstream_path = proxy.forward_path(self.path)
+        upstream_path = proxy.upstream_path(self.command, self.path)
         if upstream_path != self.path:
             entry["upstream_path"] = upstream_path
         dropped_headers = sorted(
@@ -616,7 +624,22 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             if proxy.capture_recorder is not None:
                 proxy.capture_recorder.error = str(exc)
         self.close_connection = True
-        url = proxy.upstream_origin + proxy.forward_path(self.path)
+        upstream_path = proxy.upstream_path(self.command, self.path)
+        bridged = upstream_path != proxy.forward_path(self.path)
+        tokens = None
+        sampling: dict[str, Any] = {}
+        if bridged:
+            chat = chat_request(json.loads(body))
+            if proxy.token_ids_path is not None:
+                tokens = TokenIds()
+                chat.update(return_token_ids=True, logprobs=True)
+            sampling = {
+                key: value
+                for key, value in chat.items()
+                if key not in ("messages", "tools")
+            }
+            body = json.dumps(chat, ensure_ascii=False).encode("utf-8")
+        url = proxy.upstream_origin + upstream_path
         outgoing = urllib_request.Request(url, data=body, method=self.command)
         for key, value in self.headers.items():
             normalized_key = key.lower()
@@ -626,9 +649,11 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 and normalized_key not in proxy.drop_request_headers
             ):
                 outgoing.add_header(key, value)
-        if proxy.tool_id_mappings_path is not None:
-            # Tool IDs can only be repaired in an uncompressed response.
+        if proxy.tool_id_mappings_path is not None or bridged:
+            # Tool IDs are repaired, and a response translated, uncompressed.
             outgoing.add_header("Accept-Encoding", "identity")
+        if bridged and self.headers.get("x-api-key"):
+            outgoing.add_header("Authorization", f"Bearer {self.headers['x-api-key']}")
         try:
             response = proxy.open_upstream(outgoing, request_seq)
         except Exception as exc:
@@ -710,7 +735,42 @@ class _ProxyHandler(BaseHTTPRequestHandler):
             and content_encoding in ("", "identity")
         )
         try:
-            if repair_tool_ids and "text/event-stream" in content_type:
+            if bridged and status == 200 and "text/event-stream" in content_type:
+                stream = MessagesStream()
+
+                def deliver(events: list[dict[str, Any]]) -> None:
+                    payload = b"".join(map(sse, events))
+                    if payload:
+                        observe(payload)
+                        self.wfile.write(payload)
+                        self.wfile.flush()
+
+                while True:
+                    line = response.readline()
+                    if not line:
+                        break
+                    data = line[5:].strip() if line.startswith(b"data:") else b""
+                    if not data or data == b"[DONE]":
+                        continue
+                    chunk = json.loads(data)
+                    if tokens is not None:
+                        tokens.add(chunk)
+                    deliver(stream.feed(chunk))
+                deliver(stream.finish())
+            elif bridged:
+                payload = response.read()
+                if status == 200:
+                    chat_body = json.loads(payload)
+                    if tokens is not None:
+                        tokens.add(chat_body)
+                    message = messages_response(chat_body)
+                else:
+                    message = messages_error(status, payload)
+                payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
+                observe(payload)
+                self.wfile.write(payload)
+                self.wfile.flush()
+            elif repair_tool_ids and "text/event-stream" in content_type:
                 while True:
                     line = response.readline()
                     if not line:
@@ -789,6 +849,18 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                     error=capture_error,
                 )
             record_response()
+            if tokens is not None and tokens.completion:
+                proxy.write_token_ids(
+                    {
+                        "request_seq": request_seq,
+                        "prompt_token_ids": tokens.prompt,
+                        "completion_token_ids": tokens.completion,
+                        "logprobs": tokens.logprobs,
+                        "finish_reason": tokens.finish_reason,
+                        "complete": complete,
+                        "request": sampling,
+                    }
+                )
             close_response = getattr(response, "close", None)
             if callable(close_response):
                 close_response()
@@ -874,6 +946,8 @@ class WireTraceProxy:
         responses_tool_images_as_user: bool = False,
         tool_id_mappings_path: Path | None = None,
         anthropic_pdf_as_images: bool = False,
+        messages_as_chat: bool = False,
+        token_ids_path: Path | None = None,
     ) -> None:
         if mode not in ("tools", "full"):
             raise ValueError(f"unknown wire trace mode: {mode}")
@@ -915,6 +989,10 @@ class WireTraceProxy:
         self.responses_image_detail = responses_image_detail
         self.responses_tool_images_as_user = responses_tool_images_as_user
         self.anthropic_pdf_as_images = anthropic_pdf_as_images
+        # Send Messages requests to the upstream's Chat Completions endpoint.
+        self.messages_as_chat = messages_as_chat
+        # Receives the token ids and logprobs of each translated call.
+        self.token_ids_path = token_ids_path
         # Set to repair repeated Anthropic tool-use IDs; receives one row per repair.
         self.tool_id_mappings_path = tool_id_mappings_path
         self.tool_ids = ToolIdRegistry()
@@ -981,6 +1059,23 @@ class WireTraceProxy:
             ]
         )
         return urlunsplit(("", "", parts.path, query, ""))
+
+    def upstream_path(self, method: str, path: str) -> str:
+        """``forward_path``, with a Messages call sent to Chat Completions."""
+
+        target = urlsplit(self.forward_path(path))
+        route = target.path.rstrip("/")
+        if not (
+            self.messages_as_chat and method == "POST" and route.endswith("/messages")
+        ):
+            return self.forward_path(path)
+        route = route[: -len("/messages")] + "/chat/completions"
+        return urlunsplit(("", "", route, target.query, ""))
+
+    def write_token_ids(self, row: Mapping[str, Any]) -> None:
+        assert self.token_ids_path is not None
+        with self._lock, self.token_ids_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(row, separators=(",", ":")) + "\n")
 
     def open_upstream(
         self, outgoing: urllib_request.Request, request_seq: int | None
