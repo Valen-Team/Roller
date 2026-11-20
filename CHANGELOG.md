@@ -2,6 +2,12 @@
 
 Notable changes to Roller. Versions follow the tags of this repository and the `roller-agent` releases on PyPI.
 
+## Unreleased
+
+### Changed
+
+- Roller now calls Docker through the named verbs of `DockerRuntime` (`exec`, `copy_in`, `copy_out`, `kill`, `remove`, `ps`, `image_id`, …) instead of writing `docker` argument lists at each call site. The argv and recorded provenance are unchanged, and the Docker command line is spelled in one module.
+
 ## 0.5.0
 
 ### Added
@@ -35,10 +41,6 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 - Benchmark reports aggregate each model separately, include failed samples in denominators and use consistent category denominators.
 - Resume accepts task/model supersets and compatible patch upgrades, and rebuilds derived SFT artifacts without rerunning valid samples.
 - HF exports exclude previous export directories and review reports from shared run files.
-
-### Changed
-
-- Roller now calls Docker through the named verbs of `DockerRuntime` (`exec`, `copy_in`, `copy_out`, `kill`, `remove`, `ps`, `image_id`, …) instead of writing `docker` argument lists at each call site. The argv and recorded provenance are unchanged, and the Docker command line is spelled in one module.
 
 ## 0.4.0 - 2026-11-16
 
