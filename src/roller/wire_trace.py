@@ -22,6 +22,7 @@ from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from urllib import request as urllib_request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -29,13 +30,6 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from roller.anthropic_pdf import render_anthropic_pdfs
 from roller.capture import CallRecorder
 from roller.codex_tools import tool_snapshot
-from roller.messages_bridge import (
-    MessagesStream,
-    chat_request,
-    messages_error,
-    messages_response,
-    sse,
-)
 from roller.response_metadata import ResponseMetadata
 from roller.token_ids import TokenIds, TokenLog
 from roller.tool_id_identity import ToolIdRegistry
@@ -492,6 +486,11 @@ def _rewrite_event(line: bytes, rewrite: Callable[[Any], Any]) -> bytes:
     return b"data: " + data.encode("utf-8") + line[len(content) :]
 
 
+def _sse(event: dict[str, Any]) -> bytes:
+    data = json.dumps(event, ensure_ascii=False)
+    return f"event: {event['type']}\ndata: {data}\n\n".encode()
+
+
 class _ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -659,7 +658,9 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         upstream_path = proxy.upstream_path(self.command, self.path)
         bridged = upstream_path != proxy.forward_path(self.path)
         # The Chat Completions request the proxy writes itself, if it does.
-        chat = chat_request(json.loads(body)) if bridged else None
+        bridge = proxy.chat_bridge
+        request = json.loads(body) if bridged else None
+        chat = bridge.chat_request(request) if bridged else None
         tokens = None
         if (
             proxy.token_log is not None
@@ -773,10 +774,10 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                 delivered = normalize_chat_completion_reasoning_response
         try:
             if bridged and status == 200 and events:
-                stream = MessagesStream()
+                stream = bridge.Stream(request)
 
                 def deliver(translated: list[dict[str, Any]]) -> None:
-                    payload = b"".join(map(sse, translated))
+                    payload = b"".join(map(_sse, translated))
                     if payload:
                         observe(payload)
                         self.wfile.write(payload)
@@ -797,9 +798,9 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                     chat_body = json.loads(payload)
                     if tokens is not None:
                         tokens.add(chat_body)
-                    message = messages_response(chat_body)
+                    message = bridge.response(chat_body)
                 else:
-                    message = messages_error(status, payload)
+                    message = bridge.error(status, payload)
                 payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
                 observe(payload)
                 self.wfile.write(payload)
@@ -889,7 +890,7 @@ class WireTraceProxy:
         responses_tool_images_as_user: bool = False,
         tool_id_mappings_path: Path | None = None,
         anthropic_pdf_as_images: bool = False,
-        messages_as_chat: bool = False,
+        chat_bridge: ModuleType | None = None,
         token_ids_path: Path | None = None,
     ) -> None:
         if mode not in ("tools", "full"):
@@ -932,8 +933,9 @@ class WireTraceProxy:
         self.responses_image_detail = responses_image_detail
         self.responses_tool_images_as_user = responses_tool_images_as_user
         self.anthropic_pdf_as_images = anthropic_pdf_as_images
-        # Send Messages requests to the upstream's Chat Completions endpoint.
-        self.messages_as_chat = messages_as_chat
+        # ``messages_bridge`` or ``responses_bridge``: serve the calls of that
+        # API from the upstream's Chat Completions endpoint.
+        self.chat_bridge = chat_bridge
         # Receives the token ids and logprobs of each Chat Completions call.
         self.token_log = TokenLog(token_ids_path) if token_ids_path else None
         # Set to repair repeated Anthropic tool-use IDs; receives one row per repair.
@@ -1004,15 +1006,14 @@ class WireTraceProxy:
         return urlunsplit(("", "", parts.path, query, ""))
 
     def upstream_path(self, method: str, path: str) -> str:
-        """``forward_path``, with a Messages call sent to Chat Completions."""
+        """``forward_path``, with a bridged call sent to Chat Completions."""
 
         target = urlsplit(self.forward_path(path))
         route = target.path.rstrip("/")
-        if not (
-            self.messages_as_chat and method == "POST" and route.endswith("/messages")
-        ):
+        bridge = self.chat_bridge
+        if not (bridge and method == "POST" and route.endswith(bridge.ROUTE)):
             return self.forward_path(path)
-        route = route[: -len("/messages")] + "/chat/completions"
+        route = route[: -len(bridge.ROUTE)] + "/chat/completions"
         return urlunsplit(("", "", route, target.query, ""))
 
     def open_upstream(

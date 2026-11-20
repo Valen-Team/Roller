@@ -7,7 +7,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 ### Added
 
 - Token-in, token-out collection from a Chat Completions endpoint that returns token ids, such as vLLM. With `--capture-calls`, `--token-ids` saves the prompt and completion token ids of every model call with the logprob of each sampled token in `token_ids.jsonl`. A call that continues an earlier one holds only the prompt tokens that follow it, so the file grows with the length of the conversation. The run records whether the endpoint reports logprobs before or after temperature and top-p. `roller export --format tokens` joins the calls of a conversation into one sequence in which every token appears once, with the positions the model generated marked.
-- `--token-ids` works with Hermes, OpenCode, DeepSeek Harness and Pi Agent, which call Chat Completions themselves, and with Claude Code through `--claude-chat-completions`. That option translates the Messages requests of Claude Code to Chat Completions at the request recording proxy, with the same prompt vLLM renders for its own Messages endpoint.
+- `--token-ids` works with every Harness. Hermes, OpenCode, DeepSeek Harness, Pi Agent and OpenClaw call Chat Completions themselves. Claude Code and Codex do through `--claude-chat-completions` and `--codex-chat-completions`, which translate their Messages and Responses requests to Chat Completions at the request recording proxy, with the same prompt vLLM renders for its own Messages and Responses endpoints.
 
 ### Changed
 

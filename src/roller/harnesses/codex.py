@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
+from roller import responses_bridge
 from roller.artifacts import ArtifactCollectionResult
 from roller.capture_runtime import CaptureRuntime
 from roller.codex_actf import convert_codex_trace
@@ -45,6 +46,7 @@ from roller.models import HarnessResult, RunRequest
 from roller.native_images import attached_images
 from roller.storage import safe_component
 from roller.thinking import normalize_thinking, resolve_thinking
+from roller.token_ids import TOKEN_IDS_FILE
 from roller.usage import ZERO_USAGE, extract_codex_usage
 from roller.wire_trace import RESPONSES_IMAGE_DETAILS, WireTraceProxy, redact_jsonl_file
 
@@ -136,6 +138,9 @@ class CodexConfig:
     # ``detail`` the proxy sets on Responses ``input_image`` blocks without one.
     responses_image_detail: str | None = None
     responses_tool_images_as_user: bool = False
+    # Serve the Responses calls from the endpoint's Chat Completions API.
+    chat_completions: bool = False
+    token_ids: bool = False
 
     def __post_init__(self) -> None:
         managed = ROLLER_MANAGED_CODEX_CONFIG
@@ -199,6 +204,19 @@ class CodexConfig:
         ):
             raise ValueError(
                 "Codex call capture requires --api-base, host network, wire tracing and --no-codex-websockets"
+            )
+        if self.chat_completions and (
+            not self.api_base
+            or self.supports_websockets
+            or self.wire_trace_mode == "off"
+        ):
+            raise ValueError(
+                "Codex Chat Completions translation requires --api-base, wire "
+                "tracing and --no-codex-websockets"
+            )
+        if self.token_ids and not (self.chat_completions and self.capture_calls):
+            raise ValueError(
+                "Codex --token-ids requires --codex-chat-completions and --capture-calls"
             )
         if self.wire_trace_mode not in {"off", "actf", "full"}:
             raise ValueError("Codex wire trace mode must be off|actf|full")
@@ -276,6 +294,8 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
         self._wire_proxy = None
         tools_path = output_dir / "tools_capture.jsonl"
         tools_path.unlink(missing_ok=True)
+        token_ids_path = output_dir / TOKEN_IDS_FILE
+        token_ids_path.unlink(missing_ok=True)
         if (
             self.config.wire_trace_mode == "off"
             or not self.config.api_base
@@ -296,6 +316,8 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
             encrypted_content_retries=CODEX_ENCRYPTED_CONTENT_RETRIES,
             responses_image_detail=self.config.responses_image_detail,
             responses_tool_images_as_user=self.config.responses_tool_images_as_user,
+            chat_bridge=responses_bridge if self.config.chat_completions else None,
+            token_ids_path=token_ids_path if self.config.token_ids else None,
         )
         self._wire_proxy.start()
 
@@ -898,6 +920,7 @@ class CodexSession(InteractiveSession):
                     if config.responses_image_detail
                     else {}
                 ),
+                **({"chat_completions": True} if config.chat_completions else {}),
                 "output_collection": output_collection_metadata(
                     artifact_result, self.request, self.output_dir
                 ),

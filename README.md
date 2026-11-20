@@ -325,6 +325,7 @@ New users should start with [Getting started](https://valen-team.github.io/rolle
 | [SFT format](https://valen-team.github.io/roller/traces/sft-format/) | Record structure, images and compaction segments |
 | [Viewer](https://valen-team.github.io/roller/traces/viewer/) | Startup, ports and remote access |
 | [Session import](https://valen-team.github.io/roller/traces/import/) | Importing local Claude Code and Codex sessions, and redacting them for upload |
+| [Token ids and logprobs](https://valen-team.github.io/roller/traces/token-ids/) | Collecting the token ids and logprobs of every model call, and exporting them as sequences |
 | [Bench integration and scoring](https://valen-team.github.io/roller/benches/bench-format/) | Bench runs, grading and new bench adapters |
 | [Examples](examples/README.md) (Chinese) | Runnable commands for each Harness |
 | [Coverage suite](examples/coverage/README.en.md) | 1,624 functional test tasks across all seven Harnesses |
