@@ -2,6 +2,18 @@
 
 Notable changes to Roller. Versions follow the tags of this repository and the `roller-agent` releases on PyPI.
 
+## Unreleased
+
+### Changed
+
+- `--token-ids` works in a remote sandbox (`--sandbox-provider`). The wire recorder in the sandbox writes `token_ids.jsonl` and Roller copies it into the sample. The sandbox template needs this Roller version.
+- `roller export --format hf` writes the trace of a Hermes sample as a Hermes session, the format of `hermes sessions export`, so the Hub lists it as a Hermes trace. It was a Pi session converted from ACTF.
+
+### Fixed
+
+- The Hugging Face export of imported sessions also replaces the local user name inside longer names, such as `pytest-of-<user>`, `_Users_<user>_` and `<user>.github.io`, and right after an escaped line break or a URL escape such as `%2F`. A user name still left, such as one joined to a word, is listed in the redaction report as `user_name`.
+- `roller export --format hf --include-runs` leaves out the `tokens/` folder that `roller export --format tokens` writes into the run, as it already did for the other export folders.
+
 ## 0.6.0
 
 ### Added
@@ -31,7 +43,6 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 - `--codex-tool-images-as-user` keeps tool text and attaches the original tool-image bytes as a following user message for compatible Responses backends.
 - `--preserve-task-keys` preserves deliberate benchmark key fixtures during HF export while redacting known collection credentials.
 - `docker/wildclawbench` provides cleaned base/Codex image recipes, license notices and collection examples.
-
 - Collection credential preflight, detailed failure summaries, progress, ETA, 60-second heartbeats and `collect.log`; `--max-consecutive-errors` stops dispatch after 10 consecutive errors by default, and `--retry-backoff` spaces sample retries.
 - Grader retries in the live container and `--resume-unscored` to rerun agents whose grading failed. Grading failures now cause a nonzero exit.
 - SFT record indexes and `roller export --format sft --min-score` for score-filtered training data.
@@ -48,7 +59,6 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 - Grader proxy bypass expands configured CIDR ranges to matching endpoint hosts.
 - HF export rules also apply to generated model group names and sample paths; configured proxy bypass values and URL credentials are redacted.
 - Export review avoids repeated email-pattern backtracking on long image payloads.
-
 - Benchmark reports aggregate each model separately, include failed samples in denominators and use consistent category denominators.
 - Resume accepts task/model supersets and compatible patch upgrades, and rebuilds derived SFT artifacts without rerunning valid samples.
 - HF exports exclude previous export directories and review reports from shared run files.

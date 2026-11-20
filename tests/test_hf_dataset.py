@@ -17,6 +17,7 @@ from roller.hf_dataset import (
     STATS_START,
     Rules,
     export_run,
+    hermes_session,
     load_rules,
     session_trace,
 )
@@ -639,6 +640,81 @@ class HuggingFaceExportTests(unittest.TestCase):
                 events,
             )
 
+    def test_hermes_journal_becomes_a_hermes_session(self) -> None:
+        call = {"id": "c1", "type": "function", "function": {"name": "terminal"}}
+        events = [
+            {
+                "type": "participant",
+                "timestamp": "2026-11-20T17:51:37+00:00",
+                "session_id": "native",
+            },
+            {
+                "type": "request",
+                "timestamp": "2026-11-20T17:51:38+00:00",
+                "model": "m",
+                "messages": [{"role": "system", "content": "You are Hermes."}],
+                "tools": [],
+            },
+            {
+                "type": "message",
+                "timestamp": "2026-11-20T17:51:38+00:00",
+                "message": {"role": "user", "content": "Run ls."},
+            },
+            {
+                "type": "message",
+                "timestamp": "2026-11-20T17:51:40+00:00",
+                "finish_reason": "tool_calls",
+                "usage": {"prompt_tokens": 9},
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning": "List it.",
+                    "tool_calls": [call],
+                },
+            },
+            {
+                "type": "message",
+                "timestamp": "2026-11-20T17:51:41+00:00",
+                "message": {"role": "tool", "content": "a", "tool_call_id": "c1"},
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp) / "trace.jsonl"
+            raw.write_text("".join(json.dumps(event) + "\n" for event in events))
+            session = hermes_session(raw, {"id": "s1", "model": "m"})
+
+        start = 1795197097.0
+        self.assertEqual(
+            session,
+            {
+                "id": "s1",
+                "model": "m",
+                "source": "cli",
+                "system_prompt": "You are Hermes.",
+                "started_at": start,
+                "ended_at": start + 4,
+                "message_count": 3,
+                "tool_call_count": 1,
+                "messages": [
+                    {"role": "user", "content": "Run ls.", "timestamp": start + 1},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning": "List it.",
+                        "tool_calls": [call],
+                        "timestamp": start + 3,
+                        "finish_reason": "tool_calls",
+                    },
+                    {
+                        "role": "tool",
+                        "content": "a",
+                        "tool_call_id": "c1",
+                        "timestamp": start + 4,
+                    },
+                ],
+            },
+        )
+
     def test_session_trace_is_a_pi_session(self) -> None:
         lines = session_trace(
             ACTF, {"harness": "opencode", "id": "s1", "name": "demo", "model": "p/m"}
@@ -1088,6 +1164,8 @@ class HuggingFaceExportTests(unittest.TestCase):
     def test_default_output_inside_the_run_is_not_copied_into_itself(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = _run(Path(tmp))
+            (run_dir / "tokens").mkdir()
+            (run_dir / "tokens" / "tokens.jsonl").write_text("{}\n")
             stdout = io.StringIO()
 
             unset = dict.fromkeys(
@@ -1106,6 +1184,7 @@ class HuggingFaceExportTests(unittest.TestCase):
             output = run_dir / "hf"
             self.assertEqual(len(_rows(output, PART_A) + _rows(output, PART_B)), 5)
             self.assertFalse((output / "runs" / PART_A / "hf").exists())
+            self.assertFalse((output / "runs" / PART_A / "tokens").exists())
             printed = stdout.getvalue().splitlines()
             self.assertEqual(
                 printed[0], f"Exported 5 samples as a Hugging Face dataset to {output}"
@@ -1169,7 +1248,9 @@ class ImportedRunRedactionTests(unittest.TestCase):
                 "/Users/alice/work/demo",
                 "Read /Users/alice/notes.txt and "
                 "~/.claude/projects/-Users-alice-work-demo/s1.jsonl. "
-                f"Alice wrote it. ALICE SMITH, alice@example.org, {token}",
+                f"Alice wrote it. ALICE SMITH, alice@example.org, {token}\n"
+                "alice\n/tmp/pytest-of-alice/pytest-4, _Users_alice_.cache, "
+                "alice.github.io, github.com/search?q=repo%3Aalice%2Fdemo, USERalice",
             )
             self._session(
                 root / "src" / "-home-bob-proj" / "s2.jsonl",
@@ -1199,6 +1280,8 @@ class ImportedRunRedactionTests(unittest.TestCase):
                 for path in output.rglob("*")
                 if path.is_file()
             )
+            # A name joined to a word is left in place and reported.
+            text = text.replace("USERalice", "")
             for leaked in ("alice", "/home/bob", "acct-1111-2222", token):
                 self.assertNotIn(leaked, text.lower())
             self.assertIn("/Users/user/notes.txt", text)
@@ -1213,3 +1296,4 @@ class ImportedRunRedactionTests(unittest.TestCase):
             )
             self.assertNotIn("home_path", report["counts"])
             self.assertNotIn("email", report["counts"])
+            self.assertGreater(report["counts"]["user_name"], 0)

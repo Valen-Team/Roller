@@ -59,8 +59,15 @@ If your Messages gateway rejects PDF `document` blocks, install the optional PDF
 dependencies with `pip install -e '.[pdf]'` from the Roller checkout and run
 `./collect-claude-code.sh --claude-pdf-as-images`. Roller forwards extracted
 text and a PNG for each page. The wire trace records what the endpoint receives.
-For an endpoint with a smaller context window, set
-`CLAUDE_CODE_MAX_CONTEXT_TOKENS` to its configured token limit.
+
+Claude Code compacts a conversation on its own only when an auto-compact window
+is set. Run `CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000 ./collect-claude-code.sh
+--pass-env CLAUDE_CODE_AUTO_COMPACT_WINDOW` to compact when a request reaches
+about 67,000 tokens; 100000 is the smallest window Claude Code accepts, and it
+compacts about 33,000 tokens below the window.
+To compact earlier, also set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to a smaller
+window: with 64000, Claude Code compacts at about 31,000 tokens.
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS` alone does not start compaction.
 
 ## Codex
 

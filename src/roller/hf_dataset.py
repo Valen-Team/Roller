@@ -532,7 +532,13 @@ def environment_redaction(
             ),
         ]
         if len(user) >= _USER_LENGTH:
-            homes.append((re.compile(f"(?i:{_name(user)})"), placeholder))
+            # Also inside names such as ``pytest-of-<user>``, ``_Users_<user>_``
+            # and ``<user>.github.io``, after a JSON escape such as ``\n`` and
+            # after a URL escape such as ``%2F``.
+            after = r"(?:(?<![a-z0-9])|(?<=\\[nrt])|(?<=%[0-9a-f]{2}))"
+            homes.append(
+                (re.compile(rf"(?i){after}{escaped}(?![a-z0-9])"), placeholder)
+            )
 
     if not literals:
         return Rules(replace=(*contextual, *homes)), Redaction(
@@ -847,6 +853,46 @@ def session_trace(
     return lines
 
 
+def hermes_session(raw: Path, header: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert a Hermes journal to one session as ``hermes sessions export`` writes it.
+
+    The Hub reads such a line as a Hermes trace. ``header`` gives the session
+    ``id`` and further metadata. The messages are the journaled ones, from
+    before Hermes compressed its history; the system prompt is the one of the
+    first request.
+    """
+
+    system_prompt, messages, times = "", [], []
+    with raw.open(encoding="utf-8") as reader:
+        for line in reader:
+            event = json.loads(line)
+            times.append(datetime.fromisoformat(event["timestamp"]).timestamp())
+            if event["type"] == "request" and not system_prompt:
+                system_prompt = next(
+                    (
+                        message["content"]
+                        for message in event["messages"]
+                        if message["role"] == "system"
+                    ),
+                    "",
+                )
+            elif event["type"] == "message":
+                message = {**event["message"], "timestamp": times[-1]}
+                if event.get("finish_reason"):
+                    message["finish_reason"] = event["finish_reason"]
+                messages.append(message)
+    return {
+        **header,
+        "source": "cli",
+        "system_prompt": system_prompt,
+        "started_at": times[0],
+        "ended_at": times[-1],
+        "message_count": len(messages),
+        "tool_call_count": sum(len(m.get("tool_calls") or []) for m in messages),
+        "messages": messages,
+    }
+
+
 def _trace_line(line: str) -> str:
     return _TRACE_LINE_BREAKS.sub(lambda match: f"\\u{ord(match[0]):04x}", line)
 
@@ -863,8 +909,9 @@ def _write_trace(
     Preserve native OpenClaw, Codex and Claude Code records, escaping Unicode
     line separators for the Hub. An OpenClaw session header also gets
     ``header``, which names the harness and gives the session an id that is
-    unique in the run. Convert other samples from ACTF. DeepSeek and OpenCode
-    samples without ACTF keep their native journals.
+    unique in the run. Write a Hermes journal as a Hermes session. Convert
+    other samples from ACTF. DeepSeek and OpenCode samples without ACTF keep
+    their native journals.
     """
 
     raw = sample_dir / "trace.jsonl"
@@ -899,6 +946,11 @@ def _write_trace(
                         row = {**row, **header, "id": header["id"] + suffix}
                         line = json.dumps(row, ensure_ascii=False) + "\n"
                 writer.write(_trace_line(line))
+        return True
+    if schema == "roller.hermes-events/v1" and raw.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        session = json.dumps(hermes_session(raw, header), ensure_ascii=False)
+        path.write_text(_trace_line(session) + "\n", encoding="utf-8")
         return True
     if not trajectory.get("steps"):
         return False
@@ -1197,7 +1249,7 @@ def export_run(
         and output != path
         and output not in path.parents
         and (run_dir / "samples") not in path.parents
-        and path.relative_to(run_dir).parts[0] not in {"atif", "hf", "sft"}
+        and path.relative_to(run_dir).parts[0] not in {"atif", "hf", "sft", "tokens"}
         and not path.name.endswith(".redaction-report.json")
     ]
     with contextlib.ExitStack() as stack:
@@ -1265,5 +1317,6 @@ def export_run(
             output, run_dir.name, next(iter(parts)), stats_table(_tables(output)), runs
         )
     if output.is_dir():
-        export_audit.write_report(output)
+        names = [user for user in redaction.users if len(user) >= _USER_LENGTH]
+        export_audit.write_report(output, names)
     return rows, redaction
