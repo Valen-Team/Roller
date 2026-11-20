@@ -86,11 +86,8 @@ def docker_run_args(
     environment in provenance.
     """
 
-    task = request.task
-    bundle = request.bundle
+    bundle, task = request.bundle, request.task
     volumes: list[str] = []
-    env = [(name, value) for name, value in sorted(environment.items())]
-    env += [(name, value) for name, value in (extra_env or {}).items()]
     if bundle is not None:
         volumes += [
             f"{bundle.inputs_root}:{INPUTS_CONTAINER_PATH}:ro",
@@ -109,13 +106,10 @@ def docker_run_args(
                 f"task workspace is not a directory: {task.workspace}"
             )
         volumes.append(f"{task.workspace}:{WORKSPACE_INPUT_CONTAINER_PATH}:ro")
-    # ``image=None`` stops the argv before the image: every caller appends its
-    # own image and command, exactly as this function always let it.
-    return DockerRuntime().start_args(
+    return DockerRuntime.start_args(
         container,
-        None,
         labels={"ai.roller.harness": harness},
-        env=env,
+        env=[*sorted(environment.items()), *(extra_env or {}).items()],
         volumes=volumes,
         network=config.network,
         user=config.container_user,
@@ -139,12 +133,10 @@ def collect_outputs(
         shutil.rmtree(staging_root)
     staging_root.mkdir(parents=True, exist_ok=True)
     try:
-        result = runtime.run(
-            [
-                "cp",
-                f"{container}:{workspace}/{request.task.output_dir}/.",
-                str(staging_root),
-            ],
+        result = runtime.copy_out(
+            container,
+            f"{workspace}/{request.task.output_dir}/.",
+            staging_root,
             timeout=timeout,
         )
         copy_error = None if result.returncode == 0 else error_text(result, error_limit)
@@ -270,10 +262,7 @@ class ContainerCommands:
         Running by id keeps the recorded id equal to the image in use even if
         the tag moves between this inspection and container creation.
         """
-        result = self.runtime.run(
-            ["image", "inspect", self.config.docker_image, "--format", "{{.Id}}"]
-        )
-        digest = (result.stdout.strip() or None) if result.returncode == 0 else None
+        digest = self.runtime.image_id(self.config.docker_image)
         warn_if_image_changed(
             logger, self.config.docker_image, self.config.preflight_image_digest, digest
         )

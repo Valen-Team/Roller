@@ -53,11 +53,10 @@ def stop_launches(timeout: float = 10.0) -> set[str]:
 class DockerRuntime:
     """Small Docker subprocess boundary that is replaceable in tests.
 
-    The named methods below are the verbs Roller calls. They build Docker's own
-    argument list, so nothing outside this module has to know the CLI. Their
-    argv is exactly what callers wrote by hand before they existed, which is
-    what keeps the recorded command lines — and the tests that assert on them —
-    unchanged.
+    The named methods below are the verbs Roller calls; they build Docker's
+    own argument list, so the CLI is spelled in this module alone. A ``*_args``
+    method returns the argv of its verb for a caller that runs it later.
+    ``run`` and ``popen`` are the process boundary tests replace.
     """
 
     def __init__(self, binary: str = "docker") -> None:
@@ -75,9 +74,7 @@ class DockerRuntime:
     def image_id(self, image: str, timeout: float | None = None) -> str | None:
         """Id the tag points at now, or ``None`` when the image is not local."""
 
-        result = self.run(
-            ["image", "inspect", image, "--format", "{{.Id}}"], timeout=timeout
-        )
+        result = self.image_field(image, "Id", timeout=timeout)
         return (result.stdout.strip() or None) if result.returncode == 0 else None
 
     def image_field(
@@ -85,10 +82,10 @@ class DockerRuntime:
     ) -> subprocess.CompletedProcess[str]:
         """``docker image inspect --format '{{.<field>}}'``, result as returned."""
 
-        return self.run(
-            ["image", "inspect", image, "--format", f"{{{{.{field}}}}}"],
-            timeout=timeout,
-        )
+        return self.run(self.image_field_args(image, field), timeout=timeout)
+
+    def image_field_args(self, image: str, field: str) -> list[str]:
+        return ["image", "inspect", image, "--format", f"{{{{.{field}}}}}"]
 
     def pull(
         self, image: str, timeout: float | None = None
@@ -101,94 +98,62 @@ class DockerRuntime:
         timeout: float | None = None,
         *,
         engine: Sequence[str] = (),
+        capture: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         """``docker build`` with its options; ``args`` covers ``-f``..context.
 
         ``engine`` holds flags that belong before the subcommand rather than to
-        it — rootless Podman needs ``--storage-opt`` there.
+        it — rootless Podman needs ``--storage-opt`` there. ``capture=False``
+        leaves the build log on the terminal.
         """
 
-        return self.run([*engine, "build", *args], timeout=timeout)
+        command = [*engine, "build", *args]
+        if capture:
+            return self.run(command, timeout=timeout)
+        return subprocess.run([self.binary, *command], check=False, timeout=timeout)
 
     def version(self, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
         """Server version, and therefore whether a daemon answers at all."""
 
         return self.run(["version", "--format", "{{.Server.Version}}"], timeout=timeout)
 
+    def client_version(
+        self, timeout: float | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        """``docker --version``: the line that names the engine, Docker or Podman."""
+
+        return self.run(["--version"], timeout=timeout)
+
     # -- containers -----------------------------------------------------
 
-    def start(
-        self,
+    @staticmethod
+    def start_args(
         name: str,
-        image: str,
-        command: Sequence[str],
         *,
         labels: Mapping[str, str] | None = None,
-        env: Sequence[tuple[str, str]] | None = None,
-        volumes: Sequence[str] | None = None,
+        env: Sequence[tuple[str, str]] = (),
+        volumes: Sequence[str] = (),
         network: str | None = None,
         user: str | None = None,
-        detach: bool = True,
-        timeout: float | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        """Start a container and return once it is running.
+    ) -> list[str]:
+        """``docker run -d`` and its options; the caller appends image and command.
 
         ``env`` keeps its order and repeats: callers rely on both (a later
         ``-e NAME=`` shadows an earlier one). ``volumes`` are ``source:target``
-        with an optional ``:ro``. The run bookkeeping in ``_start_container``
-        still sees ``run`` as the first word, so the owner labels stay put.
+        with an optional ``:ro``.
         """
 
-        return self.run(
-            self.start_args(
-                name,
-                image,
-                command,
-                labels=labels,
-                env=env,
-                volumes=volumes,
-                network=network,
-                user=user,
-                detach=detach,
-            ),
-            timeout=timeout,
-        )
-
-    def start_args(
-        self,
-        name: str,
-        image: str | None,
-        command: Sequence[str] = (),
-        *,
-        labels: Mapping[str, str] | None = None,
-        env: Sequence[tuple[str, str]] | None = None,
-        volumes: Sequence[str] | None = None,
-        network: str | None = None,
-        user: str | None = None,
-        detach: bool = True,
-    ) -> list[str]:
-        """The argv ``start`` builds, for callers that need it up front.
-
-        ``image=None`` stops the argv after the container's options, which is
-        what a caller that appends the image and command itself needs.
-        """
-
-        args = ["run"]
-        if detach:
-            args.append("-d")
-        args += ["--name", name]
+        args = ["run", "-d", "--name", name]
         for label, value in (labels or {}).items():
             args += ["--label", f"{label}={value}"]
         if user is not None:
             args += ["--user", user]
         if network:
             args += ["--network", network]
-        for label, value in env or ():
-            args += ["-e", f"{label}={value}"]
-        for volume in volumes or ():
+        for variable, value in env:
+            args += ["-e", f"{variable}={value}"]
+        for volume in volumes:
             args += ["-v", volume]
-        if image is not None:
-            args += [image, *command]
         return args
 
     def exec(
@@ -198,12 +163,15 @@ class DockerRuntime:
         *,
         env: Mapping[str, str] | None = None,
         workdir: str | None = None,
+        options: Sequence[str] = (),
         timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run one command in a running container."""
 
         return self.run(
-            self.exec_args(container, command, env=env, workdir=workdir),
+            self.exec_args(
+                container, command, env=env, workdir=workdir, options=options
+            ),
             timeout=timeout,
         )
 
@@ -214,10 +182,15 @@ class DockerRuntime:
         *,
         env: Mapping[str, str] | None = None,
         workdir: str | None = None,
+        options: Sequence[str] = (),
     ) -> list[str]:
-        """The argv ``exec`` builds, for callers that need it up front."""
+        """The argv ``exec`` builds, for callers that need it up front.
 
-        args = ["exec"]
+        ``options`` are ``docker exec`` options passed through as written, such
+        as a bare ``-e NAME`` that forwards a variable without its value.
+        """
+
+        args = ["exec", *options]
         for name, value in (env or {}).items():
             args += ["-e", f"{name}={value}"]
         if workdir is not None:
@@ -248,6 +221,11 @@ class DockerRuntime:
         self, container: str, timeout: float | None = None
     ) -> subprocess.CompletedProcess[str]:
         return self.run(["kill", container], timeout=timeout)
+
+    def stop(
+        self, container: str, grace: int, timeout: float | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run(["stop", "--time", str(grace), container], timeout=timeout)
 
     def remove(
         self, name: str, timeout: float | None = None
@@ -289,8 +267,13 @@ class DockerRuntime:
         """Copy one path from the host into a container."""
 
         return self.run(
-            ["cp", str(source), f"{container}:{destination}"], timeout=timeout
+            self.copy_in_args(source, container, destination), timeout=timeout
         )
+
+    def copy_in_args(
+        self, source: Path | str, container: str, destination: str
+    ) -> list[str]:
+        return ["cp", str(source), f"{container}:{destination}"]
 
     def _execute(
         self, args: Sequence[str], timeout: float | None
@@ -383,9 +366,7 @@ def remove_container(
     last_error: subprocess.TimeoutExpired | None = None
     for timeout in timeouts:
         try:
-            # ``run`` rather than ``remove``: callers pass test doubles that
-            # only implement the process boundary.
-            last_result = runtime.run(["rm", "-f", name], timeout=timeout)
+            last_result = runtime.remove(name, timeout=timeout)
             last_error = None
         except subprocess.TimeoutExpired as exc:
             last_error = exc

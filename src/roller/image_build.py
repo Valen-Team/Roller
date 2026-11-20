@@ -32,50 +32,34 @@ COPY --from=roller_harness /opt/roller-opencode-deps /opt/roller-opencode-deps
 _OVERLAYS = {"opencode": _OPENCODE_OVERLAY}
 
 
-def _runtime(runtime: DockerRuntime | str) -> DockerRuntime:
-    """Accept the Docker binary name this module has always been given."""
-
-    return DockerRuntime(runtime) if isinstance(runtime, str) else runtime
-
-
 @cache
-def _build_command_prefix(runtime: DockerRuntime | str) -> list[str]:
-    """Return the engine argv that precedes ``build`` for Docker and rootless Podman.
+def _engine_options(binary: str) -> tuple[str, ...]:
+    """Options that precede ``build`` for Docker and rootless Podman.
 
     Some upstream benchmark images contain ownership IDs outside the host's
     subordinate-ID range. Docker can unpack those layers directly; rootless
-    Podman needs its documented single-UID fallback. The trailing ``build`` is
-    included because callers assert on the whole prefix.
+    Podman needs its documented single-UID fallback.
     """
 
-    runtime = _runtime(runtime)
-    result = runtime.version(timeout=30)
+    result = DockerRuntime(binary).client_version(timeout=30)
     if result.returncode == 0 and "podman" in result.stdout.lower():
-        return [
-            runtime.binary,
-            "--storage-opt",
-            "overlay.ignore_chown_errors=true",
-            "build",
-        ]
-    return [runtime.binary, "build"]
+        return ("--storage-opt", "overlay.ignore_chown_errors=true")
+    return ()
 
 
-def _inspect_image(runtime: DockerRuntime | str, image: str) -> str | None:
-    # The verb itself retries nothing, so the three attempts stay here.
-    runtime = _runtime(runtime)
+def _inspect_image(binary: str, image: str) -> str | None:
+    runtime = DockerRuntime(binary)
     for attempt in range(3):
         try:
-            image_id = runtime.image_id(image, timeout=120)
+            return runtime.image_id(image, timeout=120)
         except subprocess.TimeoutExpired:
             if attempt == 2:
                 return None
-            continue
-        return image_id
     return None
 
 
 def _build(
-    runtime: DockerRuntime | str,
+    binary: str,
     *,
     image: str,
     context: Path,
@@ -83,23 +67,13 @@ def _build(
     build_args: Iterable[tuple[str, str]],
     timeout_seconds: int,
 ) -> None:
-    runtime = _runtime(runtime)
     build_args = tuple(build_args)
     with tempfile.NamedTemporaryFile(
         "w", suffix=".Dockerfile", encoding="utf-8", delete=False
     ) as stream:
         stream.write(dockerfile_source.rstrip() + "\n")
         dockerfile = Path(stream.name)
-    # ``_build_command_prefix`` is ``[engine, *flag, "build"]``; the runtime owns
-    # the engine and the subcommand, so hand it only the flags between them.
-    prefix = _build_command_prefix(runtime)
-    engine = prefix[1:-1] if prefix[-1:] == ["build"] else prefix[1:]
-    command = [
-        "--file",
-        str(dockerfile),
-        "--tag",
-        image,
-    ]
+    command = ["--file", str(dockerfile), "--tag", image]
     for name, value in build_args:
         command.extend(["--build-arg", f"{name}={value}"])
     # Docker treats these predefined proxy args specially: they are available
@@ -127,7 +101,12 @@ def _build(
     try:
         for attempt in range(2):
             try:
-                result = runtime.build(command, timeout=timeout_seconds, engine=engine)
+                result = DockerRuntime(binary).build(
+                    command,
+                    timeout=timeout_seconds,
+                    engine=_engine_options(binary),
+                    capture=False,
+                )
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError(
                     f"Docker image build exceeded {timeout_seconds}s: {image}"
@@ -147,7 +126,7 @@ def _build(
 
 
 def prepare_task_images(
-    runtime: DockerRuntime | str,
+    binary: str,
     requests: Iterable[RunRequest],
     harness_images: Mapping[str, str],
     *,
@@ -156,7 +135,6 @@ def prepare_task_images(
 ) -> dict[str, str]:
     """Build missing task environments and return task-id to image digest."""
 
-    runtime = _runtime(runtime)
     specs: dict[str, tuple[ContainerImageBuild, str]] = {}
     task_images: dict[str, str] = {}
     for request in requests:
@@ -178,12 +156,12 @@ def prepare_task_images(
         task_images[request.task.id] = image
 
     for image, (spec, harness) in specs.items():
-        existing_image = _inspect_image(runtime, image)
+        existing_image = _inspect_image(binary, image)
         if not rebuild and existing_image:
             continue
-        if rebuild or not _inspect_image(runtime, spec.base_image):
+        if rebuild or not _inspect_image(binary, spec.base_image):
             _build(
-                runtime,
+                binary,
                 image=spec.base_image,
                 context=spec.context,
                 dockerfile_source=spec.dockerfile,
@@ -198,7 +176,7 @@ def prepare_task_images(
         harness_image = harness_images[harness]
         with tempfile.TemporaryDirectory(prefix="roller-image-overlay-") as temporary:
             _build(
-                runtime,
+                binary,
                 image=image,
                 context=Path(temporary),
                 dockerfile_source=overlay,
@@ -211,7 +189,7 @@ def prepare_task_images(
 
     digests: dict[str, str] = {}
     for task_id, image in task_images.items():
-        digest = _inspect_image(runtime, image)
+        digest = _inspect_image(binary, image)
         if not digest:
             raise RuntimeError(
                 f"task-specific Docker image is unavailable after preparation: {image}"

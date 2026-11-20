@@ -412,11 +412,11 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
         if self.config.config_path is None:
             return
         self._checked(
-            [
-                "cp",
-                str(self.config.config_path),
-                f"{container}:{CODEX_HOME_CONTAINER_PATH}/config.toml",
-            ],
+            self.runtime.copy_in_args(
+                self.config.config_path,
+                container,
+                f"{CODEX_HOME_CONTAINER_PATH}/config.toml",
+            ),
             "Codex config copy",
         )
 
@@ -569,7 +569,7 @@ class CodexHarness(ContainerCommands, InteractiveHarness):
         source = found.stdout.strip() if found.returncode == 0 else ""
         if not source:
             return None
-        copied = self.runtime.run(["cp", f"{container}:{source}", str(destination)])
+        copied = self.runtime.copy_out(container, source, destination)
         if (
             copied.returncode != 0
             or not destination.is_file()
@@ -686,7 +686,7 @@ class CodexSession(InteractiveSession):
         self.harness._prepare_context_and_setup(self.container, self.request)
         self.harness._prepare_config(self.container)
         self.codex_version = self.harness._checked(
-            ["exec", self.container, "codex", "--version"],
+            self.harness.runtime.exec_args(self.container, ["codex", "--version"]),
             "Codex version check",
         ).stdout.strip()
         self.started = True

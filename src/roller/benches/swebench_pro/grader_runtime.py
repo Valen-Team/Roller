@@ -28,43 +28,6 @@ _GRADER_SOURCE = "\n" + resources.files("roller.benches.swebench_pro").joinpath(
 ).read_text(encoding="utf-8")
 
 
-def _exec(
-    runtime: Any,
-    container: str,
-    command: list[str],
-    *,
-    workdir: str | None = None,
-    timeout: float | None = None,
-) -> subprocess.CompletedProcess[str]:
-    """``docker exec`` through the runtime verb, named here for substitution."""
-
-    return runtime.exec(container, command, workdir=workdir, timeout=timeout)
-
-
-def _copy_out(
-    runtime: Any, container: str, source: str, destination: Any, timeout: float
-) -> subprocess.CompletedProcess[str]:
-    """``docker cp`` out of a container, named here for substitution."""
-
-    return runtime.copy_out(container, source, destination, timeout=timeout)
-
-
-def _copy_in(
-    runtime: Any, source: Any, container: str, destination: str, timeout: float
-) -> subprocess.CompletedProcess[str]:
-    """``docker cp`` into a container.
-
-    A runtime that only answers ``run`` still receives the argv the verb builds:
-    the fresh-grader path hands patches to the runtime the harness was given.
-    """
-
-    if not hasattr(type(runtime), "copy_in"):
-        return runtime.run(
-            ["cp", str(source), f"{container}:{destination}"], timeout=timeout
-        )
-    return runtime.copy_in(source, container, destination, timeout=timeout)
-
-
 def _strip_binary_hunks(patch: str) -> tuple[str, list[str]]:
     """Drop binary file sections; return the text patch and the dropped paths."""
 
@@ -92,8 +55,7 @@ class SWEBenchProGradedHarness(GradedHarness):
             f"{BASELINE_REF} -- ."
         )
         try:
-            result = _exec(
-                self.inner.runtime,
+            result = self.inner.runtime.exec(
                 session.container,
                 ["/bin/bash", "-lc", script],
                 workdir=WORKSPACE_CONTAINER_PATH,
@@ -113,8 +75,7 @@ class SWEBenchProGradedHarness(GradedHarness):
             prefix="roller-swebench-results-"
         ) as temporary:
             staged = Path(temporary)
-            copied = _copy_out(
-                runtime,
+            copied = runtime.copy_out(
                 grader_container,
                 f"{WORKSPACE_CONTAINER_PATH}/{OUTPUT_DIR_NAME}/.",
                 staged,
@@ -122,14 +83,12 @@ class SWEBenchProGradedHarness(GradedHarness):
             )
             if copied.returncode:
                 return
-            _exec(
-                runtime,
+            runtime.exec(
                 agent_container,
                 ["mkdir", "-p", f"{WORKSPACE_CONTAINER_PATH}/{OUTPUT_DIR_NAME}"],
                 timeout=30,
             )
-            _copy_in(
-                runtime,
+            runtime.copy_in(
                 f"{staged}/.",
                 agent_container,
                 f"{WORKSPACE_CONTAINER_PATH}/{OUTPUT_DIR_NAME}",
@@ -181,14 +140,11 @@ class SWEBenchProGradedHarness(GradedHarness):
             grader_container = f"roller-swebench-grade-{uuid.uuid4().hex[:12]}"
             launched = runtime.run(
                 [
-                    "run",
-                    "-d",
-                    "--name",
-                    grader_container,
-                    "--label",
-                    "ai.roller.role=swebench-pro-grader",
-                    "--user",
-                    "0",
+                    *runtime.start_args(
+                        grader_container,
+                        labels={"ai.roller.role": "swebench-pro-grader"},
+                        user="0",
+                    ),
                     "--entrypoint",
                     "/bin/bash",
                     source_image,
@@ -200,8 +156,7 @@ class SWEBenchProGradedHarness(GradedHarness):
             if launched.returncode:
                 detail = (launched.stderr or launched.stdout or "").strip()[-2000:]
                 raise RuntimeError(f"fresh grading container startup failed: {detail}")
-            prepared = _exec(
-                runtime,
+            prepared = runtime.exec(
                 grader_container,
                 [
                     "/bin/bash",
@@ -222,8 +177,7 @@ class SWEBenchProGradedHarness(GradedHarness):
                 handle.write(patch or "")
                 patch_path = Path(handle.name)
             try:
-                copied = _copy_in(
-                    runtime,
+                copied = runtime.copy_in(
                     patch_path,
                     grader_container,
                     "/tmp/model.patch",
@@ -234,8 +188,7 @@ class SWEBenchProGradedHarness(GradedHarness):
             finally:
                 patch_path.unlink(missing_ok=True)
             if patch:
-                applied = _exec(
-                    runtime,
+                applied = runtime.exec(
                     grader_container,
                     ["git", "apply", "--verbose", "/tmp/model.patch"],
                     workdir=WORKSPACE_CONTAINER_PATH,
@@ -276,9 +229,7 @@ class SWEBenchProGradedHarness(GradedHarness):
         finally:
             if grader_container is not None and runtime is not None:
                 try:
-                    # Raw: this runs in ``finally``, where a runtime that only
-                    # answers ``run`` must still clean up after a failed grade.
-                    cleanup = runtime.run(["rm", "-f", grader_container], timeout=30)
+                    cleanup = runtime.remove(grader_container, timeout=30)
                     if cleanup.returncode:
                         detail = (cleanup.stderr or cleanup.stdout or "").strip()[-500:]
                         logger.warning(

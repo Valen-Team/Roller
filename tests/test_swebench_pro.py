@@ -526,8 +526,10 @@ class SWEBenchProGraderTests(unittest.TestCase):
             subprocess.TimeoutExpired(["image", "inspect"], 60),
         ):
             with self.subTest(failure=type(failure).__name__):
-                runtime = Mock()
-                runtime.run.return_value = subprocess.CompletedProcess([], 0, "", "")
+                runtime = DockerRuntime()
+                runtime.run = Mock(
+                    return_value=subprocess.CompletedProcess([], 0, "", "")
+                )
                 inner = HermesHarness(HermesConfig(), 0, runtime)
                 binding = BenchBinding(
                     "swebench-pro",
@@ -565,8 +567,10 @@ class SWEBenchProGraderTests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as tmp,
             ):
                 output_dir = Path(tmp)
-                runtime = Mock()
-                runtime.run.return_value = subprocess.CompletedProcess([], 0, "", "")
+                runtime = DockerRuntime()
+                runtime.run = Mock(
+                    return_value=subprocess.CompletedProcess([], 0, "", "")
+                )
                 inner = HermesHarness(HermesConfig(), 0, runtime)
                 binding = BenchBinding(
                     "swebench-pro",

@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from roller.harnesses.docker import DockerRuntime
-from roller.image_build import _build, _build_command_prefix, prepare_task_images
+from roller.image_build import _build, _engine_options, prepare_task_images
 from roller.models import ContainerImageBuild, RunRequest, Task
 
 
 class TaskImageBuildTests(unittest.TestCase):
     def tearDown(self) -> None:
-        _build_command_prefix.cache_clear()
+        _engine_options.cache_clear()
 
     def _request(self, root: Path, *, harness: str = "opencode") -> RunRequest:
         spec = ContainerImageBuild(
@@ -93,38 +91,53 @@ class TaskImageBuildTests(unittest.TestCase):
                     cli_harness="openclaw",
                 )
 
-    @mock.patch("roller.image_build.subprocess.run")
-    def test_rootless_podman_builds_ignore_unmappable_layer_owners(self, run) -> None:
-        run.return_value.returncode = 0
-        run.return_value.stdout = "podman version 4.9.3\n"
+    def _build_argv(self, version_line: str) -> tuple[list[str], list[str]]:
+        """The engine detection argv and the build argv for one ``--version``."""
 
-        prefix = _build_command_prefix("docker")
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            mock.patch("roller.image_build.subprocess.run") as run,
+        ):
+            run.return_value.returncode = 0
+            run.return_value.stdout = version_line
+            _build(
+                "docker",
+                image="example:test",
+                context=Path(temporary),
+                dockerfile_source="FROM scratch\n",
+                build_args=(),
+                timeout_seconds=30,
+            )
+        detection, build = (call.args[0] for call in run.call_args_list)
+        # The build log stays on the terminal.
+        self.assertNotIn("capture_output", run.call_args.kwargs)
+        return detection, build
 
+    def test_rootless_podman_builds_ignore_unmappable_layer_owners(self) -> None:
+        detection, build = self._build_argv("podman version 4.9.3\n")
+
+        self.assertEqual(detection, ["docker", "--version"])
         self.assertEqual(
-            prefix,
+            build[:5],
             [
                 "docker",
                 "--storage-opt",
                 "overlay.ignore_chown_errors=true",
                 "build",
+                "--file",
             ],
         )
 
-    @mock.patch("roller.image_build.subprocess.run")
-    def test_docker_build_prefix_is_unchanged(self, run) -> None:
-        run.return_value.returncode = 0
-        run.return_value.stdout = "Docker version 28.0.0\n"
+    def test_docker_build_prefix_is_unchanged(self) -> None:
+        _, build = self._build_argv("Docker version 28.0.0\n")
 
-        self.assertEqual(_build_command_prefix("docker"), ["docker", "build"])
+        self.assertEqual(build[:3], ["docker", "build", "--file"])
 
     def test_build_passes_uppercase_and_lowercase_proxy_args(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             with (
-                mock.patch(
-                    "roller.image_build._build_command_prefix",
-                    return_value=["docker", "build"],
-                ),
+                mock.patch("roller.image_build._engine_options", return_value=()),
                 mock.patch("roller.image_build.subprocess.run") as run,
                 mock.patch.dict(
                     "roller.image_build.os.environ",
@@ -145,63 +158,6 @@ class TaskImageBuildTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertIn("HTTPS_PROXY=http://proxy.test:3128", command)
         self.assertIn("https_proxy=http://proxy.test:3128", command)
-
-    def test_build_invokes_the_subcommand_once(self) -> None:
-        """The prefix ends with ``build``; the runtime must not add a second one."""
-
-        class Recorder(DockerRuntime):
-            def __init__(self) -> None:
-                super().__init__()
-                self.commands: list[list[str]] = []
-
-            def run(self, args, timeout=None):
-                self.commands.append(list(args))
-                stdout = "Docker version 28.0.0\n" if args[:1] == ["version"] else ""
-                return subprocess.CompletedProcess(list(args), 0, stdout, "")
-
-        runtime = Recorder()
-        with tempfile.TemporaryDirectory() as temporary:
-            _build(
-                runtime,
-                image="example:test",
-                context=Path(temporary),
-                dockerfile_source="FROM scratch\n",
-                build_args=(),
-                timeout_seconds=30,
-            )
-
-        argv = runtime.commands[-1]
-        self.assertEqual(argv[:2], ["build", "--file"])
-        self.assertEqual(argv.count("build"), 1)
-
-    def test_podman_engine_flags_stay_before_the_subcommand(self) -> None:
-        class PodmanRecorder(DockerRuntime):
-            def __init__(self) -> None:
-                super().__init__()
-                self.commands: list[list[str]] = []
-
-            def run(self, args, timeout=None):
-                self.commands.append(list(args))
-                stdout = "podman version 4.9.3\n"
-                return subprocess.CompletedProcess(list(args), 0, stdout, "")
-
-        runtime = PodmanRecorder()
-        with tempfile.TemporaryDirectory() as temporary:
-            _build(
-                runtime,
-                image="example:test",
-                context=Path(temporary),
-                dockerfile_source="FROM scratch\n",
-                build_args=(),
-                timeout_seconds=30,
-            )
-
-        argv = runtime.commands[-1]
-        self.assertEqual(
-            argv[:2], ["--storage-opt", "overlay.ignore_chown_errors=true"]
-        )
-        self.assertEqual(argv[2], "build")
-        self.assertEqual(argv.count("build"), 1)
 
 
 if __name__ == "__main__":

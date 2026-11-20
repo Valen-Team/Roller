@@ -178,8 +178,10 @@ class QwenClawWorkspaceTests(unittest.TestCase):
             )
 
     def test_qwenclaw_wrapper_prepares_workspace_compatibility_alias(self) -> None:
-        runtime = Mock()
-        runtime.run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        runtime = DockerRuntime()
+        runtime.run = Mock(
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr="")
+        )
         inner = HermesHarness(
             HermesConfig(docker_image="registry.example/hermes:test"),
             0,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,8 +12,9 @@ from roller.harnesses.docker import (
 )
 
 
-class FakeRuntime:
+class FakeRuntime(DockerRuntime):
     def __init__(self, outcomes):
+        super().__init__()
         self.outcomes = iter(outcomes)
         self.calls = []
 
@@ -50,15 +50,11 @@ class RecordingRuntime(DockerRuntime):
 
 
 class RuntimeVerbTests(unittest.TestCase):
-    """Each verb must emit the argv callers wrote by hand before it existed."""
+    """Each verb emits the argv callers wrote by hand before it existed."""
 
-    def test_start_args_match_the_hand_written_run_line(self):
-        runtime = RecordingRuntime()
-
-        args = runtime.start_args(
+    def test_start_args_order_options_as_the_hand_written_run_line(self):
+        args = DockerRuntime.start_args(
             "roller-task",
-            "image:tag",
-            ["tail", "-f", "/dev/null"],
             labels={"ai.roller.harness": "codex"},
             env=[("B", "2"), ("A", "1")],
             volumes=["/host:/guest:ro"],
@@ -68,71 +64,40 @@ class RuntimeVerbTests(unittest.TestCase):
 
         self.assertEqual(
             args,
-            [
-                "run",
-                "-d",
-                "--name",
-                "roller-task",
-                "--label",
-                "ai.roller.harness=codex",
-                "--user",
-                "0",
-                "--network",
-                "host",
-                "-e",
-                "B=2",
-                "-e",
-                "A=1",
-                "-v",
-                "/host:/guest:ro",
-                "image:tag",
-                "tail",
-                "-f",
-                "/dev/null",
-            ],
+            ["run", "-d", "--name", "roller-task"]
+            + ["--label", "ai.roller.harness=codex"]
+            + ["--user", "0", "--network", "host"]
+            + ["-e", "B=2", "-e", "A=1", "-v", "/host:/guest:ro"],
         )
 
-    def test_start_args_without_an_image_stops_before_it(self):
+    def test_exec_puts_options_env_and_workdir_before_the_container(self):
         runtime = RecordingRuntime()
 
-        self.assertEqual(
-            runtime.start_args("box", None, labels={"a": "b"}),
-            ["run", "-d", "--name", "box", "--label", "a=b"],
-        )
-
-    def test_exec_args_put_env_then_workdir_then_container(self):
-        runtime = RecordingRuntime()
-
-        args = runtime.exec_args(
+        runtime.exec(
             "box",
             ["python3", "-c", "pass"],
-            env={"A": "1", "B": "2"},
+            env={"A": "1"},
             workdir="/workspace",
+            options=["-e", "SECRET"],
+            timeout=5,
         )
+        runtime.exec("box", ["true"])
 
         self.assertEqual(
-            args,
+            runtime.calls,
             [
-                "exec",
-                "-e",
-                "A=1",
-                "-e",
-                "B=2",
-                "-w",
-                "/workspace",
-                "box",
-                "python3",
-                "-c",
-                "pass",
+                ["exec", "-e", "SECRET", "-e", "A=1", "-w", "/workspace"]
+                + ["box", "python3", "-c", "pass"],
+                ["exec", "box", "true"],
             ],
         )
 
-    def test_exec_goes_through_run(self):
+    def test_exec_logged_starts_the_same_argv_as_a_process(self):
         runtime = RecordingRuntime()
 
-        runtime.exec("box", ["true"], timeout=5)
+        runtime.exec_logged("box", ["true"], Path("turn.log"), workdir="/w")
 
-        self.assertEqual(runtime.calls, [["exec", "box", "true"]])
+        self.assertEqual(runtime.processes, [["exec", "-w", "/w", "box", "true"]])
 
     def test_copy_verbs_name_the_container_side(self):
         runtime = RecordingRuntime()
@@ -148,42 +113,41 @@ class RuntimeVerbTests(unittest.TestCase):
             ],
         )
 
-    def test_image_id_returns_none_when_the_image_is_absent(self):
+    def test_image_id_is_none_when_the_image_is_absent(self):
         self.assertIsNone(RecordingRuntime(returncode=1).image_id("missing:tag"))
+        present = RecordingRuntime(stdout="sha256:abc\n")
+        self.assertEqual(present.image_id("present:tag"), "sha256:abc")
         self.assertEqual(
-            RecordingRuntime(stdout="sha256:abc\n").image_id("present:tag"),
-            "sha256:abc",
+            present.calls,
+            [["image", "inspect", "present:tag", "--format", "{{.Id}}"]],
         )
 
-    def test_image_field_names_the_template_field(self):
-        runtime = RecordingRuntime(stdout="amd64")
-
-        runtime.image_field("image:tag", "Architecture", timeout=60)
-
-        self.assertEqual(
-            runtime.calls,
-            [["image", "inspect", "image:tag", "--format", "{{.Architecture}}"]],
-        )
-
-    def test_listing_and_bulk_removal(self):
+    def test_container_and_image_commands(self):
         runtime = RecordingRuntime()
 
         runtime.ps("{{.ID}}")
-        runtime.remove_all(["a", "b"], timeout=60)
+        runtime.kill("a")
+        runtime.stop("a", 1)
+        runtime.remove("a")
+        runtime.remove_all(["a", "b"])
+        runtime.pull("image:tag")
+        runtime.build(["-t", "image:tag", "."], engine=["--storage-opt", "x=y"])
+        runtime.version()
+        runtime.client_version()
 
         self.assertEqual(
             runtime.calls,
-            [["ps", "-a", "--format", "{{.ID}}"], ["rm", "-f", "a", "b"]],
-        )
-
-    def test_exec_logged_streams_into_a_log_file(self):
-        runtime = RecordingRuntime()
-        with tempfile.TemporaryDirectory() as temporary:
-            log = Path(temporary) / "rollout.log"
-            runtime.exec_logged("box", ["tail", "-f", "/dev/null"], log, append=True)
-
-        self.assertEqual(
-            runtime.processes, [["exec", "box", "tail", "-f", "/dev/null"]]
+            [
+                ["ps", "-a", "--format", "{{.ID}}"],
+                ["kill", "a"],
+                ["stop", "--time", "1", "a"],
+                ["rm", "-f", "a"],
+                ["rm", "-f", "a", "b"],
+                ["pull", "image:tag"],
+                ["--storage-opt", "x=y", "build", "-t", "image:tag", "."],
+                ["version", "--format", "{{.Server.Version}}"],
+                ["--version"],
+            ],
         )
 
 

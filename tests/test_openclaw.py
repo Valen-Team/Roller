@@ -75,8 +75,9 @@ class GatewayReadinessTests(unittest.TestCase):
         self.assertTrue(raised.exception.__suppress_context__)
 
     def test_slow_probe_retries_within_startup_budget(self):
-        runtime = ScriptedRuntime(
-            [
+        runtime = DockerRuntime()
+        runtime.run = mock.Mock(
+            side_effect=[
                 subprocess.TimeoutExpired("docker exec", 2),
                 subprocess.CompletedProcess([], 0),
             ]
@@ -90,17 +91,11 @@ class GatewayReadinessTests(unittest.TestCase):
             "roller.harnesses.openclaw.time.monotonic", side_effect=[0, 0, 2]
         ):
             harness._wait_for_gateway("container", process)
-        self.assertEqual(len(runtime.calls), 2)
+        self.assertEqual(runtime.run.call_count, 2)
 
     def test_probe_timeouts_still_respect_startup_deadline(self):
-        # Every probe times out: the loop must stop on the deadline, not on the
-        # probe's own timeout.
-        runtime = ScriptedRuntime(
-            [
-                subprocess.TimeoutExpired("docker exec", 2),
-                subprocess.TimeoutExpired("docker exec", 2),
-            ]
-        )
+        runtime = DockerRuntime()
+        runtime.run = mock.Mock(side_effect=subprocess.TimeoutExpired("docker exec", 2))
         process = mock.Mock()
         process.poll.return_value = None
         harness = OpenClawHarness(
@@ -111,7 +106,7 @@ class GatewayReadinessTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "gateway did not listen.*3s"):
                 harness._wait_for_gateway("container", process)
-        self.assertEqual(len(runtime.calls), 2)
+        self.assertEqual(runtime.run.call_count, 2)
 
 
 class StartupBudgetTests(unittest.TestCase):
@@ -200,30 +195,6 @@ class FakeProcess:
     def kill(self):
         self.running = False
         self.returncode = -9
-
-
-class ScriptedRuntime(DockerRuntime):
-    """Replays a fixed list of outcomes from the process boundary.
-
-    Every verb reaches this ``run``, so a scripted timeout is seen through
-    ``exec`` exactly as a real one would be.
-    """
-
-    def __init__(self, outcomes: list[object]) -> None:
-        super().__init__()
-        self.outcomes = list(outcomes)
-        self.calls: list[list[str]] = []
-
-    def run(self, args, timeout=None):
-        self.calls.append(list(args))
-        outcome = (
-            self.outcomes.pop(0)
-            if self.outcomes
-            else subprocess.CompletedProcess(list(args), 0, "", "")
-        )
-        if isinstance(outcome, BaseException):
-            raise outcome
-        return outcome
 
 
 class FakeDockerRuntime(DockerRuntime):
@@ -1314,9 +1285,7 @@ class OpenClawHelpersTests(unittest.TestCase):
             session.gateway_process = FakeProcess(gateway=True)
             harness.capture = mock.Mock(errors=[])
             with mock.patch.object(
-                harness,
-                "_checked_call",
-                side_effect=TimeoutError("pending announcement"),
+                harness, "_checked", side_effect=TimeoutError("pending announcement")
             ):
                 turn = session.send("first", 30)
             self.assertEqual(turn.content, "done")

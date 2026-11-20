@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -649,43 +649,13 @@ exec node --input-type=module -e "$1"
         workdir: str | None = None,
         timeout: float | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        """``_checked`` for one container command, with the same failure text.
+        """``_checked`` for one command in the container."""
 
-        The verb supplies the argv; the wrapped call keeps the budget clipping
-        and the RuntimeError wording of ``_checked``.
-        """
-
-        def execute(budget: float | None) -> subprocess.CompletedProcess[str]:
-            return self.runtime.exec(
-                container,
-                command,
-                env=env,
-                workdir=workdir,
-                timeout=budget,
-            )
-
-        return self._checked_call(execute, description, timeout)
-
-    def _checked_call(
-        self,
-        execute: Callable[[float | None], subprocess.CompletedProcess[str]],
-        description: str,
-        timeout: float | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        """``_checked`` for a verb: ``execute`` receives the clipped budget."""
-
-        try:
-            result = execute(self._bounded(timeout, description))
-        except subprocess.TimeoutExpired as exc:
-            # A setup step hitting its own limit is not a task timeout. Drop the
-            # exception too: its command text can carry container credentials.
-            self._bounded(None, description)  # unless the budget was the limit
-            raise RuntimeError(
-                f"{description} timed out after {exc.timeout:g}s"
-            ) from None
-        if result.returncode != 0:
-            raise RuntimeError(f"{description} failed: {self._error_text(result)}")
-        return result
+        return self._checked(
+            self.runtime.exec_args(container, command, env=env, workdir=workdir),
+            description,
+            timeout,
+        )
 
     def _prepare_workspace(self, container: str, request: RunRequest) -> None:
         workspace = self.config.workspace_container_path
@@ -761,12 +731,9 @@ exec node --input-type=module -e "$1"
             ) as stream:
                 json.dump(config_to_write, stream, ensure_ascii=False)
                 temporary_path = Path(stream.name)
-            self._checked_call(
-                lambda budget: self.runtime.copy_in(
-                    temporary_path,
-                    container,
-                    "/tmp/roller-models.json",
-                    timeout=budget,
+            self._checked(
+                self.runtime.copy_in_args(
+                    temporary_path, container, "/tmp/roller-models.json"
                 ),
                 "model config copy",
             )
@@ -1753,8 +1720,8 @@ class OpenClawSession(InteractiveSession):
                     # Preserve the filesystem for debugging without leaving
                     # the host-network gateway alive to occupy a future
                     # worker's deterministic port.
-                    stop_result = self.harness.runtime.run(
-                        ["stop", "--time", "1", self.container], timeout=30
+                    stop_result = self.harness.runtime.stop(
+                        self.container, 1, timeout=30
                     )
                     if stop_result.returncode != 0:
                         logger.warning(

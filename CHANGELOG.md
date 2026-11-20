@@ -38,7 +38,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ### Changed
 
-- Roller now calls Docker through the named verbs of `DockerRuntime` (`start`, `exec`, `copy_in`, `copy_out`, `kill`, `remove`, `ps`, `image_id`, …) instead of writing `docker` argument lists at each call site. The argv and recorded provenance are unchanged, and the Docker-specific parts of the code are now in one module, which is the groundwork for supporting another container backend.
+- Roller now calls Docker through the named verbs of `DockerRuntime` (`exec`, `copy_in`, `copy_out`, `kill`, `remove`, `ps`, `image_id`, …) instead of writing `docker` argument lists at each call site. The argv and recorded provenance are unchanged, and the Docker command line is spelled in one module.
 
 ## 0.4.0 - 2026-11-16
 

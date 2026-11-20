@@ -43,10 +43,7 @@ def _image_id(runtime: Any, image: str) -> str:
 
 
 def _image_architecture(runtime: Any, image: str) -> str:
-    # Raw: the failure detail of this inspect is the error a caller reports.
-    inspected = runtime.run(
-        ["image", "inspect", image, "--format", "{{.Architecture}}"], timeout=60
-    )
+    inspected = runtime.image_field(image, "Architecture", timeout=60)
     if inspected.returncode != 0 or not inspected.stdout.strip():
         detail = (inspected.stderr or inspected.stdout or "").strip()[-1000:]
         raise RuntimeError(f"could not inspect Docker image {image}: {detail}")
@@ -54,11 +51,7 @@ def _image_architecture(runtime: Any, image: str) -> str:
 
 
 def _pull_image_id(runtime: Any, image: str) -> str:
-    # Raw: reuses one result for the initial check, the retry loop's success
-    # test and the final error detail.
-    inspected = runtime.run(
-        ["image", "inspect", image, "--format", "{{.Id}}"], timeout=60
-    )
+    inspected = runtime.image_field(image, "Id", timeout=60)
     if inspected.returncode != 0:
         detail = ""
         for attempt in range(1, IMAGE_PULL_ATTEMPTS + 1):
@@ -69,14 +62,12 @@ def _pull_image_id(runtime: Any, image: str) -> str:
                 IMAGE_PULL_ATTEMPTS,
             )
             try:
-                pulled = runtime.run(["pull", image], timeout=3600)
+                pulled = runtime.pull(image, timeout=3600)
             except subprocess.TimeoutExpired as exc:
                 detail = str(exc)
             else:
                 detail = (pulled.stderr or pulled.stdout or "").strip()[-2000:]
-            inspected = runtime.run(
-                ["image", "inspect", image, "--format", "{{.Id}}"], timeout=60
-            )
+            inspected = runtime.image_field(image, "Id", timeout=60)
             if inspected.returncode == 0 and inspected.stdout.strip():
                 break
             if attempt < IMAGE_PULL_ATTEMPTS:
@@ -160,11 +151,7 @@ def ensure_harness_image(
         cached = _DERIVED_IMAGES.get(key)
         if cached is not None:
             return cached
-        # Raw: the image-id argv is what the derived-image cache check expects
-        # to see, and its result is only asked for a return code.
-        existing = runtime.run(
-            ["image", "inspect", tag, "--format", "{{.Id}}"], timeout=60
-        )
+        existing = runtime.image_field(tag, "Id", timeout=60)
         if existing.returncode == 0:
             _DERIVED_IMAGES[key] = tag
             return tag
@@ -191,7 +178,7 @@ def ensure_harness_image(
         with tempfile.TemporaryDirectory(prefix="roller-swebench-image-") as temporary:
             context = Path(temporary)
             (context / "Dockerfile").write_text(dockerfile, encoding="utf-8")
-            built = runtime.run(["build", "-t", tag, str(context)], timeout=3600)
+            built = runtime.build(["-t", tag, str(context)], timeout=3600)
         if built.returncode != 0:
             detail = (built.stderr or built.stdout or "").strip()[-4000:]
             raise RuntimeError(
