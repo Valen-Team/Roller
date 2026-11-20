@@ -96,7 +96,7 @@ roller export runs/my-sessions --format hf --output my-sessions-hf
 roller export runs/my-sessions                      # ATIF，Harbor 的轨迹格式
 ```
 
-上传前查看这份报告，用 `--redact-rules FILE` 补充规则，再用密钥扫描工具扫一遍输出目录。[Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories) 就是这样发布的数据集，[Cookbook](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/) 记录了它背后的完整运行。
+上传前查看这份报告，用 `--redact-rules FILE` 补充规则，再用密钥扫描工具扫一遍输出目录。[Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories) 收录 OpenClaw、Codex、Claude Code、DeepSeek Harness 和 OpenCode 的 1,680 次尝试，[Cookbook](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/) 提供可运行的采集示例。
 
 [Hugging Face 导出 →](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#hugging-face-export) · [ATIF 导出 →](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#atif-export)
 

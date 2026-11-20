@@ -562,6 +562,53 @@ class HuggingFaceExportTests(unittest.TestCase):
                 ],
             )
 
+    def test_opencode_exports_native_fallback_with_redacted_proxy_assignments(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = _run(root)
+            output = root / "dataset"
+            sample = _sample(
+                run, MODEL_B, 5, "chat__run_01", harness="opencode", status="error"
+            )
+            schema = "roller.opencode-events/v1"
+            proxy = "grader.example,10.31.0.0/16"
+            loopback = "localhost,127.0.0.1,::1"
+            events = [
+                {"type": "metadata", "schema": schema},
+                {"type": "diagnostic", "text": f"NO_PROXY={loopback},{proxy}"},
+                {"type": "diagnostic", "text": f"no_proxy={loopback}"},
+                {
+                    "type": "text",
+                    "text": f"Task fixture: NO_PROXY={loopback},example.org",
+                },
+            ]
+            (sample / "trace.jsonl").write_text(
+                "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+            )
+
+            export_run(run, output, environ={"NO_PROXY": proxy}, machine="", runs=False)
+
+            row = next(
+                row
+                for row in _rows(output, PART_B)
+                if row["status"] == "error" and row["trace"]
+            )
+            header, *trace = _lines(output / row["trace"])
+            self.assertEqual(header["harness"], "opencode")
+            self.assertEqual(header["source_schema"], schema)
+            self.assertIsNone(row["messages"])
+            self.assertEqual(
+                trace,
+                [
+                    events[0],
+                    {"type": "diagnostic", "text": "NO_PROXY=localhost,127.0.0.1"},
+                    {"type": "diagnostic", "text": "no_proxy=localhost,127.0.0.1"},
+                    events[-1],
+                ],
+            )
+
     def test_codex_trace_survives_hub_line_splitting(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = _run(Path(tmp))

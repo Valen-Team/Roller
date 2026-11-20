@@ -488,6 +488,39 @@ class OpenCodeTraceTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     opencode_events_to_actf(events)
 
+    def test_context_overflow_retains_the_observed_conversation(self):
+        events = sample_events()
+        overflow = events[-1]["data"]["messages"][-1]
+        overflow["info"]["error"] = {"name": "ContextOverflowError"}
+        overflow["info"].pop("finish")
+        overflow["parts"] = []
+
+        actf = opencode_events_to_actf(events, keep_thinking=True)
+
+        (step,) = actf["steps"]
+        self.assertEqual(step["user_content"], "Read token")
+        (result,) = step["observation"]
+        self.assertEqual(result["content"], [{"type": "text", "text": "TOKEN"}])
+        with self.assertRaisesRegex(SFTConversionError, "context overflow"):
+            actf_to_sft(actf)
+
+    def test_running_tool_keeps_its_arguments_without_a_result(self):
+        events = sample_events()
+        messages = events[-1]["data"]["messages"]
+        messages.pop()
+        state = messages[-1]["parts"][-1]["state"]
+        state["status"] = "running"
+        state.pop("output")
+
+        actf = opencode_events_to_actf(events, keep_thinking=True)
+
+        (step,) = actf["steps"]
+        (call,) = step["assistant_content"]["tool_calls"]
+        self.assertEqual(call["arguments"], {"command": "cat token.txt"})
+        self.assertEqual(step["observation"], [])
+        with self.assertRaisesRegex(SFTConversionError, "running tool call"):
+            actf_to_sft(actf)
+
     def test_tool_image_attachments_are_bounded_and_exported_to_sft(self):
         events = sample_events()
         data_url = "data:image/png;base64," + "A" * 5000
@@ -991,6 +1024,11 @@ class OpenCodeHarnessTests(unittest.TestCase):
         )
         self.assertIn("NO_PROXY=localhost,127.0.0.1,::1", docker_run)
         self.assertIn("no_proxy=localhost,127.0.0.1,::1", docker_run)
+
+    def test_output_budget_reaches_the_native_cli(self):
+        session = self.session(output_tokens=32768)
+        environment = session.harness_environment("http://localhost:8000/v1")
+        self.assertEqual(environment["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"], "32768")
 
     def test_session_outputs_cleanup_and_redaction(self):
         runtime = FakeRuntime()

@@ -2,16 +2,22 @@
 
 Notable changes to Roller. Versions follow the tags of this repository and the `roller-agent` releases on PyPI.
 
-## Unreleased
+## 0.6.0
 
 ### Added
 
 - Token-in, token-out collection from a Chat Completions endpoint that returns token ids, such as vLLM. With `--capture-calls`, `--token-ids` saves the prompt and completion token ids of every model call with the logprob of each sampled token in `token_ids.jsonl`. A call that continues an earlier one holds only the prompt tokens that follow it, so the file grows with the length of the conversation. The run records whether the endpoint reports logprobs before or after temperature and top-p. `roller export --format tokens` joins the calls of a conversation into one sequence in which every token appears once, with the positions the model generated marked.
-- `--token-ids` works with every Harness. Hermes, OpenCode, DeepSeek Harness, Pi Agent and OpenClaw call Chat Completions themselves. Claude Code and Codex do through `--claude-chat-completions` and `--codex-chat-completions`, which translate their Messages and Responses requests to Chat Completions at the request recording proxy, with the same prompt vLLM renders for its own Messages and Responses endpoints.
+- `--token-ids` works with every Harness in Docker. Hermes, OpenCode, DeepSeek Harness, Pi Agent and OpenClaw call Chat Completions themselves. Claude Code and Codex do through `--claude-chat-completions` and `--codex-chat-completions`, which translate their Messages and Responses requests to Chat Completions at the request recording proxy, with the same prompt vLLM renders for its own Messages and Responses endpoints.
+- The WildClawBench cookbook includes an OpenCode collection script with full request and call capture.
 
 ### Changed
 
 - Roller now calls Docker through the named verbs of `DockerRuntime` (`exec`, `copy_in`, `copy_out`, `kill`, `remove`, `ps`, `image_id`, …) instead of writing `docker` argument lists at each call site. The argv and recorded provenance are unchanged, and the Docker command line is spelled in one module.
+
+### Fixed
+
+- OpenCode uses the configured output budget for model requests. ACTF keeps observed turns and tool calls from attempts that hit a context overflow or end with a running tool. Those attempts are unavailable for SFT.
+- Hugging Face export preserves the OpenCode native journal when ACTF is unavailable and redacts OpenCode's effective proxy bypass assignment.
 
 ## 0.5.0
 
