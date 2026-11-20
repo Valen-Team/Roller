@@ -13,14 +13,16 @@ import logging
 import os
 import shlex
 import subprocess
+import tempfile
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
+from roller.artifacts import collect_output_directory
 from roller.capture_runtime import CaptureRuntime
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
 from roller.harnesses.container import (
@@ -43,6 +45,13 @@ from roller.harnesses.docker import (
 )
 from roller.models import HarnessResult, RunRequest
 from roller.redaction import REDACTED, redact_file_literals
+from roller.sandbox import (
+    Sandbox,
+    SandboxProcess,
+    SandboxRun,
+    route_judge_environment,
+    route_sandbox_http,
+)
 from roller.storage import atomic_write_json
 from roller.thinking import resolve_thinking
 from roller.usage import ZERO_USAGE
@@ -86,15 +95,16 @@ def validate_bridge_config(config: Any, label: str) -> None:
             )
     if config.wire_trace_mode not in {"off", "actf", "full"}:
         raise ValueError(f"{label} wire trace mode must be off|actf|full")
+    remote = getattr(config, "remote_sandbox", False)
     if config.wire_trace_mode == "full" and (
-        not config.api_base or config.network != "host"
+        not config.api_base or (not remote and config.network != "host")
     ):
         raise ValueError(
             f"{label} --wire-trace full requires --api-base and --network host"
         )
     if config.capture_calls and (
         not config.api_base
-        or config.network != "host"
+        or (not remote and config.network != "host")
         or config.wire_trace_mode == "off"
     ):
         raise ValueError(
@@ -168,6 +178,13 @@ class BridgeSession(InteractiveSession):
         self.image_digest: str | None = None
         self.version: str | None = None
         self.proxy: WireTraceProxy | None = None
+        self.sandbox_run: SandboxRun | None = getattr(
+            harness.config, "sandbox_run", None
+        )
+        self.sandbox: Sandbox | None = None
+        self.remote_proxy: SandboxProcess | None = None
+        self.remote_native: SandboxProcess | None = None
+        self.remote_wire_dir = f"{self.state_dir}/wire"
         config = harness.config
         self.capture = (
             CaptureRuntime(self.output_dir, attempt, harness.name, config.capture_debug)
@@ -276,69 +293,99 @@ class BridgeSession(InteractiveSession):
             raise RuntimeError(f"{description} failed: {detail}")
         return result
 
-    def checked_exec(
+    def command(
         self,
-        command: Sequence[str],
+        argv: Sequence[str],
         description: str,
         *,
-        env: Mapping[str, str] | None = None,
-        workdir: str | None = None,
+        cwd: str | None = None,
         timeout: float = 60,
     ) -> subprocess.CompletedProcess[str]:
-        """``checked`` for one container command; the runtime builds the argv."""
-
-        limit = min(timeout, self.remaining())
-
-        def execute(budget: float | None) -> subprocess.CompletedProcess[str]:
-            return self.harness.runtime.exec(
-                self.container,
-                command,
-                env=env,
-                workdir=workdir,
-                timeout=budget,
+        if self.sandbox is None:
+            directory = ["-w", cwd] if cwd else []
+            return self.checked(
+                ["exec", *directory, self.container, *argv],
+                description,
+                timeout=timeout,
             )
-
-        try:
-            result = execute(limit)
-        except subprocess.TimeoutExpired:
-            if limit < timeout:
-                raise TimeoutError(f"{self.label} task timed out") from None
-            raise RuntimeError(f"{description} timed out after {limit:g}s") from None
+        result = self.sandbox.run(
+            argv, cwd=cwd, env=self.environment, timeout=min(timeout, self.remaining())
+        )
         if result.returncode:
-            detail = self.redact(
-                (result.stderr or result.stdout or "unknown error").strip()
-            )[-2000:]
+            detail = self.redact((result.stderr or result.stdout).strip())[-2000:]
             raise RuntimeError(f"{description} failed: {detail}")
         return result
 
-    def checked_copy_in(
-        self,
-        source: Path | str,
-        destination: str,
-        description: str,
-        *,
-        timeout: float = 60,
-    ) -> subprocess.CompletedProcess[str]:
-        """``docker cp`` into the container, with ``checked``'s failure text."""
+    def upload(self, source: Path, target: str, description: str) -> None:
+        if self.sandbox is None:
+            self.checked(["cp", str(source), f"{self.container}:{target}"], description)
+        else:
+            self.sandbox.upload(source, target, timeout=min(60, self.remaining()))
 
-        limit = min(timeout, self.remaining())
-        try:
-            result = self.harness.runtime.copy_in(
-                source,
-                self.container,
-                destination,
-                timeout=limit,
+    def _start_sandbox(self, workspace: str, api_base: str) -> str:
+        assert self.sandbox_run is not None
+        box = self.sandbox_run.create(
+            self.container, self.request.timeout_seconds + 900, self.remaining()
+        )
+        self.sandbox = box
+        self.container_started = True
+        if box.version != self.sandbox_run.target.version:
+            raise RuntimeError("sandbox environment version changed since preflight")
+        timeout = self.request.timeout_seconds
+        model_key = self.environment[self.api_key_name]
+        route_judge_environment(box, self.environment, timeout)
+        api_base, self.environment[self.api_key_name] = route_sandbox_http(
+            box, api_base, model_key, timeout
+        )
+        self.command(
+            ["mkdir", "-p", workspace, self.state_dir, self.home, "/roller/task"],
+            "sandbox workspace setup",
+        )
+        task, bundle = self.request.task, self.request.bundle
+        if bundle:
+            if bundle.legacy_workspace or task.input_mode == "copy":
+                box.upload(
+                    bundle.inputs_root,
+                    workspace,
+                    contents=True,
+                    timeout=self.remaining(),
+                )
+                self.command(
+                    ["chmod", "-R", "u+w", workspace], "sandbox workspace permissions"
+                )
+            box.upload(
+                bundle.context_root, workspace, contents=True, timeout=self.remaining()
             )
-        except subprocess.TimeoutExpired:
-            if limit < timeout:
-                raise TimeoutError(f"{self.label} task timed out") from None
-            raise RuntimeError(f"{description} timed out after {limit:g}s") from None
-        if result.returncode:
-            detail = self.redact(
-                (result.stderr or result.stdout or "unknown error").strip()
-            )[-2000:]
-            raise RuntimeError(f"{description} failed: {detail}")
-        return result
+        elif task.workspace:
+            box.upload(
+                task.workspace, workspace, contents=True, timeout=self.remaining()
+            )
+        if self.harness.config.wire_trace_mode != "full" and self.capture is None:
+            return api_base
+        directory = self.remote_wire_dir
+        self.command(["mkdir", "-p", directory], "wire recorder setup")
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = Path(temporary) / "config.json"
+            atomic_write_json(
+                settings, {"api_base": api_base, "calls": self.capture is not None}
+            )
+            self.upload(
+                settings, f"{directory}/config.json", "wire recorder configuration"
+            )
+        self.remote_proxy = box.spawn(
+            [self.python, "-m", "roller.sandbox_wire", directory],
+            env=self.environment,
+            log_path=self.output_dir / "rollout" / "wire-recorder.log",
+        )
+        deadline = time.monotonic() + min(30, self.remaining())
+        while time.monotonic() < deadline:
+            ready = box.run(
+                ["cat", f"{directory}/ready.json"], timeout=min(5, self.remaining())
+            )
+            if ready.returncode == 0:
+                return json.loads(ready.stdout)["url"]
+            time.sleep(0.1)
+        raise RuntimeError("sandbox wire recorder did not become ready")
 
     def start(self) -> None:
         if self.container_started or self._result is not None:
@@ -355,7 +402,9 @@ class BridgeSession(InteractiveSession):
         environment = self.inherited_environment()
         environment[self.api_key_name] = host_api_key(self.label, config.api_key_env)
         api_base = config.api_base or self.default_api_base
-        if config.wire_trace_mode == "full" or config.capture_calls:
+        if self.sandbox_run is None and (
+            config.wire_trace_mode == "full" or config.capture_calls
+        ):
             self.proxy = WireTraceProxy(
                 api_base,
                 self.output_dir / "wire_trace.jsonl",
@@ -367,69 +416,66 @@ class BridgeSession(InteractiveSession):
             )
             self.proxy.start()
             api_base = self.proxy.proxy_base_url
-        environment.update(self.harness_environment(api_base))
         self.environment = environment
-        self.image_digest = self.checked(
-            ["image", "inspect", config.docker_image, "--format", "{{.Id}}"],
-            f"{self.label} image inspection",
-        ).stdout.strip()
-        warn_if_image_changed(
-            logger,
-            config.docker_image,
-            config.preflight_image_digest,
-            self.image_digest,
-        )
-        args = docker_run_args(
-            self.harness.name, self.container, config, environment, self.request
-        )
-        # Run the image that was inspected, so a tag moved in between cannot
-        # make the recorded id differ from the image in use.
-        args += [
-            "--entrypoint",
-            "/bin/bash",
-            self.image_digest,
-            "-c",
-            "tail -f /dev/null",
-        ]
-        # Mark before run: a timed-out Docker client may already have created it.
-        self.container_started = True
-        self.checked(args, f"{self.label} container startup")
+        if self.sandbox_run is not None:
+            api_base = self._start_sandbox(config.workspace_container_path, api_base)
+            environment.update(self.harness_environment(api_base))
+        else:
+            environment.update(self.harness_environment(api_base))
+            self.image_digest = self.checked(
+                ["image", "inspect", config.docker_image, "--format", "{{.Id}}"],
+                f"{self.label} image inspection",
+            ).stdout.strip()
+            warn_if_image_changed(
+                logger,
+                config.docker_image,
+                config.preflight_image_digest,
+                self.image_digest,
+            )
+            args = docker_run_args(
+                self.harness.name, self.container, config, environment, self.request
+            )
+            # Use the inspected image ID so the recorded version is the version in use.
+            args += [
+                "--entrypoint",
+                "/bin/bash",
+                self.image_digest,
+                "-c",
+                "tail -f /dev/null",
+            ]
+            # A timed-out Docker client may already have created the container.
+            self.container_started = True
+            self.checked(args, f"{self.label} container startup")
         workspace = shlex.quote(config.workspace_container_path)
         output = shlex.quote(f"{config.workspace_container_path}/{task.output_dir}")
         script = (
             f"mkdir -p {workspace} {self.state_dir} {self.home} /roller/task"
             + self.setup_script()
         )
-        if bundle and (bundle.legacy_workspace or task.input_mode == "copy"):
-            script += f" && cp -a {INPUTS_CONTAINER_PATH}/. {workspace}/ && chmod -R u+w {workspace}"
-        elif task.workspace and not bundle:
-            script += f" && cp -a {WORKSPACE_INPUT_CONTAINER_PATH}/. {workspace}/ && chmod -R u+w {workspace}"
-        if bundle:
-            script += f" && cp -a {CONTEXT_CONTAINER_PATH}/. {workspace}/"
+        if self.sandbox is None:
+            if bundle and (bundle.legacy_workspace or task.input_mode == "copy"):
+                script += f" && cp -a {INPUTS_CONTAINER_PATH}/. {workspace}/ && chmod -R u+w {workspace}"
+            elif task.workspace and not bundle:
+                script += f" && cp -a {WORKSPACE_INPUT_CONTAINER_PATH}/. {workspace}/ && chmod -R u+w {workspace}"
+            if bundle:
+                script += f" && cp -a {CONTEXT_CONTAINER_PATH}/. {workspace}/"
         script += f" && rm -rf {output} && mkdir -p {output} && ln -s {output} {OUTPUTS_CONTAINER_PATH}"
-        self.checked_exec(
-            ["/bin/bash", "-c", script],
-            f"{self.label} workspace setup",
-        )
-        self.checked_copy_in(
-            self.runner_source,
-            self.runner,
-            f"{self.label} runner copy",
-        )
+        self.command(["/bin/bash", "-c", script], f"{self.label} workspace setup")
+        self.upload(self.runner_source, self.runner, f"{self.label} runner copy")
         for name, destination, description in self.assets:
-            self.checked_copy_in(
+            self.upload(
                 self.runner_source.with_name(name),
                 destination,
                 f"{self.label} {description}",
             )
         for command in task.setup_commands:
-            self.checked_exec(
+            self.command(
                 ["/bin/bash", "-c", command],
                 "task setup",
-                workdir=config.workspace_container_path,
+                cwd=config.workspace_container_path,
                 timeout=self.remaining(),
             )
-        self.version = self.checked_exec(
+        self.version = self.command(
             [self.python, self.runner, "--check"],
             f"{self.label} {self.version_check}",
         ).stdout.strip()
@@ -462,41 +508,43 @@ class BridgeSession(InteractiveSession):
         )
         process = None
         try:
-            self.harness.runtime.copy_in(
-                config_path,
-                self.container,
-                f"{self.state_dir}/turn.json",
-                timeout=60,
-            )
-            process = self.harness.runtime.exec_logged(
-                self.container,
-                [
-                    self.python,
-                    self.runner,
-                    "--config",
-                    self.state_dir + "/turn.json",
-                ],
-                log_path,
-                workdir=config.workspace_container_path,
-                append=True,
-            )
+            remote_config = self.state_dir + "/turn.json"
+            self.upload(config_path, remote_config, f"{self.label} turn configuration")
+            argv = [self.python, self.runner, "--config", remote_config]
+            if self.sandbox is None:
+                args = [
+                    "exec",
+                    "-w",
+                    config.workspace_container_path,
+                    self.container,
+                    *argv,
+                ]
+                process = self.harness.runtime.popen(args, log_path, append=True)
+            else:
+                self._start_remote_native(remote_config)
+                process = self.sandbox.spawn(
+                    argv,
+                    cwd=config.workspace_container_path,
+                    env=self.environment,
+                    log_path=log_path,
+                )
             try:
                 return_code = process.wait(
                     timeout=max(0.001, timeout - (time.monotonic() - started))
                 )
             except subprocess.TimeoutExpired:
                 process.kill()
-                process.wait(timeout=10)
-                # Stop the container's exec process before collecting partial artifacts.
-                self.harness.runtime.kill(self.container, timeout=30)
+                if self.sandbox is None:
+                    process.wait(timeout=10)
+                self._stop_turn()
                 raise TimeoutError(f"{self.label} turn timed out") from None
-            response = self.checked_exec(
+            response = self.command(
                 ["cat", self.state_dir + "/result.json"],
                 f"{self.label} turn result",
             )
             result = json.loads(response.stdout)
             if result.get("timeout") is True:
-                self.harness.runtime.kill(self.container, timeout=30)
+                self._stop_turn()
                 raise TimeoutError(f"{self.label} turn timed out")
             if (
                 return_code
@@ -517,9 +565,41 @@ class BridgeSession(InteractiveSession):
             )
         finally:
             config_path.unlink(missing_ok=True)
-            self.harness.runtime.close_log(process)
+            if self.sandbox is None:
+                self.harness.runtime.close_log(process)
             if log_path.exists():
                 self.redact_file(log_path, errors="replace")
+
+    def _start_remote_native(self, config_path: str) -> None:
+        if self.remote_native is not None:
+            return
+        assert self.sandbox is not None
+        self.remote_native = self.sandbox.spawn(
+            [self.python, self.runner, "--serve", config_path],
+            env=self.environment,
+            cwd=self.harness.config.workspace_container_path,
+            log_path=self.output_dir / "rollout" / "native-runtime.log",
+        )
+        self.command(
+            [
+                "/bin/sh",
+                "-c",
+                f"until test -S {self.state_dir}/runner.sock; do sleep 0.1; done",
+            ],
+            "native session startup",
+            timeout=30,
+        )
+
+    def _stop_turn(self) -> None:
+        if self.sandbox is None:
+            self.harness.runtime.run(["kill", self.container], timeout=30)
+        else:
+            self._stop_remote_native()
+
+    def _stop_remote_native(self) -> None:
+        if self.remote_native is not None:
+            self.remote_native.kill()
+            self.remote_native = None
 
     def _collect_trace(
         self, problems: list[str]
@@ -528,11 +608,21 @@ class BridgeSession(InteractiveSession):
         usage: dict[str, int | float] = dict(ZERO_USAGE)
         trace = self.output_dir / "rollout" / "trace.jsonl"
         trace.parent.mkdir(parents=True, exist_ok=True)
-        copied = runtime.run(
-            ["cp", f"{self.container}:{self.transcript_container_path}", str(trace)],
-            timeout=30,
-        )
-        if copied.returncode or not trace.is_file() or not trace.stat().st_size:
+        if self.sandbox is None:
+            copied = runtime.run(
+                [
+                    "cp",
+                    f"{self.container}:{self.transcript_container_path}",
+                    str(trace),
+                ],
+                timeout=30,
+            )
+            if copied.returncode:
+                problems.append(f"no {self.label} journal was collected")
+                return None, None, usage
+        else:
+            self.sandbox.download(self.transcript_container_path, trace, timeout=60)
+        if not trace.is_file() or not trace.stat().st_size:
             problems.append(f"no {self.label} journal was collected")
             return None, None, usage
         try:
@@ -559,6 +649,46 @@ class BridgeSession(InteractiveSession):
                 }
             return trace, None, usage
 
+    def _collect_remote_wire(self) -> None:
+        if self.remote_proxy is None:
+            return
+        assert self.sandbox is not None
+        box, directory = self.sandbox, self.remote_wire_dir
+        result = box.run(["touch", f"{directory}/stop"], timeout=15)
+        if result.returncode != 0:
+            self.remote_proxy.kill()
+            raise RuntimeError("could not stop the sandbox wire recorder")
+        if self.remote_proxy.wait(timeout=30):
+            raise RuntimeError("sandbox wire recorder exited with an error")
+        if self.capture is not None:
+            box.download(
+                f"{directory}/capture",
+                self.capture.recorder.directory,
+                contents=True,
+                timeout=120,
+            )
+            finished = box.run(["cat", f"{directory}/finished.json"], timeout=15)
+            finished.check_returncode()
+            self.capture.recorder.error = json.loads(finished.stdout)["error"]
+        source = f"{directory}/wire_trace.jsonl"
+        if box.run(["test", "-f", source], timeout=15).returncode == 0:
+            wire = self.output_dir / "wire_trace.jsonl"
+            box.download(source, wire, timeout=120)
+            redact_jsonl_file(wire)
+
+    def _collect_remote_outputs(self):
+        assert self.sandbox is not None
+        workspace = self.harness.config.workspace_container_path
+        with tempfile.TemporaryDirectory(dir=self.output_dir) as temporary:
+            stage = Path(temporary)
+            self.sandbox.download(
+                f"{workspace}/{self.request.task.output_dir}",
+                stage,
+                contents=True,
+                timeout=120,
+            )
+            return collect_output_directory(stage, self.output_dir), None
+
     def finish(self, status: str, error: str | None = None) -> HarnessResult:
         if self._result is not None:
             return self._result
@@ -570,6 +700,11 @@ class BridgeSession(InteractiveSession):
         try:
             if self.container_started:
                 self.collect_diagnostics()
+                if self.sandbox is not None:
+                    try:
+                        self._stop_remote_native()
+                    except Exception as exc:
+                        problems.append(self.redact(str(exc)))
                 try:
                     trace, trajectory, usage = self._collect_trace(problems)
                 except Exception as exc:
@@ -578,14 +713,17 @@ class BridgeSession(InteractiveSession):
                         + self.redact(str(exc))
                     )
                 if self.collect_outputs:
-                    collected, copy_error = collect_outputs(
-                        runtime,
-                        self.container,
-                        self.request,
-                        self.output_dir,
-                        config.workspace_container_path,
-                        timeout=30,
-                    )
+                    if self.sandbox is None:
+                        collected, copy_error = collect_outputs(
+                            runtime,
+                            self.container,
+                            self.request,
+                            self.output_dir,
+                            config.workspace_container_path,
+                            timeout=30,
+                        )
+                    else:
+                        collected, copy_error = self._collect_remote_outputs()
                     if copy_error is not None:
                         problems.append("output collection failed")
                     output_metadata = output_collection_metadata(
@@ -596,9 +734,16 @@ class BridgeSession(InteractiveSession):
             else:
                 problems.append(f"{self.label} container did not start")
         except Exception as exc:
-            trajectory = None
             problems.append(self.redact(str(exc)))
         finally:
+            if self.sandbox is not None:
+                try:
+                    self._collect_remote_wire()
+                except Exception as exc:
+                    message = self.redact(str(exc))
+                    problems.append(message)
+                    if self.capture is not None:
+                        self.capture.errors.append(message)
             if self.proxy is not None:
                 try:
                     self.proxy.stop()
@@ -628,7 +773,14 @@ class BridgeSession(InteractiveSession):
                 and config.keep_container_on_error
                 and status != "ok"
             )
-            if self.container_started and not retained:
+            if self.sandbox is not None and self.sandbox_run is not None:
+                try:
+                    self.sandbox_run.close(self.container, self.sandbox)
+                except Exception:
+                    logger.warning(
+                        "sandbox removal failed: %s", self.container, exc_info=True
+                    )
+            elif self.container_started and not retained:
                 try:
                     removed = remove_container(runtime, self.container)
                     if removed.returncode:
@@ -649,13 +801,14 @@ class BridgeSession(InteractiveSession):
         provenance = build_provenance(
             self.request,
             harness=self.harness.name,
-            docker_image=config.docker_image,
+            docker_image=config.docker_image if self.sandbox_run is None else None,
             docker_image_digest=self.image_digest,
             api_base_urls=[config.api_base or self.default_api_base],
             environment=self.environment,
             attempt=self.attempt,
             started_at=self.started_at,
             finished_at=datetime.now(timezone.utc).isoformat(),
+            **(self.sandbox_run.target.provenance() if self.sandbox_run else {}),
             **self.version_fields(),
         )
         self._result = HarnessResult(

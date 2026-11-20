@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from roller import hf_dataset, sft_dataset
+from roller import importer as importer_module
 from roller.atif import export_run
 from roller.benches import (
     binding_from_task_row,
@@ -126,6 +127,7 @@ from roller.run_lock import (
     complete_legacy_adoption,
     ensure_run_lock,
 )
+from roller.sandbox import SandboxRun, SandboxTarget, load_sandbox_provider
 from roller.storage import atomic_write_json, safe_component
 from roller.tasks import TaskFormatError, build_requests, load_tasks
 from roller.thinking import THINKING_LEVELS, normalize_thinking, resolve_thinking
@@ -245,6 +247,53 @@ def _build_parser() -> argparse.ArgumentParser:
         "--preserve-task-keys",
         action="store_true",
         help="with --format hf, preserve deliberate benchmark key fixtures while still redacting known collection credentials and paths",
+    )
+
+    importer = subparsers.add_parser(
+        "import",
+        help="import the local sessions of Claude Code and Codex as a Roller run",
+    )
+    importer.add_argument(
+        "paths",
+        nargs="*",
+        metavar="PATH",
+        help=(
+            "session files or directories to import (default: the session "
+            "directories of Claude Code and Codex)"
+        ),
+    )
+    importer.add_argument(
+        "--harness",
+        choices=importer_module.HARNESSES,
+        help="import only the sessions of one harness (default: both)",
+    )
+    importer.add_argument(
+        "--output", default="runs", help="output root directory (default: runs)"
+    )
+    importer.add_argument(
+        "--run-name", default="imported", help="run directory name (default: imported)"
+    )
+    importer.add_argument(
+        "--since",
+        metavar="YYYY-MM-DD",
+        help="import only the sessions that started on or after this date",
+    )
+    importer.add_argument(
+        "--project",
+        action="append",
+        metavar="GLOB",
+        help="import only the sessions of matching projects; repeatable",
+    )
+    importer.add_argument(
+        "--parallel",
+        type=int,
+        default=4,
+        help="sessions converted at once (default: 4)",
+    )
+    importer.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="list the sessions by project without writing anything",
     )
 
     cleaner = subparsers.add_parser(
@@ -562,6 +611,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Docker user for the disposable task container (default: root); use 'image' for the image default",
     )
     runtime.add_argument("--docker-binary", default="docker")
+    runtime.add_argument(
+        "--sandbox-provider",
+        default="docker",
+        help="task execution provider (default: docker; remote providers are installed separately)",
+    )
+    runtime.add_argument(
+        "--sandbox-template",
+        help="prebuilt environment used by the remote sandbox provider",
+    )
     runtime.add_argument(
         "--rebuild-task-images",
         action="store_true",
@@ -952,6 +1010,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "recording proxy"
         ),
     )
+    claude.add_argument(
+        "--claude-pdf-as-images",
+        action="store_true",
+        help="render inline PDF documents as page text and images for Messages backends without document support",
+    )
     return parser
 
 
@@ -1026,7 +1089,9 @@ def _dry_run_payload(
         "harness": next(iter(agent_harnesses))
         if len(agent_harnesses) == 1
         else "mixed",
-        "docker_image": args.docker_image,
+        "docker_image": args.docker_image
+        if getattr(args, "sandbox_provider", "docker") == "docker"
+        else None,
         "tasks": len({request.task.id for request in requests}),
         "models": list(dict.fromkeys(request.model for request in requests)),
         "model_labels": list(
@@ -1094,6 +1159,11 @@ def _dry_run_payload(
             for request in requests
         ],
     }
+    if getattr(args, "sandbox_provider", "docker") != "docker":
+        payload.update(
+            sandbox_provider=args.sandbox_provider,
+            sandbox_template=args.sandbox_template,
+        )
     bench_run_config = getattr(args, "_bench_run_config", None)
     if isinstance(bench_run_config, dict):
         payload["bench_run_config"] = bench_run_config
@@ -1431,6 +1501,38 @@ def _collect(args: argparse.Namespace) -> int:
         if request.task.user_simulator is not None
     }
     selected_harnesses = agent_harnesses | simulator_harnesses
+    remote = args.sandbox_provider != "docker"
+    if remote:
+        if not args.sandbox_template:
+            raise ValueError("a remote sandbox requires --sandbox-template")
+        if args.bench != "wildclawbench" or agent_harnesses != {"deepseek"}:
+            raise ValueError(
+                "remote sandboxes currently support WildClawBench with DeepSeek"
+            )
+        if simulator_harnesses:
+            raise ValueError(
+                "remote sandboxes do not support a separate user simulator"
+            )
+        if (
+            args.docker_image
+            or args.deepseek_image
+            or args.rebuild_task_images
+            or any(task.docker_image for task in tasks)
+        ):
+            raise ValueError(
+                "use a prebuilt sandbox template instead of a Docker or task image"
+            )
+        if args.keep_container_on_error:
+            raise ValueError("--keep-container-on-error applies to Docker only")
+        if any(
+            task.inputs and task.input_mode == "mount" and not task.legacy_workspace
+            for task in tasks
+        ):
+            raise ValueError(
+                "remote sandbox tasks with explicit files must use copy input mode"
+            )
+    elif args.sandbox_template:
+        raise ValueError("--sandbox-template requires a remote --sandbox-provider")
     if args.claude_capture_calls and "claude-code" not in selected_harnesses:
         raise ValueError("--claude-capture-calls requires a Claude Code participant")
     cli_harness = args.harness
@@ -1706,6 +1808,7 @@ def _collect(args: argparse.Namespace) -> int:
             capture_debug=args.capture_debug,
             permission_mode=args.claude_permission_mode,
             unique_tool_ids=args.claude_unique_tool_ids,
+            pdf_as_images=args.claude_pdf_as_images,
             wire_trace_mode=args.wire_trace,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
@@ -1765,6 +1868,7 @@ def _collect(args: argparse.Namespace) -> int:
     if "deepseek" in selected_harnesses:
         deepseek_config = DeepSeekConfig(
             **bridge_options("deepseek", deepseek_api_base, deepseek_api_key_env),
+            remote_sandbox=remote,
             max_steps=args.deepseek_max_steps,
             context_length=args.deepseek_context_length,
             output_tokens=args.deepseek_output_tokens,
@@ -1850,20 +1954,33 @@ def _collect(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
-    docker_image_digests = {
-        harness: _docker_preflight(args.docker_binary, image)
-        for harness, image in images.items()
-    }
-    task_image_digests = prepare_task_images(
-        args.docker_binary,
-        requests,
-        images,
-        cli_harness=cli_harness,
-        rebuild=args.rebuild_task_images,
-    )
     run_label = next(iter(agent_harnesses)) if len(agent_harnesses) == 1 else "mixed"
     output_root = Path(args.output).expanduser().resolve()
     run_dir = output_root / _run_name(run_label, args.run_name)
+    sandbox_run = None
+    if remote:
+        provider = load_sandbox_provider(args.sandbox_provider)
+        version = provider.resolve(args.sandbox_template)
+        if not version:
+            raise ValueError("sandbox provider did not resolve an environment version")
+        target = SandboxTarget(args.sandbox_provider, args.sandbox_template, version)
+        sandbox_run = SandboxRun(run_dir, target, provider)
+        assert deepseek_config is not None
+        deepseek_config = dataclasses.replace(deepseek_config, sandbox_run=sandbox_run)
+        docker_image_digests = {}
+        task_image_digests = {}
+    else:
+        docker_image_digests = {
+            harness: _docker_preflight(args.docker_binary, image)
+            for harness, image in images.items()
+        }
+        task_image_digests = prepare_task_images(
+            args.docker_binary,
+            requests,
+            images,
+            cli_harness=cli_harness,
+            rebuild=args.rebuild_task_images,
+        )
     existing_run = run_dir.exists() and any(run_dir.iterdir())
     if run_dir.exists() and not args.resume:
         raise FileExistsError(
@@ -1997,6 +2114,7 @@ def _collect(args: argparse.Namespace) -> int:
                 else {}
             ),
             **({"unique_tool_ids": True} if claude_code_config.unique_tool_ids else {}),
+            **({"pdf_as_images": True} if claude_code_config.pdf_as_images else {}),
         }
 
     if hermes_config is not None:
@@ -2060,9 +2178,15 @@ def _collect(args: argparse.Namespace) -> int:
 
     if deepseek_config is not None:
         harness_configurations["deepseek"] = {
-            "docker_image": images["deepseek"],
-            "container_user": args.container_user,
-            "network": args.network,
+            **(
+                sandbox_run.target.provenance()
+                if sandbox_run is not None
+                else {
+                    "docker_image": images["deepseek"],
+                    "container_user": args.container_user,
+                    "network": args.network,
+                }
+            ),
             "api_base": deepseek_api_base or "https://api.deepseek.com",
             "api_key_env": deepseek_api_key_env,
             "reasoning_effort": args.thinking,
@@ -2247,8 +2371,14 @@ def _collect(args: argparse.Namespace) -> int:
                 **{
                     name: {
                         **payload,
-                        "docker_image": images[name],
-                        "docker_image_digest": docker_image_digests[name],
+                        **(
+                            {
+                                "docker_image": images[name],
+                                "docker_image_digest": docker_image_digests[name],
+                            }
+                            if sandbox_run is None
+                            else {}
+                        ),
                     }
                     for name, payload in harness_configurations.items()
                 },
@@ -2343,7 +2473,7 @@ def _collect(args: argparse.Namespace) -> int:
                     "preflight_image_digest": (
                         task_image_digest
                         if task_image is not None
-                        else docker_image_digests[name]
+                        else docker_image_digests.get(name)
                     )
                 }
                 if task_image:
@@ -2418,11 +2548,15 @@ def _collect(args: argparse.Namespace) -> int:
                         args.cache_trace if "openclaw" in selected_harnesses else False
                     ),
                     keep_thinking=args.keep_thinking,
+                    sandbox_run=sandbox_run,
                 ),
                 harness_factory=harness_factory,
             )
             if args.resume and existing_run:
-                _remove_leftover_containers(args.docker_binary, run_dir)
+                if sandbox_run is None:
+                    _remove_leftover_containers(args.docker_binary, run_dir)
+                else:
+                    sandbox_run.cleanup()
             try:
                 results = collector.collect(requests)
             except (KeyboardInterrupt, CollectionStopped) as stop:
@@ -2779,6 +2913,27 @@ def _export(args: argparse.Namespace) -> int:
     return 0
 
 
+def _import(args: argparse.Namespace) -> int:
+    sessions, subagents = importer_module.discover(
+        [Path(path).expanduser() for path in args.paths]
+        or importer_module.default_roots(args.harness),
+        args.harness,
+        args.since,
+        args.project,
+    )
+    if args.dry_run:
+        for line in importer_module.dry_run_lines(sessions):
+            print(line)
+        return 0
+    run_dir = Path(args.output) / args.run_name
+    summary = importer_module.import_sessions(run_dir, sessions, args.parallel)
+    summary.subagents = subagents
+    for line in summary.lines():
+        print(line)
+    print(f"Run: {run_dir}")
+    return 1 if summary.failed else 0
+
+
 def _clean(args: argparse.Namespace) -> int:
     path = Path(args.path).expanduser().resolve() if args.path else None
     if path is not None and not path.is_dir():
@@ -2807,6 +2962,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             exit_code = _view(args)
         elif args.command == "export":
             exit_code = _export(args)
+        elif args.command == "import":
+            exit_code = _import(args)
         elif args.command == "init":
             exit_code = _init(args)
         elif args.command == "clean":

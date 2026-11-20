@@ -99,6 +99,7 @@ body[data-resizing="row"], body[data-resizing="row"] * { cursor: row-resize !imp
 .task-group:hover { border-color: var(--line-strong); box-shadow: 0 4px 12px rgb(28 39 34 / 5%); }
 .task-title { display: flex; align-items: center; gap: 8px; padding: 9px 10px 6px; }
 .task-index { color: var(--subtle); font: 10px "SFMono-Regular", Consolas, monospace; }
+.task-session { margin: -4px 10px 5px 0; padding-left: 10px; color: var(--subtle); font-size: 10px; }
 .task-title strong { min-width: 0; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .rollout-row { display: grid; width: 100%; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 0; border-top: 1px solid #eceeea; padding: 8px 10px; text-align: left; color: var(--ink); background: transparent; }
 .rollout-row:hover { background: var(--surface-soft); }

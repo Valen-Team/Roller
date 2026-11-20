@@ -18,7 +18,9 @@ from urllib.parse import urlsplit
 from roller.benches.base import BenchBinding, GradeSpec
 from roller.benches.report import brief_reason
 from roller.harnesses.base import Harness, InteractiveHarness, InteractiveSession
+from roller.harnesses.container import PROXY_ENV_NAMES
 from roller.models import HarnessResult, RunRequest
+from roller.sandbox import Sandbox, route_judge_environment
 from roller.storage import atomic_write_json
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,16 @@ GRADER_RETRY_MAX_SECONDS = 600.0
 _RUNNER_TEMPLATE = """\
 import json
 import sys
+from itertools import chain
+
+def _load_jsonl_rows(lines):
+    for line in lines:
+        line = line.strip()
+        if line:
+            try:
+                yield json.loads(line)
+            except (ValueError, RecursionError):
+                continue
 
 def _load_transcript(path):
     import pathlib
@@ -47,13 +59,27 @@ def _load_transcript(path):
     if not file_path.is_file():
         return []
     try:
-        raw = file_path.read_text(encoding="utf-8", errors="ignore")
+        with file_path.open(encoding="utf-8", errors="ignore") as source:
+            first = next((line for line in source if line.strip()), None)
+            if first is None:
+                return []
+            try:
+                parsed = json.loads(first.strip())
+            except (ValueError, RecursionError):
+                # A pretty-printed JSON document can span several lines.
+                source.seek(0)
+                try:
+                    parsed = json.load(source)
+                except (ValueError, RecursionError):
+                    source.seek(0)
+                    return list(_load_jsonl_rows(source))
+            else:
+                second = next((line for line in source if line.strip()), None)
+                if second is not None:
+                    # Native JSONL journals can embed large images in their rows.
+                    return [parsed, *_load_jsonl_rows(chain((second,), source))]
     except OSError:
         return []
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        parsed = None
     if isinstance(parsed, list):
         return parsed
     if isinstance(parsed, dict):
@@ -61,17 +87,7 @@ def _load_transcript(path):
             value = parsed.get(key)
             if isinstance(value, list):
                 return value
-        return [parsed]
-    rows = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rows.append(json.loads(line))
-        except Exception:
-            continue
-    return rows
+    return [parsed]
 
 
 __ROLLER_GRADER_SOURCE__
@@ -155,6 +171,37 @@ def parse_grader_stdout(stdout: str) -> dict[str, Any] | None:
     return None
 
 
+class _GraderExecution:
+    def __init__(self, runtime: Any, container: str, sandbox: Sandbox | None):
+        self.runtime, self.container, self.sandbox = runtime, container, sandbox
+
+    def run(self, command, *, timeout, cwd=None, options=()):
+        if self.sandbox is None:
+            directory = ["-w", cwd] if cwd else []
+            return self.runtime.run(
+                ["exec", *options, *directory, self.container, *command],
+                timeout=timeout,
+            )
+        env = {name: os.environ[name] for name in PROXY_ENV_NAMES if name in os.environ}
+        for option in options[1::2]:
+            name, sep, value = option.partition("=")
+            env[name] = value if sep else os.environ[name]
+        route_judge_environment(self.sandbox, env, timeout)
+        return self.sandbox.run(command, cwd=cwd, env=env, timeout=timeout)
+
+    def upload(self, source: Path, target: str, *, timeout, contents=False):
+        if self.sandbox is None:
+            argument = f"{source}/." if contents else str(source)
+            return self.runtime.run(
+                ["cp", argument, f"{self.container}:{target}"], timeout=timeout
+            )
+        try:
+            self.sandbox.upload(source, target, contents=contents, timeout=timeout)
+        except Exception as exc:
+            return subprocess.CompletedProcess([], 1, "", str(exc))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+
 class ContainerGrader:
     """Run a bench's grader inside a live sample container."""
 
@@ -214,12 +261,12 @@ class ContainerGrader:
         task_id: str,
         workspace_path: str,
         transcript_container_path: str | None,
+        sandbox: Sandbox | None = None,
     ) -> GradeOutcome:
         started = time.monotonic()
         workspace = self.spec.workspace_path or workspace_path
-        prepare = runtime.exec(
-            container, ["mkdir", "-p", GRADER_CONTAINER_DIR], timeout=30
-        )
+        execution = _GraderExecution(runtime, container, sandbox)
+        prepare = execution.run(["mkdir", "-p", GRADER_CONTAINER_DIR], timeout=30)
         if prepare.returncode != 0:
             detail = (prepare.stderr or prepare.stdout or "").strip()[-500:]
             return GradeOutcome(
@@ -229,11 +276,9 @@ class ContainerGrader:
             )
 
         if self.spec.needs_transcript:
-            self._stage_transcript(
-                runtime, container, transcript_container_path, task_id
-            )
+            self._stage_transcript(execution, transcript_container_path, task_id)
 
-        staging_error = self._stage_files(runtime, container, workspace, task_id)
+        staging_error = self._stage_files(execution, workspace, task_id)
         if staging_error is not None:
             # Without its answer key the grader would score a correct run zero,
             # which reads as a model failure. Surface it as a grading error.
@@ -250,8 +295,8 @@ class ContainerGrader:
             handle.write(runner_source)
             host_runner = handle.name
         try:
-            copied = runtime.copy_in(
-                host_runner, container, RUNNER_CONTAINER_PATH, timeout=60
+            copied = execution.upload(
+                Path(host_runner), RUNNER_CONTAINER_PATH, timeout=60
             )
             if copied.returncode != 0:
                 detail = (copied.stderr or copied.stdout or "").strip()[-500:]
@@ -261,18 +306,10 @@ class ContainerGrader:
                     error=detail or "grader copy failed",
                 )
             try:
-                # Raw argv: ``_env_args`` forwards each variable by name alone
-                # (``-e NAME``), which an env mapping cannot express.
-                result = runtime.run(
-                    [
-                        "exec",
-                        *self._env_args(),
-                        "-w",
-                        workspace,
-                        container,
-                        "python3",
-                        RUNNER_CONTAINER_PATH,
-                    ],
+                result = execution.run(
+                    ["python3", RUNNER_CONTAINER_PATH],
+                    cwd=workspace,
+                    options=self._env_args(),
                     timeout=self.spec.timeout_seconds,
                 )
             except subprocess.TimeoutExpired:
@@ -297,7 +334,7 @@ class ContainerGrader:
         return GradeOutcome(scores, elapsed)
 
     def _stage_files(
-        self, runtime: Any, container: str, workspace: str, task_id: str
+        self, execution: _GraderExecution, workspace: str, task_id: str
     ) -> str | None:
         """Copy the spec's ``stage`` sources into the container's workspace.
 
@@ -315,12 +352,13 @@ class ContainerGrader:
             # ``docker cp`` needs the destination's parent to exist, and for a
             # directory source the destination itself.
             container_dir = destination if host.is_dir() else parent
-            made = runtime.exec(container, ["mkdir", "-p", container_dir], timeout=30)
+            made = execution.run(["mkdir", "-p", container_dir], timeout=30)
             if made.returncode != 0:
                 detail = (made.stderr or made.stdout or "").strip()[-300:]
                 return f"could not create {container_dir}: {detail}"
-            host_argument = f"{host}/." if host.is_dir() else str(host)
-            copied = runtime.copy_in(host_argument, container, destination, timeout=120)
+            copied = execution.upload(
+                host, destination, contents=host.is_dir(), timeout=120
+            )
             if copied.returncode != 0:
                 detail = (copied.stderr or copied.stdout or "").strip()[-300:]
                 return f"could not copy {source} to {destination}: {detail}"
@@ -331,8 +369,7 @@ class ContainerGrader:
 
     @staticmethod
     def _stage_transcript(
-        runtime: Any,
-        container: str,
+        execution: _GraderExecution,
         transcript_container_path: str | None,
         task_id: str,
     ) -> None:
@@ -349,7 +386,7 @@ class ContainerGrader:
             f"cp {shlex.quote(transcript_container_path)} "
             f"{shlex.quote(TRANSCRIPT_CONTAINER_PATH)}; fi"
         )
-        result = runtime.exec(container, ["/bin/sh", "-c", script], timeout=60)
+        result = execution.run(["/bin/sh", "-c", script], timeout=60)
         if result.returncode != 0:
             logger.warning(
                 "[%s] transcript staging failed: %s",
@@ -427,12 +464,8 @@ def prepare_benchmark_workspace(
         f"echo 'benchmark workspace alias target already exists' >&2; exit 1; "
         f"else ln -s {shlex.quote(actual)} {shlex.quote(expected)}; fi"
     )
-    # Raw: the workspace alias runs before any grading, where callers hand in
-    # the runtime itself rather than one of the grading verbs' shapes.
-    result = runtime.run(
-        ["exec", container, "/bin/sh", "-c", script],
-        timeout=30,
-    )
+    execution = _GraderExecution(runtime, container, getattr(session, "sandbox", None))
+    result = execution.run(["/bin/sh", "-c", script], timeout=30)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()[-500:]
         raise RuntimeError(
@@ -612,6 +645,7 @@ class GradedHarness(Harness):
                     task_id=request.task.id,
                     workspace_path=workspace_container_path(session),
                     transcript_container_path=transcript_container_path(session, spec),
+                    sandbox=getattr(session, "sandbox", None),
                 )
             else:
                 logger.info("[%s] waiting for benchmark grader slot", request.task.id)
@@ -625,6 +659,7 @@ class GradedHarness(Harness):
                         transcript_container_path=transcript_container_path(
                             session, spec
                         ),
+                        sandbox=getattr(session, "sandbox", None),
                     )
             logger.info(
                 "[%s] benchmark grading finished in %.1fs%s",

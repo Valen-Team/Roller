@@ -26,6 +26,7 @@ from typing import Any
 from urllib import request as urllib_request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from roller.anthropic_pdf import render_anthropic_pdfs
 from roller.capture import CallRecorder
 from roller.codex_tools import tool_snapshot
 from roller.response_metadata import ResponseMetadata
@@ -592,6 +593,20 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                     body = json.dumps(parsed, ensure_ascii=False).encode("utf-8")
             except (json.JSONDecodeError, UnicodeDecodeError):
                 pass
+        if (
+            body
+            and proxy.anthropic_pdf_as_images
+            and self.command == "POST"
+            and urlsplit(self.path)
+            .path.rstrip("/")
+            .endswith(("/messages", "/messages/count_tokens"))
+        ):
+            try:
+                parsed = json.loads(body)
+                if render_anthropic_pdfs(parsed):
+                    body = json.dumps(parsed, ensure_ascii=False).encode("utf-8")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
         request_seq = None
         try:
             request_seq = self._record(body)
@@ -858,6 +873,7 @@ class WireTraceProxy:
         responses_image_detail: str | None = None,
         responses_tool_images_as_user: bool = False,
         tool_id_mappings_path: Path | None = None,
+        anthropic_pdf_as_images: bool = False,
     ) -> None:
         if mode not in ("tools", "full"):
             raise ValueError(f"unknown wire trace mode: {mode}")
@@ -898,6 +914,7 @@ class WireTraceProxy:
         self.encrypted_content_retries = encrypted_content_retries
         self.responses_image_detail = responses_image_detail
         self.responses_tool_images_as_user = responses_tool_images_as_user
+        self.anthropic_pdf_as_images = anthropic_pdf_as_images
         # Set to repair repeated Anthropic tool-use IDs; receives one row per repair.
         self.tool_id_mappings_path = tool_id_mappings_path
         self.tool_ids = ToolIdRegistry()

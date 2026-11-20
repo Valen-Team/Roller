@@ -10,10 +10,13 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
 bench_root="${1:-$repo_root/.benchmarks/wildclawbench}"
 harness="${WILDCLAW_HARNESS:-openclaw}"
+assets_only="${WILDCLAW_ASSETS_ONLY:-0}"
 expected_revision="41bfe78a4d04369887687397708504882a80c17a"
 
 command -v git >/dev/null || fail "git is required"
-command -v docker >/dev/null || fail "docker is required"
+if [[ "$assets_only" != 1 ]]; then
+  command -v docker >/dev/null || fail "docker is required"
+fi
 command -v hf >/dev/null || fail "the Hugging Face CLI is required (pip install huggingface_hub)"
 
 if [[ ! -e "$bench_root" ]]; then
@@ -31,7 +34,8 @@ if [[ "$actual_revision" != "$expected_revision" ]]; then
   fail "expected WildClawBench at $expected_revision, found $actual_revision"
 fi
 
-case "$harness" in
+if [[ "$assets_only" != 1 ]]; then
+  case "$harness" in
   openclaw)
     image_file="Images/wildclawbench-ubuntu_v1.3.tar"
     image_tag="wildclawbench-ubuntu:v1.3"
@@ -49,14 +53,15 @@ case "$harness" in
     image_tag="wildclawbench-hermes-agent:v0.5"
     ;;
   *) fail "WILDCLAW_HARNESS must be openclaw, codex, claude-code, or hermes" ;;
-esac
+  esac
+fi
 
 if [[ ! -d "$bench_root/workspace" ]]; then
   hf download internlm/WildClawBench \
     --repo-type dataset --include 'workspace/**' --local-dir "$bench_root"
 fi
 
-if ! docker image inspect "$image_tag" >/dev/null 2>&1; then
+if [[ "$assets_only" != 1 ]] && ! docker image inspect "$image_tag" >/dev/null 2>&1; then
   download_root="$(mktemp -d "${TMPDIR:-/tmp}/roller-wildclaw-image.XXXXXX")"
   trap 'rm -rf -- "$download_root"' EXIT
   hf download internlm/WildClawBench "$image_file" \
@@ -73,4 +78,6 @@ fi
 
 printf 'WildClawBench root: %s\n' "$(cd "$bench_root" && pwd)"
 printf 'Revision: %s\n' "$actual_revision"
-printf 'Harness image: %s\n' "$image_tag"
+if [[ "$assets_only" != 1 ]]; then
+  printf 'Harness image: %s\n' "$image_tag"
+fi

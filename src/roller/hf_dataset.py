@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -43,6 +44,9 @@ from roller.storage import safe_component
 
 DATA_DIR = "data"
 TRACES_DIR = "traces"
+# The Hub splits traces with str.splitlines(), which treats these JSON string
+# characters as line breaks even though they are part of a JSONL record.
+_TRACE_LINE_BREAKS = re.compile("[\\u0085\\u2028\\u2029]")
 # Native session schemas of ``trace.jsonl`` that the Hub reads as they are.
 NATIVE_TRACES = {
     "openclaw-session-jsonl",
@@ -66,6 +70,32 @@ configs:
   default: true
 - config_name: trajectories
   data_files: {data_dir}/*.jsonl
+dataset_info:
+- config_name: trajectories
+  features:
+  - {{name: run, dtype: string}}
+  - {{name: sample, dtype: string}}
+  - {{name: trace, dtype: string}}
+  - {{name: task_id, dtype: string}}
+  - {{name: upstream_task_id, dtype: string}}
+  - {{name: run_index, dtype: int64}}
+  - {{name: bench, dtype: string}}
+  - {{name: category, dtype: string}}
+  - {{name: model, dtype: string}}
+  - {{name: harness, dtype: string}}
+  - {{name: status, dtype: string}}
+  - {{name: error, dtype: string}}
+  - {{name: score, dtype: float64}}
+  - {{name: grader_error, dtype: string}}
+  - {{name: steps, dtype: int64}}
+  - {{name: tool_calls, dtype: int64}}
+  - {{name: input_tokens, dtype: int64}}
+  - {{name: output_tokens, dtype: int64}}
+  - {{name: total_tokens, dtype: int64}}
+  - {{name: elapsed_seconds, dtype: float64}}
+  - {{name: files, sequence: string}}
+  - {{name: messages, dtype: string}}
+  - {{name: tools, dtype: string}}
 ---
 
 # {name}
@@ -162,6 +192,10 @@ class Redaction:
     hosts: tuple[str, ...] = ()
     # The name of the exporting machine, when it was looked for.
     machine: str = ""
+    # Imported sessions: the user names of their home directories, and the
+    # number of account identifiers they recorded.
+    users: tuple[str, ...] = ()
+    identities: int = 0
 
     def lines(self) -> list[str]:
         lines = []
@@ -170,6 +204,8 @@ class Redaction:
             f"{len(self.hosts)} NO_PROXY hosts" if self.hosts else "",
             "the name of this machine" if self.machine else "",
             f"{len(self.paths)} host paths" if self.paths else "",
+            f"{len(self.users)} home directories" if self.users else "",
+            f"{self.identities} account identifiers" if self.identities else "",
             f"the values of {', '.join(self.credentials)}" if self.credentials else "",
         ]
         if any(replaced):
@@ -225,6 +261,35 @@ _CONFIGURED_PATHS = (
     ("*", "config_path", True, "<config-dir>"),
     ("*", "settings_path", True, "<config-dir>"),
 )
+
+
+# A shorter user name is an ordinary word, replaced only in its home paths;
+# so is a shorter git user name, which is left alone.
+_USER_LENGTH = 4
+_COMMON_USERS = {"root", "ubuntu", "user"}
+
+
+def _home_users(path: Any) -> list[str]:
+    """The user name of a home directory that ``path`` lies in."""
+
+    match = (
+        re.match(r"/(?:Users|home)/([^/]+)", path) if isinstance(path, str) else None
+    )
+    return [match[1]] if match and match[1] not in _COMMON_USERS else []
+
+
+def _git_identity() -> tuple[str, str]:
+    """The global git user name and email of this machine."""
+
+    def value(key: str) -> str:
+        return subprocess.run(
+            ["git", "config", "--global", key],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+
+    return value("user.name"), value("user.email")
 
 
 def _host_path(value: Any, is_file: bool) -> str | None:
@@ -309,10 +374,27 @@ def environment_redaction(
 
     urls: set[str] = set()
     names: set[str] = set()
+    users: list[str] = []
+    identities: set[str] = set()
+    imported = False
     for path in run_dir.glob("samples/*/*/info.json"):
         provenance = _json(path).get("provenance") or {}
         urls.update(url for url in provenance.get("api_base_urls") or [] if url)
         names.update(name for name in provenance.get("environment_names") or [] if name)
+        source = provenance.get("import")
+        if isinstance(source, dict):
+            imported = True
+            users += _home_users(source.get("cwd"))
+            identities.update(value for value in source.get("identity") or [] if value)
+    if imported:
+        # An imported session names no variables; every credential of the
+        # exporting environment may have reached it.
+        names.update(
+            name
+            for name, value in environ.items()
+            if value and name.lower().replace("_", "").endswith(_CREDENTIAL_NAMES)
+        )
+        users = list(dict.fromkeys(_home_users(str(Path.home())) + sorted(users)))
 
     literals: dict[str, str] = {}
     # The pattern of a literal that must not match inside a longer word.
@@ -406,8 +488,33 @@ def environment_redaction(
                 literals[path] = placeholder
                 paths.append(path)
 
+    for value in identities:
+        literals[value] = REDACTED
+    if imported:
+        name, email = _git_identity()
+        if len(name) >= _USER_LENGTH:
+            literals.setdefault(name, REDACTED)
+            patterns.setdefault(name, _name(name))
+        if email:
+            literals.setdefault(email, REDACTED)
+    homes: list[tuple[re.Pattern[str], str]] = []
+    for number, user in enumerate(users, 1):
+        placeholder = "user" if number == 1 else f"user-{number}"
+        escaped = re.escape(user)
+        homes += [
+            (re.compile(rf"/(Users|home)/{escaped}(?![\w.-])"), rf"/\1/{placeholder}"),
+            (
+                re.compile(rf"-(Users|home)-{escaped}(?![A-Za-z0-9])"),
+                rf"-\1-{placeholder}",
+            ),
+        ]
+        if len(user) >= _USER_LENGTH:
+            homes.append((re.compile(f"(?i:{_name(user)})"), placeholder))
+
     if not literals:
-        return Rules(), Redaction(unset=tuple(unset))
+        return Rules(replace=tuple(homes)), Redaction(
+            unset=tuple(unset), users=tuple(users)
+        )
     pattern = re.compile(
         "|".join(
             patterns.get(text) or re.escape(text)
@@ -415,8 +522,10 @@ def environment_redaction(
         )
     )
     return (
-        Rules(replace=((pattern, lambda match: literals[match.group(0)]),)),
+        Rules(replace=((pattern, lambda match: literals[match.group(0)]), *homes)),
         Redaction(
+            users=tuple(users),
+            identities=len(identities),
             endpoints=tuple(endpoints),
             paths=tuple(paths),
             credentials=tuple(credentials),
@@ -435,7 +544,7 @@ def _copy_file(source: Path, target: Path, rules: Rules, label: str) -> list[str
         found: list[str] = []
         private_key = False
         detect_keys = any(
-            pattern in export_audit.TOKEN_PATTERNS for pattern, _ in rules.replace
+            pattern is export_audit.TOKENS for pattern, _ in rules.replace
         )
         try:
             with (
@@ -455,9 +564,9 @@ def _copy_file(source: Path, target: Path, rules: Rules, label: str) -> list[str
                         start = re.search(
                             r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----", line
                         )
-                        if start and not re.search(
-                            r"-----END [A-Z0-9 ]*PRIVATE KEY-----", line[start.end() :]
-                        ):
+                        # A key spans lines in a text file, where its header
+                        # ends a line; text that only names the header stays.
+                        if start and not line[start.end() :].strip():
                             private_key = True
                             line = line[: start.start()] + REDACTED + "\n"
                     for pattern, text in rules.replace:
@@ -709,6 +818,10 @@ def session_trace(
     return lines
 
 
+def _trace_line(line: str) -> str:
+    return _TRACE_LINE_BREAKS.sub(lambda match: f"\\u{ord(match[0]):04x}", line)
+
+
 def _write_trace(
     path: Path,
     sample_dir: Path,
@@ -718,26 +831,27 @@ def _write_trace(
 ) -> bool:
     """Write the session trace of one sample and tell whether it has one.
 
-    A native OpenClaw, Codex or Claude Code session is published as it is; an
-    OpenClaw session header also gets ``header``, which names the harness and
-    gives the session an id that is unique in the run. Any other sample is
-    converted from its ACTF.
+    Preserve native OpenClaw, Codex and Claude Code records, escaping Unicode
+    line separators for the Hub. An OpenClaw session header also gets
+    ``header``, which names the harness and gives the session an id that is
+    unique in the run. Convert other samples from ACTF. A DeepSeek sample
+    without an ACTF keeps its native journal as evidence of the partial run.
     """
 
     raw = sample_dir / "trace.jsonl"
     schema = (info.get("trajectory") or {}).get("raw_schema")
-    if schema in NATIVE_TRACES and raw.is_file():
+    preserve_native = schema in NATIVE_TRACES or (
+        schema == "roller.deepseek-events/v1" and not trajectory.get("steps")
+    )
+    if preserve_native and raw.is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
-        if schema != "openclaw-session-jsonl":
-            shutil.copyfile(raw, path)
-            return True
         sessions = 0
         with (
             raw.open(encoding="utf-8", newline="") as reader,
             path.open("w", encoding="utf-8", newline="") as writer,
         ):
             for line in reader:
-                if '"session"' in line:
+                if schema == "openclaw-session-jsonl" and '"session"' in line:
                     row = json.loads(line)
                     if isinstance(row, dict) and row.get("type") == "session":
                         # Roller starts every OpenClaw session under the same id.
@@ -745,14 +859,14 @@ def _write_trace(
                         suffix = f"#{sessions}" if sessions > 1 else ""
                         row = {**row, **header, "id": header["id"] + suffix}
                         line = json.dumps(row, ensure_ascii=False) + "\n"
-                writer.write(line)
+                writer.write(_trace_line(line))
         return True
     if not trajectory.get("steps"):
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as writer:
         for row in session_trace(trajectory, header):
-            writer.write(json.dumps(row, ensure_ascii=False) + "\n")
+            writer.write(_trace_line(json.dumps(row, ensure_ascii=False)) + "\n")
     return True
 
 
@@ -1029,7 +1143,7 @@ def export_run(
         for pattern, replacement in rules.replace:
             name = pattern.sub(replacement, name)
         name = safe_component(name)
-        parts[name] = samples
+        parts.setdefault(name, []).extend(samples)
         source_samples.update(
             {
                 _export_path(sample.relative_to(run_dir).as_posix(), rules): sample

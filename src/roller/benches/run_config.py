@@ -200,6 +200,7 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "permission_mode": ("--claude-permission-mode", "value"),
         "capture_calls": ("--claude-capture-calls", "switch"),
         "unique_tool_ids": ("--claude-unique-tool-ids", "switch"),
+        "pdf_as_images": ("--claude-pdf-as-images", "switch"),
     },
     "hermes": {
         "max_iterations": ("--hermes-max-iterations", "value"),
@@ -260,6 +261,8 @@ _EXECUTION_VALUES = {
     "container_user": "--container-user",
     "network": "--network",
     "docker_binary": "--docker-binary",
+    "sandbox_provider": "--sandbox-provider",
+    "sandbox_template": "--sandbox-template",
     "max_input_file_bytes": "--max-input-file-bytes",
     "max_task_input_bytes": "--max-task-input-bytes",
 }

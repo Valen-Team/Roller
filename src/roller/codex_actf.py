@@ -265,6 +265,87 @@ def _usage_number(value: Any) -> int:
     )
 
 
+def session_tools(events: Iterable[Mapping[str, Any]]) -> tuple[list[Any], str]:
+    """The Responses tools of a session file and how they were found.
+
+    Codex records its tools as ``additional_tools`` items. When they change in
+    the session, the lists are merged: a tool joins in the order it first
+    appears, with its last definition, and the status is ``captured_merged``.
+    A session without these items has its tools inferred from the calls.
+    """
+
+    versions: set[str] = set()
+    # Top-level tools and namespaces by name; the tools of a namespace by name.
+    merged: dict[str, dict[str, Any]] = {}
+    children: dict[str, dict[str, Any]] = {}
+    for event in events:
+        payload = event.get("payload")
+        if event.get("type") != "response_item" or not isinstance(payload, Mapping):
+            continue
+        if payload.get("type") != "additional_tools":
+            continue
+        versions.add(json.dumps(payload.get("tools"), sort_keys=True))
+        for tool in payload.get("tools") or []:
+            name = tool.get("name") or tool.get("type")
+            merged[name] = tool
+            if tool.get("type") == "namespace":
+                group = children.setdefault(name, {})
+                for child in tool.get("tools") or []:
+                    group[child.get("name") or child.get("type")] = child
+    if versions:
+        tools = []
+        for name, tool in merged.items():
+            if tool.get("type") != "namespace":
+                tools.append(tool)
+            elif name == "functions":
+                # Codex calls the tools of this namespace without a namespace.
+                tools += children[name].values()
+            else:
+                tools.append({**tool, "tools": list(children[name].values())})
+        return deepcopy(tools), "captured_merged" if len(versions) > 1 else "captured"
+
+    # Calls by namespace and name; a function lists the arguments it was given.
+    inferred: dict[tuple[str, str], dict[str, Any]] = {}
+    for event in events:
+        payload = event.get("payload")
+        if event.get("type") != "response_item" or not isinstance(payload, Mapping):
+            continue
+        key = (payload.get("namespace") or "", payload.get("name"))
+        if payload.get("type") == "custom_tool_call":
+            inferred.setdefault(key, {"type": "custom", "name": key[1]})
+        elif payload.get("type") == "function_call":
+            tool = inferred.setdefault(
+                key,
+                {
+                    "type": "function",
+                    "name": key[1],
+                    "description": "Tool invoked by the Codex native harness.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "additionalProperties": True,
+                    },
+                },
+            )
+            for argument in _arguments(payload)[0]:
+                tool["parameters"]["properties"].setdefault(argument, {})
+    tools = []
+    namespaces: dict[str, dict[str, Any]] = {}
+    for (namespace, _), tool in inferred.items():
+        if not namespace:
+            tools.append(tool)
+            continue
+        if namespace not in namespaces:
+            namespaces[namespace] = {
+                "type": "namespace",
+                "name": namespace,
+                "tools": [],
+            }
+            tools.append(namespaces[namespace])
+        namespaces[namespace]["tools"].append(tool)
+    return tools, "inferred"
+
+
 def codex_events_to_actf(
     events: Iterable[dict[str, Any]],
     *,
@@ -608,14 +689,19 @@ def convert_codex_trace(
     keep_thinking: bool = True,
     tools_trace: Path | None = None,
 ) -> dict[str, Any]:
-    capture = read_tool_capture(tools_trace)
-    tools = (
-        capture["requests"][0]["snapshot"].get("tools", [])
-        if capture["status"] == "captured"
-        else None
-    )
+    events = _read_events(source)
+    if tools_trace is None:
+        tools, status = session_tools(events)
+        capture: dict[str, Any] = {"source": "session", "status": status}
+    else:
+        capture = read_tool_capture(tools_trace)
+        tools = (
+            capture["requests"][0]["snapshot"].get("tools", [])
+            if capture["status"] == "captured"
+            else None
+        )
     trajectory = codex_events_to_actf(
-        _read_events(source),
+        events,
         user_messages=user_messages,
         keep_thinking=keep_thinking,
         tools=tools,

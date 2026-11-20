@@ -273,6 +273,22 @@ def _lines(path: Path) -> list[dict]:
 
 
 class HuggingFaceExportTests(unittest.TestCase):
+    def test_model_aliases_can_share_one_public_part(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = _run(root)
+            _sample(run, "vllm/model-a-replica", 5, "plan__run_02", harness="openclaw")
+            rules = Rules(
+                replace=((re.compile("model-a(?:-replica)?"), "public-model"),)
+            )
+            output = root / "dataset"
+            _export(run, output, rules)
+            rows = _rows(output, "openclaw-public-model")
+            self.assertEqual(len(rows), 3)
+            self.assertEqual({row["model"] for row in rows}, {"vllm/public-model"})
+            self.assertEqual(len({row["trace"] for row in rows}), 3)
+            self.assertTrue(all((output / row["trace"]).is_file() for row in rows))
+
     def test_model_alias_rules_also_apply_to_generated_names_and_sample_paths(
         self,
     ) -> None:
@@ -510,6 +526,70 @@ class HuggingFaceExportTests(unittest.TestCase):
                     "toolResult",
                     "assistant",
                 ],
+            )
+
+    def test_failed_deepseek_sample_exports_its_redacted_native_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = _run(root)
+            output = root / "dataset"
+            sample = _sample(
+                run,
+                "deepseek-model",
+                5,
+                "chat__run_01",
+                harness="deepseek",
+                status="error",
+            )
+            events = [
+                {"type": "metadata", "schema": "roller.deepseek-events/v1"},
+                {"type": "request", "url": f"http://{SECRET_HOST}:8000/v1"},
+            ]
+            (sample / "trace.jsonl").write_text(
+                "".join(json.dumps(row) + "\n" for row in events), encoding="utf-8"
+            )
+
+            _export(run, output)
+
+            row = _rows(output, "deepseek-deepseek-model")[0]
+            self.assertEqual(row["status"], "error")
+            self.assertIsNone(row["messages"])
+            self.assertEqual(
+                _lines(output / row["trace"]),
+                [
+                    events[0],
+                    {"type": "request", "url": "http://endpoint-1.example/v1"},
+                ],
+            )
+
+    def test_codex_trace_survives_hub_line_splitting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _run(Path(tmp))
+            output = Path(tmp) / "dataset"
+            sample = run_dir / "samples" / DIR_A / "00000000_chat__run_01"
+            info_path = sample / "info.json"
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+            info["harness"] = "codex"
+            info["trajectory"]["raw_schema"] = "codex-session-jsonl"
+            info_path.write_text(json.dumps(info), encoding="utf-8")
+            events = [
+                {"type": "session_meta", "payload": {"id": "test"}},
+                {
+                    "type": "event_msg",
+                    "payload": {"message": "前\u0085中\u2028后\u2029"},
+                },
+            ]
+            (sample / "trace.jsonl").write_text(
+                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in events),
+                encoding="utf-8",
+            )
+
+            _export(run_dir, output)
+
+            trace = output / "traces/codex-model-a/00000000_chat__run_01.jsonl"
+            self.assertEqual(
+                [json.loads(line) for line in trace.read_text("utf-8").splitlines()],
+                events,
             )
 
     def test_session_trace_is_a_pi_session(self) -> None:
@@ -993,3 +1073,96 @@ class HuggingFaceExportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImportedRunRedactionTests(unittest.TestCase):
+    def _session(self, path: Path, session_id: str, cwd: str, text: str) -> None:
+        records = [
+            {
+                "type": "bridge-session",
+                "sessionId": session_id,
+                "ownerAccountUuid": "acct-1111-2222",
+            },
+            {
+                "type": "user",
+                "uuid": f"{session_id}-1",
+                "timestamp": "2026-11-01T10:00:00Z",
+                "sessionId": session_id,
+                "cwd": cwd,
+                "message": {"role": "user", "content": text},
+            },
+            {
+                "type": "assistant",
+                "uuid": f"{session_id}-2",
+                "timestamp": "2026-11-01T10:00:01Z",
+                "sessionId": session_id,
+                "cwd": cwd,
+                "message": {
+                    "id": "m1",
+                    "role": "assistant",
+                    "model": "claude-test",
+                    "content": [{"type": "text", "text": "ok"}],
+                },
+            },
+        ]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+        )
+
+    def test_home_paths_user_names_and_accounts_of_imported_sessions(self) -> None:
+        from roller.importer import discover, import_sessions
+
+        token = "tok-abcdefghijklmnop"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._session(
+                root / "src" / "-Users-alice-work-demo" / "s1.jsonl",
+                "s1",
+                "/Users/alice/work/demo",
+                "Read /Users/alice/notes.txt and "
+                "~/.claude/projects/-Users-alice-work-demo/s1.jsonl. "
+                f"Alice wrote it. ALICE SMITH, alice@example.org, {token}",
+            )
+            self._session(
+                root / "src" / "-home-bob-proj" / "s2.jsonl",
+                "s2",
+                "/home/bob/proj",
+                "Open /home/bob/proj/a.py; bob stays a word",
+            )
+            run = root / "run"
+            import_sessions(run, discover([root / "src"])[0], parallel=1)
+            output = root / "hf"
+            with (
+                mock.patch.object(Path, "home", return_value=Path("/Users/alice")),
+                mock.patch(
+                    "roller.hf_dataset._git_identity",
+                    return_value=("Alice Smith", "alice@example.org"),
+                ),
+            ):
+                _, redaction = export_run(
+                    run,
+                    output,
+                    environ={"MY_API_TOKEN": token, "SHORT_KEY": "abc"},
+                    machine="",
+                    runs=True,
+                )
+            text = "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in output.rglob("*")
+                if path.is_file()
+            )
+            for leaked in ("alice", "/home/bob", "acct-1111-2222", token):
+                self.assertNotIn(leaked, text.lower())
+            self.assertIn("/Users/user/notes.txt", text)
+            self.assertIn("-Users-user-work-demo", text)
+            self.assertIn("/home/user-2/proj/a.py", text)
+            self.assertIn("bob stays a word", text)
+            self.assertEqual(redaction.users, ("alice", "bob"))
+            self.assertEqual(redaction.identities, 1)
+            self.assertEqual(redaction.credentials, ("MY_API_TOKEN",))
+            report = json.loads(
+                (root / "hf.redaction-report.json").read_text(encoding="utf-8")
+            )
+            self.assertNotIn("home_path", report["counts"])
+            self.assertNotIn("email", report["counts"])

@@ -13,6 +13,7 @@ from roller.harnesses.bridge import (
     validate_step_limits,
 )
 from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
+from roller.sandbox import SandboxRun
 from roller.thinking import normalize_thinking, resolve_thinking
 
 DEEPSEEK_VERSION = "0.1.5rc1"
@@ -57,6 +58,8 @@ class DeepSeekConfig:
     keep_container_on_error: bool = False
     docker_binary: str = "docker"
     preflight_image_digest: str | None = None
+    remote_sandbox: bool = False
+    sandbox_run: SandboxRun | None = None
 
     @property
     def native_permission_mode(self) -> str | None:

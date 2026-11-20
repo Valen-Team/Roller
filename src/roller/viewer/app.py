@@ -235,6 +235,9 @@ class Rollout:
             "attempt_count": len(self.info.get("attempts", []))
             if isinstance(self.info.get("attempts"), list)
             else 0,
+            "title": _string(self.info.get("title")),
+            "project": _string(self.info.get("project")),
+            "started_at": _string(timing.get("started_at")),
             "has_actf": self.trace_path(root) is not None,
             "has_conversation": bool(conversation.get("path"))
             or (self.directory / "conversation.json").is_file(),
@@ -421,6 +424,8 @@ class RollerRun:
                 haystack = "\n".join(
                     (
                         item["task_id"],
+                        item["title"],
+                        item["project"],
                         item["model"],
                         item["status"],
                         item["error"],
@@ -439,6 +444,9 @@ class RollerRun:
                 item["model"],
             )
         )
+        if self._run_info.get("source") == "import":
+            # Imported sessions read newest first.
+            selected.sort(key=lambda item: item["started_at"], reverse=True)
         if sort:
             # A task takes the place of its first rollout in this order, and
             # rollouts without a score come last in both directions.
@@ -455,6 +463,9 @@ class RollerRun:
                 item["task_id"],
                 {
                     "task_id": item["task_id"],
+                    "title": item["title"],
+                    "project": item["project"],
+                    "started_at": item["started_at"],
                     "source_index": item.get("source_index"),
                     "rollouts": [],
                 },

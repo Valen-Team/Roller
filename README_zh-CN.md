@@ -5,13 +5,14 @@
   </picture>
 </p>
 <h1 align="center">Roller</h1>
-<p align="center"><strong>面向多模型、多 Harness 的 Agent 轨迹采集框架</strong></p>
-<p align="center">Roller 在一次性 Docker 容器中运行可调用工具的 Agent，并为每个 task 与模型的组合保存原生 session、统一轨迹、SFT 训练数据和产物文件。</p>
+<p align="center"><strong>采集、评测并发布 Agent 轨迹</strong></p>
+<p align="center">Roller 在你的 task 或 Benchmark 上运行 Claude Code、Codex、OpenClaw 等 7 种 Harness，在各 sample 的运行容器内完成评分，也能导入本机已有的会话。每次 run 都可以导出为 SFT 训练数据、ATIF 和 Hugging Face 数据集。</p>
 
 <p align="center">
   <a href="#harnesses"><img src="https://img.shields.io/badge/Harnesses-7-00866F?style=flat&amp;labelColor=4B5563" alt="7 种 Harness"></a>
   <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-5-00866F?style=flat&amp;labelColor=4B5563" alt="5 个 Benchmark 适配器"></a>
   <a href="https://pypi.org/project/roller-agent/"><img src="https://img.shields.io/pypi/v/roller-agent?style=flat&amp;labelColor=4B5563&amp;color=00866F" alt="PyPI 版本"></a>
+  <a href="https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories"><img src="https://img.shields.io/badge/Dataset-WildClawBench_trajectories-00866F?style=flat&amp;logo=huggingface&amp;labelColor=4B5563" alt="Hugging Face 上的 Roller-WildClawBench-Trajectories 数据集"></a>
   <a href="https://github.com/Valen-Team/Roller/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/Valen-Team/Roller/tests.yml?branch=main&amp;style=flat&amp;labelColor=4B5563&amp;label=tests" alt="测试状态"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-6B7280?style=flat&amp;labelColor=4B5563" alt="许可证：Apache 2.0"></a>
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/Python-3.10%2B-6B7280?style=flat&amp;logo=python&amp;logoColor=FFD43B&amp;labelColor=4B5563" alt="Python 3.10+"></a>
@@ -27,79 +28,110 @@
 </p>
 
 <p align="center">
-  <a href="#news">最新动态</a> · <a href="#architecture">架构</a> · <a href="#highlights">主要特性</a> · <a href="#quick-start">快速开始</a> · <a href="#harnesses">Harness</a> · <a href="#outputs">产物</a> · <a href="#benchmarks">Benchmark</a> · <a href="#documentation">文档</a> · <a href="#contributing">参与贡献</a>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/hero-zh-dark.svg">
+    <img src="assets/diagrams/hero-zh-light.svg" alt="Roller 的四种用法。训练数据：roller export --format sft 导出保留 reasoning、图片和上下文压缩分段的 SFT 记录。Benchmark 评测：roller collect --bench 用 7 种 Harness 运行 5 个 Benchmark，并在各 sample 的运行容器内评分。本机会话：roller import 把本机的 Claude Code 和 Codex 会话导入成一次 run。数据集：roller export --format hf 导出脱敏后的 Hugging Face 数据集目录。四种用法写的是同一个运行目录，用 roller view 打开。" width="100%">
+  </picture>
 </p>
 
+<p align="center">
+  <a href="#what-roller-does">Roller 能做什么</a> · <a href="#news">最新动态</a> · <a href="#quick-start">快速开始</a> · <a href="#harnesses">Harness</a> · <a href="#benchmarks">Benchmark</a> · <a href="#outputs">产物</a> · <a href="#architecture">架构</a> · <a href="#documentation">文档</a> · <a href="#contributing">参与贡献</a>
+</p>
+
+<a id="what-roller-does"></a>
 <a id="introduction"></a>
+<a id="highlights"></a>
 
-## 简介
+## Roller 能做什么
 
-Roller 是一套服务于 Agent Runtime 的基础设施，提供 Agent 推理与评测服务。用户提供任务与自定义环境，Roller 在隔离的 Docker 容器中运行 Agent，采集完整的 Agent 轨迹，并对任务结果进行评测。目前 Roller 支持 OpenClaw、Codex、Claude Code 等 7 种主流 Harness，以及 WildClawBench、SkillsBench 等 5 个 Benchmark。
+```bash
+uv tool install roller-agent    # 或：python -m pip install roller-agent
+```
 
-Roller 提供以下能力：
+### 1. 把 Agent 运行变成训练数据
 
-- **Benchmark 集成。** 一条命令完成 Benchmark 任务转换、轨迹采集，并在各 sample 的运行容器内完成评分。
-- **批量采集。** 跨 task 与模型并行执行 rollout，失败的尝试可自动重试，中断的运行可通过 Resume 继续。
-- **SFT 数据导出。** 每个成功的 rollout 生成一条 `messages` + `tools` 训练记录；发生上下文压缩的 rollout 以分段记录的形式单独导出。
-- **ATIF 导出。** `roller export` 把一次 run 的轨迹转换为 [Harbor](https://github.com/harbor-framework/harbor) 的轨迹格式 ATIF。Harbor 可以校验这些文件，其 Claude Code 和 Codex Agent 可以把它们加载为会话历史。
-- **多轮对话与 User Simulator。** 用户消息可在 task 中预先定义，也可由扮演用户的另一个模型生成。
-- **Viewer。** 内置只读 Web 界面，用于浏览 task、对比模型和查看每个 step。
+每个成功的 rollout 在 `sft.jsonl` 中生成一条 `messages` + `tools` 记录。记录保留模型的可见 reasoning，轨迹包含图片时附带 `images` 字段。Agent 压缩上下文时，每段通过校验的上下文窗口作为独立记录导出至 `sft_segments/`。对评过分的 run，可以只保留得分高于阈值的 sample：
+
+```bash
+roller export runs/wildclaw --format sft --min-score 0.5 --output training
+```
+
+[SFT 数据格式 →](https://valen-team.github.io/zh-Hans/roller/traces/sft-format/)
+
+### 2. 一条命令跑完一个 Benchmark
+
+`roller collect --bench` 转换 Benchmark 任务，用 7 种 Harness 中的任意一种执行，在任务运行的容器内执行评分程序，并写出 `bench-report.json`。已适配 WildClawBench、SkillsBench、PinchBench、QwenClawBench 和 SWE-Bench Pro。
+
+```bash
+roller collect --bench wildclawbench --bench-root ~/WildClawBench \
+  --model <provider>/<model> --model-config <models.json> \
+  --harness openclaw --openclaw-image ghcr.io/valen-team/roller-wildclaw-base:1.3-clean.1 \
+  --parallel 4 --output runs --run-name wildclaw
+```
+
+[Benchmark ↓](#benchmarks)
+
+<a id="import"></a>
+
+### 3. 导入本机已有的会话
+
+`roller import` 把本机的 Claude Code 和 Codex 会话导入成一次 run，每个会话生成一个 sample。不需要 Docker、模型服务和任务列表。
+
+```bash
+roller import --dry-run                             # 按项目列出会话
+roller import --output runs --run-name my-sessions
+roller view runs/my-sessions
+```
+
+Roller 读取 `~/.claude/projects`、`~/.codex/sessions` 和 `~/.codex/archived_sessions`，包括压缩的 Codex 会话。`--harness`、`--since`、`--project` 用于筛选，再次运行会导入新增和有变化的会话。
+
+[会话导入指南 →](https://valen-team.github.io/zh-Hans/roller/traces/import/)
+
+### 4. 把一次 run 发布成数据集
+
+`roller export --format hf` 把采集或导入的 run 打包成 Hugging Face 数据集目录，Hub 用轨迹查看器直接打开。导出时替换 run 的模型端点、主机名、主机路径、home 目录、用户名和凭据取值，无法归类的残留写入 `<output>.redaction-report.json`。
+
+```bash
+roller export runs/my-sessions --format hf --output my-sessions-hf
+roller export runs/my-sessions                      # ATIF，Harbor 的轨迹格式
+```
+
+上传前查看这份报告，用 `--redact-rules FILE` 补充规则，再用密钥扫描工具扫一遍输出目录。[Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories) 就是这样发布的数据集，[Cookbook](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/) 记录了它背后的完整运行。
+
+[Hugging Face 导出 →](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#hugging-face-export) · [ATIF 导出 →](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#atif-export)
+
+### 用 Viewer 浏览每次 run
+
+`roller view RUN_DIR` 打开只读 Web 界面，用于浏览 task、对比模型和查看每个 step，支持 Benchmark 得分、得分筛选和用户消息图片。
 
 <p align="center">
   <a href="assets/demo/viewer-trajectory.gif"><img src="assets/demo/viewer-trajectory.gif" alt="在 Roller Viewer 中逐步查看单个 rollout：搜索 task、选择模型，并展开各个 step 的 reasoning、工具调用与工具结果" width="32%"></a>
   <a href="assets/demo/viewer-models.gif"><img src="assets/demo/viewer-models.gif" alt="Roller Viewer 中合成 task 在两个模型间的得分与轨迹对比" width="32%"></a>
   <a href="assets/demo/viewer.png"><img src="assets/demo/viewer.png" alt="Roller Viewer：左侧为样本导航，中间显示用户消息图片，右侧为 Inspector" width="32%"></a>
 </p>
-<p align="center"><sub>以上内容使用合成演示数据录制自内置 Viewer。左：逐步查看单个 rollout 的 reasoning、工具调用和工具结果；中：同一 task 在两个模型间的对比；右：Viewer 完整界面。点击图片可查看原图。</sub></p>
+<p align="center"><sub>以上内容使用合成演示数据录制自内置 Viewer。左：单个 rollout 的 reasoning、工具调用和工具结果；中：同一 task 在多个模型间的对比；右：完整界面。点击图片可查看原图。</sub></p>
 
 <a id="news"></a>
 
 ## 最新动态
 
-- **2026-11-17**：[使用 OpenClaw 和 Codex 采集 WildClawBench](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/)：四个自部署模型、可浏览的轨迹与评分、公开任务镜像和可运行的采集示例。Codex 新增可选的工具图片兼容设置；HF 导出支持保留 benchmark 刻意设置的测试 key。
-
-- **2026-11-16**：[Hugging Face 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#hugging-face-export)。`roller export RUN_DIR --format hf` 把一次 run 打包成数据集目录，Hub 用轨迹查看器直接打开，run 的模型端点、主机路径和凭据取值在导出时已替换。首个数据集是 [Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories)，[Cookbook](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/) 记录了它背后的完整运行。
-- **2026-11-16**：[ATIF 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#atif-export)。`roller export RUN_DIR` 把一次 run 的全部轨迹转换为 [Harbor](https://github.com/harbor-framework/harbor) 读取的格式。
+- **2026-11-19**：Roller 0.5.0。`roller import` 已随 PyPI 版本发布。DeepSeek Harness 可以用 `--sandbox-provider e2b` 在 [E2B 沙箱](https://valen-team.github.io/zh-Hans/roller/harnesses/deepseek-configuration/#在-e2b-上运行-wildclawbench)里采集 WildClawBench，采集端不需要 Docker daemon。采集开始前检查凭据，并记录进度和 ETA；`roller clean` 清理已退出采集进程留下的容器；`roller export --format sft --min-score` 按得分筛选训练数据。
+- **2026-11-18**：[会话导入](https://valen-team.github.io/zh-Hans/roller/traces/import/)。`roller import` 把本机已有的 Claude Code 和 Codex 会话导入成 Roller run，Viewer 和各种导出像读取采集的 run 一样读取它。
+- **2026-11-17**：[使用 OpenClaw 和 Codex 采集 WildClawBench](https://valen-team.github.io/zh-Hans/roller/cookbook/wildclawbench-open-models/)：四个自部署模型、可浏览的轨迹与评分、公开任务镜像和可运行的采集示例。
+- **2026-11-16**：[Hugging Face 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#hugging-face-export)和 [ATIF 导出](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/#atif-export)。首个数据集是 [Roller-WildClawBench-Trajectories](https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories)。
 - **2026-11-15**：Roller 已发布至 PyPI，包名为 [`roller-agent`](https://pypi.org/project/roller-agent/)。`roller init` 将示例 task 和配置模板写入工作目录。
+
+<details>
+<summary>更早</summary>
+
 - **2026-11-11**：支持上下文压缩场景下的 SFT 导出。Task Agent 压缩上下文时，每段通过校验的上下文窗口作为独立的 SFT 记录导出至 `sft_segments/`。
 - **2026-11-08**：新增 QwenClawBench 适配，覆盖 8 个领域的 100 个任务，支持自动评分、混合评分和单题多次运行。
 - **2026-11-05**：新增 SkillsBench 与 PinchBench 一键评测；SFT 记录支持图片。
 - **2026-11-01**：新增 Hermes、OpenCode、DeepSeek Harness 和 Pi Agent，支持的 Harness 增至 7 种。
 
-<a id="architecture"></a>
+</details>
 
-## 架构
-
-Roller 以单个宿主机进程运行。Collector 并行调度 rollout，并为每个 rollout 启动一个 Docker 容器。容器内，Harness 运行时在包含声明输入和 Context 的工作区中执行 Agent 循环。根据 Harness 类型和 `--wire-trace` 设置，模型请求或经由 Roller 的请求代理记录后转发，或直接发送至模型 API。最后一轮结束后，Roller 回收原生 session 和输出目录，由轨迹转换器将 sample 写入运行目录。
-
-<p align="center">
-  <a href="assets/diagrams/architecture-zh-light.png"><picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/architecture-zh-dark.png">
-    <img src="assets/diagrams/architecture-zh-light.png" alt="Roller 架构：宿主机进程加载 task 并生成快照，Collector 为每个 rollout 启动一个 Docker 容器，模型调用经过请求代理，轨迹转换器将 sample 写入运行目录" width="100%">
-  </picture></a>
-</p>
-<p align="center"><sub>绿色箭头表示模型调用；虚线表示可选组件和条件路径。</sub></p>
-
-每个 rollout 的生命周期如下。Collector 首先检查是否已存在有效的 sample；若不存在，则启动容器，由 Harness 执行各轮对话。使用 User Simulator 时，Task Agent 的每次回复交由 Simulator 处理，Simulator 返回下一条用户消息或结束对话。bench 运行时，评分程序在回收之前执行。回收完成后，Roller 将原生 session 转换为统一结构的轨迹；随后 Collector 对失败的尝试进行重试（最多 `--retries` 次），或完成 sample 收尾。
-
-<p align="center">
-  <a href="assets/diagrams/lifecycle-zh-light.png"><picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/lifecycle-zh-dark.png">
-    <img src="assets/diagrams/lifecycle-zh-light.png" alt="单个 rollout 的生命周期：Resume 检查、启动容器、包含模型调用和可选 User Simulator 的多轮对话、可选的 bench 评分、回收、轨迹转换，以及重试或收尾" width="100%">
-  </picture></a>
-</p>
-
-<a id="highlights"></a>
-
-## 主要特性
-
-- **统一的 Harness 接口。** OpenClaw、Codex、Claude Code、Hermes、OpenCode、DeepSeek Harness 和 Pi Agent 使用相同的 task 格式，通过 `--harness` 选择。各 Harness 产生的 sample 采用相同的目录结构和统一的轨迹结构。
-- **逐步轨迹记录。** 统一结构轨迹的每个 step 记录可见 reasoning、工具调用、工具结果、token 数和耗时。启用 `--wire-trace full` 后，Roller 还会保存其代理转发给模型 API 的全部请求体。
-- **在任务容器内评测。** `roller collect --bench` 导出 Benchmark 任务并执行，在容器回收前于同一容器内运行评分程序。评分失败与零分分开记录，结果汇总至 `bench-report.json`。
-- **可复现的批量采集。** 容器启动前，Roller 为全部输入生成快照并计算摘要，`lock.json` 记录决定 sample 内容的配置。`--resume` 跳过已完成的 sample 并重新执行其余部分；若记录的配置发生变化，则报告差异并退出。`--retries N` 为每个失败的 rollout 提供最多 N 次额外尝试。
-- **支持图片与压缩分段的训练数据。** 轨迹包含图片时，SFT 记录附带 `images` 字段。Task Agent 压缩上下文时，每段通过校验的上下文窗口导出至 `sft_segments/`，并通过 `target_start_index` 标识参与训练的消息。
-- **动态对话。** User Simulator 运行在独立的 Harness 中，读取当前对话后发送下一条用户消息或结束任务，可使用与 Task Agent 不同的 Harness 和模型。
-- **本地 Viewer。** `roller view` 直接读取已有运行目录且不做修改，无需额外依赖，默认仅监听 `127.0.0.1`。
+各版本的全部变更见 [CHANGELOG](CHANGELOG.md)。
 
 <a id="quick-start"></a>
 
@@ -109,41 +141,18 @@ Roller 以单个宿主机进程运行。Collector 并行调度 rollout，并为�
 
 ### 1. 安装
 
-环境要求：Python 3.10 及以上版本，以及正在运行的 Docker daemon。
+环境要求：Python 3.10 及以上版本，以及正在运行的 Docker daemon。在 macOS 上使用 Docker Desktop 时，需在 **Settings → Resources → Network** 中启用 **Enable host networking** 并重启 Docker Desktop。
 
 ```bash
-# uv
-uv tool install roller-agent
-
-# pip
-python -m pip install roller-agent
-
+uv tool install roller-agent    # 或：python -m pip install roller-agent
 docker pull ghcr.io/openclaw/openclaw:2026.7.1-2
-```
-
-在 macOS 上使用 Docker Desktop 时，需在 **Settings → Resources → Network** 中启用 **Enable host networking** 并重启 Docker Desktop。如需从 `docker save` 归档离线安装镜像，请使用 `docker load -i <归档文件>` 代替 `docker pull`。
-
-创建工作目录，并将示例 task 和配置模板写入其中。后续步骤均在该目录下执行：
-
-```bash
 mkdir roller-quickstart && cd roller-quickstart
-roller init
-```
-
-`roller init` 创建 `examples/tasks`、`examples/config`、`examples/benchmarks` 和 `examples/env`，已存在的文件保持不变。
-
-如需使用最新改动或参与开发，请从源码安装。克隆的仓库已包含 `examples/`，无需执行 `roller init`：
-
-```bash
-git clone https://github.com/Valen-Team/Roller.git
-cd Roller
-uv venv && source .venv/bin/activate
-uv pip install -e ".[test]"
+roller init                     # 写入示例 task 和配置模板
 ```
 
 ### 2. 配置模型
 
-复制环境变量模板，设置 `MY_PROXY_BASE_URL` 和 `MY_PROXY_API_KEY`，并将变量导出到当前 shell。`examples/env/api.env` 已在 `.gitignore` 中排除。
+复制环境变量模板，设置 `MY_PROXY_BASE_URL` 和 `MY_PROXY_API_KEY`，并将变量导出到当前 shell：
 
 ```bash
 cp examples/env/api.env.example examples/env/api.env
@@ -151,20 +160,9 @@ cp examples/env/api.env.example examples/env/api.env
 set -a; source examples/env/api.env; set +a
 ```
 
-在 [`examples/config/openclaw/models.json`](examples/config/openclaw/models.json) 中，将模型 `id` 设置为服务端使用的模型名称。命令中以 `<provider>/<id>` 引用模型，其中 `<provider>` 为 `providers` 下的键名。使用示例文件时，模型引用为 `my-openai-proxy/my-model`。若服务仅支持 `/chat/completions`，需将 `api` 由 `openai-responses` 改为 `openai-completions`。API Key 仅应保存在环境变量中，不应写入 task、命令或受版本控制的文件。
+在 [`examples/config/openclaw/models.json`](examples/config/openclaw/models.json) 中，将模型 `id` 设置为服务端使用的模型名称。命令中以 `<provider>/<id>` 引用模型；使用示例文件时，模型引用为 `my-openai-proxy/my-model`。若服务仅支持 `/chat/completions`，需将 `api` 由 `openai-responses` 改为 `openai-completions`。
 
-### 3. 预检与采集
-
-```bash
-roller collect \
-  --tasks examples/tasks/tasks.jsonl \
-  --model my-openai-proxy/my-model \
-  --model-config examples/config/openclaw/models.json \
-  --parallel 4 \
-  --dry-run
-```
-
-Dry-run 解析 task、校验输入文件并输出计划创建的 rollout。该过程不启动容器，也不调用模型 API，因此无法发现镜像缺失或 API Key 无效等问题。确认计划无误后，移除 `--dry-run`，设置运行名称，并为每个失败的 rollout 启用一次重试：
+### 3. 采集
 
 ```bash
 roller collect \
@@ -175,19 +173,7 @@ roller collect \
   --output runs --run-name quickstart
 ```
 
-如需对比多个模型，可重复指定 `--model`，每个 task 将对每个模型各执行一次。运行中断后，在原命令中添加 `--resume` 即可继续。若 `lock.json` 中记录的配置发生变化，应使用新的 `--run-name`。
-
-### 恢复、评分与训练导出
-
-采集将进度、ETA 和心跳写入 `collect.log`，提前检查必要凭据；连续 10 个 error 后停止派发（`--max-consecutive-errors 0` 关闭熔断）。用 `roller clean RUN_DIR --dry-run` 检查已退出采集进程的残留容器。Resume 支持增加任务、模型和兼容补丁升级。
-
-Benchmark 报告按模型分开，失败样本仍计入分母。评分器失败先在存活容器内重试；修复原因后可用 `--resume --resume-unscored` 重跑对应 agent。Viewer 支持中英文、得分筛选排序和用户消息图片。
-
-```bash
-roller export RUN_DIR --format sft --min-score 0.5 --output training
-```
-
-SFT 导出附带逐行对应的 `sft_index.jsonl`、`sft_segments_index.jsonl`，供查询任务、模型和得分。HF 导出检测常见凭据形态，并在输出目录旁写入残留审阅报告 `<output>.redaction-report.json`。
+可以先加 `--dry-run`：解析 task、校验输入文件并输出计划创建的 rollout，不启动容器，也不调用模型 API。如需对比多个模型，可重复指定 `--model`，每个 task 将对每个模型各执行一次。
 
 ### 4. 查看结果
 
@@ -195,7 +181,14 @@ SFT 导出附带逐行对应的 `sft_index.jsonl`、`sft_segments_index.jsonl`�
 roller view runs/quickstart
 ```
 
-打开终端输出的地址（默认 `http://127.0.0.1:17865`）。Viewer 展示每个 task 的消息、reasoning、工具调用、工具结果和最终回复。
+打开终端输出的地址（默认 `http://127.0.0.1:17865`）。
+
+### 长时间运行
+
+- **进度。** 采集开始前检查必要凭据，将进度、ETA 和心跳写入 `collect.log`，连续 10 个 error 后停止派发（`--max-consecutive-errors 0` 关闭）。
+- **Resume。** 在原命令中添加 `--resume`，跳过已完成的 sample。可以增加 task 和模型；若 `lock.json` 中记录的其他配置发生变化，Roller 报告差异并退出。
+- **评分失败。** 评分程序失败时先在存活的容器内重试，`--resume --resume-unscored` 重跑评分失败的 Agent。
+- **残留容器。** `roller clean RUN_DIR --dry-run` 列出已退出采集进程留下的容器。
 
 [快速上手指南 →](https://valen-team.github.io/zh-Hans/roller/start/getting-started/)
 
@@ -203,7 +196,7 @@ roller view runs/quickstart
 
 ## Harness
 
-Harness 是容器内的 Agent 运行时，负责启动 Agent、提供工具并调用模型 API。可通过 `--harness` 为全部 task 指定 Harness，或在 task 中通过 `harness` 字段单独指定。
+Harness 是容器内的 Agent 运行时，负责启动 Agent、提供工具并调用模型 API。可通过 `--harness` 为全部 task 指定 Harness，或在 task 中通过 `harness` 字段单独指定。7 种 Harness 使用相同的 task 格式，产生的 sample 采用相同的目录结构。
 
 | Harness | 模型 API | 说明 |
 | --- | --- | --- |
@@ -215,9 +208,39 @@ Harness 是容器内的 Agent 运行时，负责启动 Agent、提供工具并�
 | DeepSeek Harness | DeepSeek Chat Completions | 官方 SDK；提供单个持久化 Bash 工具 |
 | Pi Agent | OpenAI Chat Completions | Pi SDK；提供 7 个工具：`read`、`bash`、`edit`、`write`、`grep`、`find`、`ls` |
 
-OpenClaw 通过 `--model-config` 读取模型定义，其余六种 Harness 使用 `--api-base` 与 `--api-key-env`。同一次运行组合多种 Harness 时，各 Harness 使用带前缀的参数，例如 `--hermes-api-base` 与 `--hermes-api-key-env`。
+OpenClaw 通过 `--model-config` 读取模型定义，其余六种 Harness 使用 `--api-base` 与 `--api-key-env`；同一次运行组合多种 Harness 时，各 Harness 使用带前缀的参数，例如 `--hermes-api-base` 与 `--hermes-api-key-env`。所有 Harness 均可作为 Task Agent 或 [User Simulator](https://valen-team.github.io/zh-Hans/roller/tasks/user-simulator/)，后者由另一个模型扮演用户并生成下一条用户消息。
 
-所有 Harness 均可作为 Task Agent 或 User Simulator。各 Harness 的 Docker 镜像、API 配置和 reasoning 参数不同，详见对应指南：[OpenClaw](https://valen-team.github.io/zh-Hans/roller/harnesses/openclaw-configuration/) · [Codex](https://valen-team.github.io/zh-Hans/roller/harnesses/codex-configuration/) · [Claude Code](https://valen-team.github.io/zh-Hans/roller/harnesses/claude-code-configuration/) · [Hermes](https://valen-team.github.io/zh-Hans/roller/harnesses/hermes-configuration/) · [OpenCode](https://valen-team.github.io/zh-Hans/roller/harnesses/opencode-configuration/) · [DeepSeek](https://valen-team.github.io/zh-Hans/roller/harnesses/deepseek-configuration/) · [Pi Agent](https://valen-team.github.io/zh-Hans/roller/harnesses/pi-configuration/)。
+rollout 在 Docker 容器中运行。DeepSeek Harness 还可以在 E2B 沙箱里运行 WildClawBench：安装 `roller-agent[e2b]` 并传入 `--sandbox-provider e2b --sandbox-template NAME`，见 [DeepSeek 指南](https://valen-team.github.io/zh-Hans/roller/harnesses/deepseek-configuration/#在-e2b-上运行-wildclawbench)。
+
+各 Harness 的指南：[OpenClaw](https://valen-team.github.io/zh-Hans/roller/harnesses/openclaw-configuration/) · [Codex](https://valen-team.github.io/zh-Hans/roller/harnesses/codex-configuration/) · [Claude Code](https://valen-team.github.io/zh-Hans/roller/harnesses/claude-code-configuration/) · [Hermes](https://valen-team.github.io/zh-Hans/roller/harnesses/hermes-configuration/) · [OpenCode](https://valen-team.github.io/zh-Hans/roller/harnesses/opencode-configuration/) · [DeepSeek](https://valen-team.github.io/zh-Hans/roller/harnesses/deepseek-configuration/) · [Pi Agent](https://valen-team.github.io/zh-Hans/roller/harnesses/pi-configuration/)。
+
+<a id="benchmarks"></a>
+
+## Benchmark
+
+Bench 适配器将 Benchmark 任务转换为 Roller task，并在各 sample 的运行容器内完成评分。评分失败与零分分开记录，`bench-report.json` 按模型分别汇总，失败的 sample 计入分母。
+
+| Bench | 默认 Harness | 范围 |
+| --- | --- | --- |
+| [WildClawBench](https://valen-team.github.io/zh-Hans/roller/benches/wildclawbench/) | `openclaw` | 6 个类别的 60 个真实场景任务 |
+| [SkillsBench](https://valen-team.github.io/zh-Hans/roller/benches/skillsbench/) | `opencode` | 每个任务构建独立环境；分 with-skill 与 no-skill 两组运行，由官方 verifier 评分 |
+| [PinchBench](https://valen-team.github.io/zh-Hans/roller/benches/pinchbench/) | `openclaw` | 自动评分、LLM judge、混合评分与多 session 任务 |
+| [QwenClawBench](https://valen-team.github.io/zh-Hans/roller/benches/qwenclawbench/) | `openclaw` | 8 个领域的 100 个任务，支持单题多次运行 |
+| [SWE-Bench Pro](https://valen-team.github.io/zh-Hans/roller/benches/swebench-pro/) | `openclaw` | 11 个仓库的 731 个软件工程任务，在官方实例镜像中用隐藏测试评分 |
+
+bench 运行用 `roller collect --bench` 启动，写法见[一条命令跑完一个 Benchmark](#what-roller-does)；也可以写成 YAML 文件，用 `roller bench run --config ...` 启动，见 [Benchmark 运行配置](https://valen-team.github.io/zh-Hans/roller/benches/benchmark-standard/)。各 bench 指南列出了须与上游保持一致的配置，以及评分程序所需的环境变量。接入新的 bench 见 [Bench 接入与评分](https://valen-team.github.io/zh-Hans/roller/benches/bench-format/#6-加一个新-bench)。
+
+<a id="tasks"></a>
+
+## Task
+
+task 是一个 JSON 对象。最小 task 包含 schema 版本、ID 和 prompt：
+
+```json
+{"schema_version":"roller.task/v1","id":"hello","prompt":"计算 2+3，只回复数字。"}
+```
+
+task 列表可以是 `.jsonl` 文件、JSON 数组或 `{"tasks": [...]}` 形式的对象。可选字段用于定义预先写好的多轮用户消息（`messages`）、输入文件与 Context 文件（`files`）、由 Roller 完整回收的输出目录（`files.output_dir`）、环境变量与 setup 命令（`runtime`）、该 task 使用的 Harness（`harness`）和 `user_simulator`。全部字段见 [Task 格式参考](https://valen-team.github.io/zh-Hans/roller/tasks/task-format/)。
 
 <a id="outputs"></a>
 
@@ -244,82 +267,44 @@ runs/quickstart/
 下图展示各文件的生成路径。虚线路径需通过箭头上标注的参数开启。
 
 <p align="center">
-  <a href="assets/diagrams/pipeline-zh-light.png"><picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/pipeline-zh-dark.png">
-    <img src="assets/diagrams/pipeline-zh-light.png" alt="轨迹数据流：Harness session 复制为 trace.jsonl 并转换为 trace_ACTF.json，再生成 trace_SFT.json 和 sft.jsonl；--capture-calls 开启压缩分段导出，--wire-trace full 将请求体保存到 wire_trace.jsonl" width="100%">
+  <a href="assets/diagrams/pipeline-zh-light.svg"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/pipeline-zh-dark.svg">
+    <img src="assets/diagrams/pipeline-zh-light.svg" alt="轨迹数据流：采集或导入的 Harness session 复制为 trace.jsonl 并转换为 trace_ACTF.json，再生成 trace_SFT.json 和 sft.jsonl；roller export 把 session 脱敏后导出为 Hugging Face 数据集，并把统一轨迹转换为 ATIF；--capture-calls 开启压缩分段导出，--wire-trace full 将请求体保存到 wire_trace.jsonl" width="100%">
   </picture></a>
 </p>
 
-以下文件仅在特定条件下生成：
+以下三个文件仅在特定条件下生成：
 
-- `sft_segments/`：Task Agent 压缩上下文时生成。此时该 rollout 不写入 `sft.jsonl`，每段通过校验的上下文窗口单独导出为一条记录。分段记录列于 sample 的 `info.json`，并汇总至运行目录下的 `sft_segments.jsonl`。`target_start_index` 标识首条参与训练的 assistant 消息，训练时须 mask 该消息之前的全部内容。
-- `wire_trace.jsonl`：启用 `--wire-trace full` 时生成，包含 Roller 代理转发给模型 API 的全部请求体。Harness 压缩、截断或改写上下文时，其内容可能与原生 session 不一致。
+- `sft_segments/`：Task Agent 压缩上下文时生成。此时该 rollout 不写入 `sft.jsonl`，每段通过校验的上下文窗口单独导出为一条记录，`target_start_index` 标识首条参与训练的消息。
+- `wire_trace.jsonl`：启用 `--wire-trace full` 时生成，包含 Roller 代理转发给模型 API 的全部请求体。
 - `conversation.json`：User Simulator task 生成，包含双方可见的对话内容。
 
-各文件的生成与缺省规则见[轨迹产出文件指南](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/)。
+`--keep-thinking` 默认启用，保存模型服务返回的可见 reasoning；`--thinking` 设置请求的推理档位。各文件的生成条件见[轨迹产出文件指南](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/)，训练记录的结构见 [SFT 数据格式](https://valen-team.github.io/zh-Hans/roller/traces/sft-format/)。
 
-### Reasoning
+<a id="architecture"></a>
 
-`--keep-thinking` 默认启用，保存模型服务返回的可见 reasoning；`--thinking` 设置请求的推理档位。统一轨迹与 SFT 中保存的内容取决于模型类型：
+## 架构
 
-| 模型类型 | 保存的 reasoning |
-| --- | --- |
-| GPT reasoning 系列 | 服务返回的可见 summary 或 content |
-| Claude 系列 | 服务返回的可见 thinking 或 summary |
-| Qwen、GLM 等开源模型 | 服务返回的明文 reasoning |
+Roller 以单个宿主机进程运行。Collector 并行调度 rollout，并为每个 rollout 启动一个 Docker 容器或 E2B 沙箱。在其中，Harness 运行时在包含声明输入和 Context 的工作区中执行 Agent 循环。根据 Harness 类型和 `--wire-trace` 设置，模型请求或经由 Roller 的请求代理记录后转发，或直接发送至模型 API。最后一轮结束后，Roller 回收原生 session 和输出目录，由轨迹转换器将 sample 写入运行目录。`roller import` 把本机会话交给同一套转换器，不启动容器。
 
-服务仅返回 reasoning token 数或加密状态时，`reasoning_content` 为空。`reasoning_content` 仅包含服务返回的 reasoning 文本，工具参数保留在 `tool_calls` 中。OpenClaw 各模型支持的档位见 [Thinking 配置](https://valen-team.github.io/zh-Hans/roller/harnesses/openclaw-configuration/#6-thinking-配置)。
+<p align="center">
+  <a href="assets/diagrams/architecture-zh-light.svg"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/architecture-zh-dark.svg">
+    <img src="assets/diagrams/architecture-zh-light.svg" alt="Roller 架构：宿主机进程加载 task 并生成快照，Collector 为每个 rollout 启动一个 Docker 容器或 E2B 沙箱，模型调用经过请求代理，轨迹转换器将 sample 写入运行目录；roller import 把本机会话交给同一套转换器，Viewer、训练、Bench 报告和数据集导出读取运行目录" width="100%">
+  </picture></a>
+</p>
+<p align="center"><sub>蓝色箭头表示模型调用；虚线表示可选组件和条件路径。</sub></p>
 
-<a id="tasks"></a>
+每个 rollout 的生命周期如下。Collector 首先检查是否已存在有效的 sample；若不存在，则启动容器，由 Harness 执行各轮对话。使用 User Simulator 时，Task Agent 的每次回复交由 Simulator 处理，Simulator 返回下一条用户消息或结束对话。bench 运行时，评分程序在回收之前执行。随后 Roller 将原生 session 转换为统一结构的轨迹，Collector 对失败的尝试进行重试（最多 `--retries` 次），或完成 sample 收尾。
 
-## Task
+<p align="center">
+  <a href="assets/diagrams/lifecycle-zh-light.svg"><picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/lifecycle-zh-dark.svg">
+    <img src="assets/diagrams/lifecycle-zh-light.svg" alt="单个 rollout 的生命周期：Resume 检查、启动容器或沙箱、包含模型调用和可选 User Simulator 的多轮对话、可选的 bench 评分、回收、轨迹转换，以及重试或收尾" width="100%">
+  </picture></a>
+</p>
 
-task 是一个 JSON 对象。最小 task 包含 schema 版本、ID 和 prompt：
-
-```json
-{"schema_version":"roller.task/v1","id":"hello","prompt":"计算 2+3，只回复数字。"}
-```
-
-task 列表可以是 `.jsonl` 文件、JSON 数组或 `{"tasks": [...]}` 形式的对象。可选字段用于定义文件、Context、对话轮次和运行设置：
-
-| 字段 | 用途 |
-| --- | --- |
-| `messages` | 预先定义的多轮用户消息 |
-| `file_root`、`files.inputs` | 复制到工作区的本地文件 |
-| `files.context` | `AGENTS.md`、`USER.md`、`MEMORY.md`、skills 等 Context 文件，由 Harness 放置在 Agent 可自动发现的位置 |
-| `files.output_dir` | Agent 的输出目录，Roller 回收其全部内容 |
-| `runtime` | 环境变量、setup 命令和 task 级 thinking |
-| `harness` | 该 task 使用的 Harness（也可使用 `agent_harness` 或 `task_agent.harness`），可被 `--harness` 覆盖 |
-| `user_simulator` | 扮演用户并生成用户消息的 Harness 与模型 |
-
-`messages` 与 `user_simulator` 不可同时使用。字段定义见 [Task 格式参考](https://valen-team.github.io/zh-Hans/roller/tasks/task-format/)，动态对话见 [User Simulator 指南](https://valen-team.github.io/zh-Hans/roller/tasks/user-simulator/)。
-
-<a id="benchmarks"></a>
-
-## Benchmark
-
-Bench 适配器将 Benchmark 任务转换为 Roller task，并在各 sample 的运行容器内完成评分。
-
-| Bench | 默认 Harness | 范围 |
-| --- | --- | --- |
-| [WildClawBench](https://valen-team.github.io/zh-Hans/roller/benches/wildclawbench/) | `openclaw` | 6 个类别的 60 个真实场景任务 |
-| [SkillsBench](https://valen-team.github.io/zh-Hans/roller/benches/skillsbench/) | `opencode` | 每个任务构建独立环境；分 with-skill 与 no-skill 两组运行，由官方 verifier 评分 |
-| [PinchBench](https://valen-team.github.io/zh-Hans/roller/benches/pinchbench/) | `openclaw` | 自动评分、LLM judge、混合评分与多 session 任务 |
-| [QwenClawBench](https://valen-team.github.io/zh-Hans/roller/benches/qwenclawbench/) | `openclaw` | 8 个领域的 100 个任务，支持单题多次运行 |
-| [SWE-Bench Pro](https://valen-team.github.io/zh-Hans/roller/benches/swebench-pro/) | `openclaw` | 11 个仓库的 731 个软件工程任务，在官方实例镜像中用隐藏测试评分 |
-
-以下以 WildClawBench 为例。检出上游仓库并加载其 `.env` 后，执行以下命令即可完成任务转换、轨迹采集和逐个评分，并将 `tasks.jsonl` 与 `bench-report.json` 写入运行目录：
-
-```bash
-roller collect --bench wildclawbench --bench-root ~/WildClawBench \
-  --model <provider>/<model> --model-config <models.json> \
-  --harness openclaw --openclaw-image wildclawbench-ubuntu:v1.3 \
-  --parallel 4 --output runs --run-name wildclaw
-```
-
-同一次运行也可以写成 YAML 文件，并通过 `roller bench run --config ...` 启动，见 [Benchmark 运行配置](https://valen-team.github.io/zh-Hans/roller/benches/benchmark-standard/)。
-
-各 bench 指南列出了须与上游保持一致的配置，以及评分程序所需的环境变量。仅当这些配置与上游一致时，分数才具有直接可比性。接入新的 bench 见 [Bench 接入与评分](https://valen-team.github.io/zh-Hans/roller/benches/bench-format/#6-加一个新-bench)。
+容器启动前，Roller 为全部输入生成快照并计算摘要，`lock.json` 记录决定 sample 内容的配置，因此 Resume 之后得到的 sample 与首次运行一致。
 
 <a id="documentation"></a>
 
@@ -339,6 +324,7 @@ roller collect --bench wildclawbench --bench-root ~/WildClawBench \
 | [轨迹产出文件指南](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/) | 各产出文件及其生成条件；原生轨迹、统一轨迹、SFT 与 wire trace 的对比 |
 | [SFT 数据格式](https://valen-team.github.io/zh-Hans/roller/traces/sft-format/) | 记录结构、图片和压缩分段 |
 | [Viewer](https://valen-team.github.io/zh-Hans/roller/traces/viewer/) | 启动、端口和远程访问 |
+| [会话导入](https://valen-team.github.io/zh-Hans/roller/traces/import/) | 导入本机 Claude Code 和 Codex 会话，以及上传前的脱敏 |
 | [Bench 接入与评分](https://valen-team.github.io/zh-Hans/roller/benches/bench-format/) | bench 运行、评分和新 bench 的接入 |
 | [Examples](examples/README.md) | 各 Harness 的可运行命令 |
 | [Coverage 功能测试](examples/coverage/README.md) | 覆盖全部 7 种 Harness 的 1624 个功能测试任务 |

@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -141,6 +142,7 @@ class ClaudeCodeConfig:
     capture_debug: str = "on-error"
     # Let the proxy replace tool-use IDs the endpoint issues more than once.
     unique_tool_ids: bool = False
+    pdf_as_images: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -192,6 +194,15 @@ class ClaudeCodeConfig:
             raise ValueError(
                 "Claude tool ID repair requires --claude-api-base and wire tracing"
             )
+        if self.pdf_as_images:
+            if not self.api_base or self.wire_trace_mode == "off":
+                raise ValueError(
+                    "Claude PDF conversion requires --claude-api-base and wire tracing"
+                )
+            if find_spec("pypdfium2") is None or find_spec("PIL") is None:
+                raise ValueError(
+                    "Claude PDF conversion requires the roller-agent[pdf] extra"
+                )
         if self.wire_trace_mode != "off" and self.api_base and self.network != "host":
             raise ValueError(
                 "Claude Code wire tracing requires --network host so the container "
@@ -261,6 +272,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             tool_id_mappings_path=mappings_path
             if self.config.unique_tool_ids
             else None,
+            anthropic_pdf_as_images=self.config.pdf_as_images,
         )
         self._wire_proxy.start()
 
@@ -934,6 +946,7 @@ class ClaudeCodeSession(InteractiveSession):
                 "permission_mode": config.permission_mode,
                 "wire_trace": config.wire_trace_mode,
                 **({"unique_tool_ids": True} if config.unique_tool_ids else {}),
+                **({"pdf_as_images": True} if config.pdf_as_images else {}),
                 "keep_thinking": config.keep_thinking,
                 "config_sha256": config.config_sha256,
                 "output_collection": output_collection_metadata(
