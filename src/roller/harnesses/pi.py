@@ -50,6 +50,7 @@ class PiConfig:
     output_tokens: int = 8192
     input_modalities: tuple[str, ...] = ("text", "image")
     capture_calls: bool = False
+    token_ids: bool = False
     capture_debug: str = "on-error"
     wire_trace_mode: str = "actf"
     keep_thinking: bool = True

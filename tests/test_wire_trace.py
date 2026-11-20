@@ -20,6 +20,7 @@ from roller.wire_trace import (
     REDACTED_VALUE,
     WireTraceProxy,
     _ProxyHandler,
+    _rewrite_event,
     extract_wire_image_requests,
     extract_wire_tools,
     normalize_chat_completion_reasoning_response,
@@ -728,7 +729,7 @@ class NormalizeReasoningReplayTests(unittest.TestCase):
     def test_normalizes_sse_data_line(self) -> None:
         line = b'data: {"choices":[{"delta":{"reasoning":"chain"}}]}\n'
 
-        normalized = _ProxyHandler._normalize_sse_reasoning_line(line)
+        normalized = _rewrite_event(line, normalize_chat_completion_reasoning_response)
 
         payload = json.loads(normalized.removeprefix(b"data: "))
         self.assertEqual(payload["choices"][0]["delta"]["reasoning_content"], "chain")

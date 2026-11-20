@@ -93,6 +93,7 @@ class OpenCodeConfig:
     deny_tools: tuple[str, ...] = ()
     wire_trace_mode: str = "actf"
     capture_calls: bool = False
+    token_ids: bool = False
     capture_debug: str = "on-error"
     keep_thinking: bool = True
     keep_container_on_error: bool = False

@@ -120,7 +120,6 @@ from roller.harnesses.pi import (
     pi_effort,
 )
 from roller.image_build import prepare_task_images
-from roller.messages_bridge import logprobs_mode
 from roller.models import TaskBundle
 from roller.run_lock import (
     RUN_LOCK_SCHEMA,
@@ -136,6 +135,7 @@ from roller.thinking_capabilities import (
     ThinkingCapabilities,
     load_thinking_capabilities,
 )
+from roller.token_ids import logprobs_mode
 from roller.trajectory_audit import training_summary
 from roller.version import __version__
 from roller.viewer import DEFAULT_PORT as VIEWER_DEFAULT_PORT
@@ -202,7 +202,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "target format: atif, the trajectory format Harbor reads (default), "
             "hf, a Hugging Face dataset folder, sft, the SFT records of the "
             "run with an index of the task, model and bench score of each, or "
-            "tokens, the token ids and logprobs --claude-token-ids recorded, "
+            "tokens, the token ids and logprobs --token-ids recorded, "
             "joined into one sequence per conversation"
         ),
     )
@@ -641,6 +641,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="save full model calls and native subagent relations for all harness participants",
     )
     runtime.add_argument(
+        "--token-ids",
+        action="store_true",
+        help=(
+            "save the prompt and completion token ids of every model call with "
+            "the logprobs of the sampled tokens in token_ids.jsonl; for Claude "
+            "Code with --claude-chat-completions, Hermes, OpenCode, DeepSeek "
+            "Harness and Pi Agent, with --capture-calls and an endpoint that "
+            "returns token ids, such as vLLM"
+        ),
+    )
+    runtime.add_argument(
         "--thinking",
         type=normalize_thinking,
         choices=THINKING_LEVELS,
@@ -1022,16 +1033,6 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     claude.add_argument(
-        "--claude-token-ids",
-        action="store_true",
-        help=(
-            "save the prompt and completion token ids of every model call with "
-            "the logprobs of the sampled tokens in token_ids.jsonl; needs "
-            "--claude-chat-completions and an endpoint that returns token ids, "
-            "such as vLLM"
-        ),
-    )
-    claude.add_argument(
         "--claude-pdf-as-images",
         action="store_true",
         help="render inline PDF documents as page text and images for Messages backends without document support",
@@ -1337,6 +1338,23 @@ def _preflight_environment(
                 host_api_key(HARNESSES[name].label, configs[name].api_key_env)
 
 
+def _token_logprobs(
+    requests: Sequence[Any], cli_harness: str | None, configs: Mapping[str, Any]
+) -> dict[str, str]:
+    """How the endpoint of each model reports logprobs: "processed" or "raw"."""
+
+    modes: dict[str, str] = {}
+    for request in requests:
+        name = cli_harness or request.task.harness
+        if request.model not in modes:
+            modes[request.model] = logprobs_mode(
+                configs[name].api_base.rstrip("/") + HARNESSES[name].chat_completions,
+                request.model,
+                host_api_key(HARNESSES[name].label, configs[name].api_key_env),
+            )
+    return modes
+
+
 @contextlib.contextmanager
 def _run_log(path: Path) -> Iterator[None]:
     """Append this invocation's log, INFO and above, to ``path``."""
@@ -1556,6 +1574,12 @@ def _collect(args: argparse.Namespace) -> int:
         raise ValueError("--sandbox-template requires a remote --sandbox-provider")
     if args.claude_capture_calls and "claude-code" not in selected_harnesses:
         raise ValueError("--claude-capture-calls requires a Claude Code participant")
+    if args.token_ids:
+        unsupported = sorted(
+            name for name in selected_harnesses if not HARNESSES[name].chat_completions
+        )
+        if unsupported:
+            raise ValueError(f"--token-ids does not support {', '.join(unsupported)}")
     cli_harness = args.harness
     args._cli_harness = cli_harness
     # Resolve the historical global default after loading tasks.  This keeps
@@ -1831,7 +1855,7 @@ def _collect(args: argparse.Namespace) -> int:
             unique_tool_ids=args.claude_unique_tool_ids,
             pdf_as_images=args.claude_pdf_as_images,
             chat_completions=args.claude_chat_completions,
-            token_ids=args.claude_token_ids,
+            token_ids=args.token_ids,
             wire_trace_mode=args.wire_trace,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
@@ -1864,6 +1888,7 @@ def _collect(args: argparse.Namespace) -> int:
             reasoning_effort=args.thinking,
             wire_trace_mode=args.wire_trace,
             capture_calls=args.capture_calls,
+            token_ids=args.token_ids,
             capture_debug=args.capture_debug,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
@@ -1944,19 +1969,16 @@ def _collect(args: argparse.Namespace) -> int:
                 f"task {task.id!r}: files.attach_images requires --pi-input-modalities text,image"
             )
 
-    _preflight_environment(
-        requests,
-        cli_harness,
-        {
-            "openclaw": openclaw_config,
-            "codex": codex_config,
-            "claude-code": claude_code_config,
-            "hermes": hermes_config,
-            "opencode": opencode_config,
-            "deepseek": deepseek_config,
-            "pi": pi_config,
-        },
-    )
+    harness_configs = {
+        "openclaw": openclaw_config,
+        "codex": codex_config,
+        "claude-code": claude_code_config,
+        "hermes": hermes_config,
+        "opencode": opencode_config,
+        "deepseek": deepseek_config,
+        "pi": pi_config,
+    }
+    _preflight_environment(requests, cli_harness, harness_configs)
     # Checked once here, for a dry run too: a judge key that is missing would
     # otherwise cost every judged sample its score after the agent has run.
     missing_env = missing_grader_env(task.raw for task in tasks)
@@ -2143,22 +2165,6 @@ def _collect(args: argparse.Namespace) -> int:
                 if claude_code_config.chat_completions
                 else {}
             ),
-            **(
-                {
-                    "token_ids": True,
-                    # "processed" or "raw", per model: see logprobs_mode.
-                    "token_logprobs": {
-                        model: logprobs_mode(
-                            claude_code_config.api_base,
-                            model,
-                            host_api_key("Claude Code", claude_api_key_env),
-                        )
-                        for model in sorted({request.model for request in requests})
-                    },
-                }
-                if claude_code_config.token_ids
-                else {}
-            ),
         }
 
     if hermes_config is not None:
@@ -2309,6 +2315,17 @@ def _collect(args: argparse.Namespace) -> int:
             ),
             "bench_run_config": getattr(args, "_bench_run_config", None),
             "models": args.model,
+            **(
+                {
+                    "token_ids": {
+                        "logprobs": _token_logprobs(
+                            requests, cli_harness, harness_configs
+                        )
+                    }
+                }
+                if args.token_ids
+                else {}
+            ),
             "trajectory_count": len(requests),
             "workspace": str(workspace) if workspace else None,
             "timeout_seconds": args.timeout,

@@ -103,6 +103,7 @@
             "config_set": {"$ref": "#/$defs/stringList"},
             "capture_calls": {"type": "boolean"},
             "unique_tool_ids": {"type": "boolean"},
+            "chat_completions": {"type": "boolean"},
             "input_modalities": {"enum": ["text", "text,image"]},
             "toolsets": {"$ref": "#/$defs/stringList"},
             "native_tools": {"type": "boolean"},
@@ -162,6 +163,7 @@
         "wire_trace": {"enum": ["off", "actf", "full"]},
         "capture_debug": {"enum": ["off", "on-error", "full"]},
         "capture_calls": {"type": "boolean"},
+        "token_ids": {"type": "boolean"},
         "thinking_capabilities": {"$ref": "#/$defs/nonEmptyString"},
         "keep_thinking": {"type": "boolean"},
         "pass_env": {

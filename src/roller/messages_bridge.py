@@ -1,8 +1,8 @@
 """Serve Anthropic Messages requests from a Chat Completions endpoint.
 
-Claude Code speaks the Messages API. Chat Completions is the endpoint that
-returns token ids, so the wire proxy translates each Messages request on its
-way out and the response on its way back.
+Claude Code speaks the Messages API. The wire proxy translates each Messages
+request on its way out and the response on its way back, with the conversion
+vLLM applies in its own Messages endpoint, so the prompt is the same either way.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import uuid
 from typing import Any
-from urllib.request import Request, urlopen
 
 STOP_REASONS = {"stop": "end_turn", "length": "max_tokens", "tool_calls": "tool_use"}
 
@@ -361,65 +360,3 @@ class MessagesStream:
             },
             {"type": "message_stop"},
         ]
-
-
-class TokenIds:
-    """The token ids and sampled logprobs of one Chat Completions response."""
-
-    def __init__(self) -> None:
-        self.prompt: list[int] = []
-        self.completion: list[int] = []
-        self.logprobs: list[float] = []
-        self.finish_reason: str | None = None
-
-    def add(self, payload: dict[str, Any]) -> None:
-        """Take one stream chunk, or the whole body of an unstreamed response."""
-
-        if payload.get("prompt_token_ids"):
-            self.prompt = payload["prompt_token_ids"]
-        for choice in payload.get("choices", []):
-            self.completion += choice.get("token_ids") or []
-            logprobs = (choice.get("logprobs") or {}).get("content") or []
-            self.logprobs += [token["logprob"] for token in logprobs]
-            if choice.get("finish_reason"):
-                self.finish_reason = choice["finish_reason"]
-
-
-def logprobs_mode(api_base: str, model: str, api_key: str) -> str:
-    """Whether the endpoint reports the logprobs of its sampling distribution.
-
-    vLLM reports them as they are before temperature and top-p unless it runs
-    with ``--logprobs-mode processed_logprobs``. Between the two likeliest
-    first tokens, the gap of the first kind does not move with temperature;
-    the gap of the second kind doubles when the temperature halves.
-    """
-
-    def gap(temperature: float) -> float:
-        body = {
-            "model": model,
-            "messages": [{"role": "user", "content": "Name a colour."}],
-            "max_tokens": 1,
-            "temperature": temperature,
-            "logprobs": True,
-            "top_logprobs": 2,
-            "return_token_ids": True,
-        }
-        request = Request(
-            f"{api_base}/v1/chat/completions",
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-        )
-        with urlopen(request, timeout=120) as response:
-            payload = json.load(response)
-        if not payload.get("prompt_token_ids"):
-            raise RuntimeError(
-                f"{model} at {api_base} returned no token ids; "
-                "--claude-token-ids needs an endpoint that honours return_token_ids"
-            )
-        first, second = payload["choices"][0]["logprobs"]["content"][0]["top_logprobs"]
-        return first["logprob"] - second["logprob"]
-
-    return "processed" if gap(0.5) > 1.5 * gap(1.0) else "raw"

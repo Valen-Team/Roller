@@ -12,7 +12,6 @@ from urllib.request import ProxyHandler, Request, build_opener
 from roller.capture import CallRecorder, read_jsonl
 from roller.messages_bridge import (
     MessagesStream,
-    TokenIds,
     chat_request,
     messages_error,
     messages_response,
@@ -316,16 +315,6 @@ class MessagesStreamTests(unittest.TestCase):
             },
         )
 
-    def test_token_ids_and_logprobs_accumulate_over_the_chunks(self):
-        tokens = TokenIds()
-        for chunk in CHUNKS:
-            tokens.add(chunk)
-
-        self.assertEqual(tokens.prompt, [1, 2, 3])
-        self.assertEqual(tokens.completion, [10, 11, 12, 13, 14, 15, 16])
-        self.assertEqual(tokens.logprobs, [-0.5, -0.25, -0.125])
-        self.assertEqual(tokens.finish_reason, "tool_calls")
-
 
 class UnstreamedTests(unittest.TestCase):
     def test_response_and_error_take_the_messages_shape(self):
@@ -449,6 +438,7 @@ class BridgedProxyTests(unittest.TestCase):
             [
                 {
                     "request_seq": 1,
+                    "continues": None,
                     "prompt_token_ids": [1, 2, 3],
                     "completion_token_ids": [10, 11, 12, 13, 14, 15, 16],
                     "logprobs": [-0.5, -0.25, -0.125],
