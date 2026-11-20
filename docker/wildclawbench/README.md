@@ -58,6 +58,17 @@ docker build --build-arg BASE_IMAGE=roller-wildclaw-base:1.3-clean.1 \
 In `roller collect`, select the DeepSeek harness and the task image with
 `--harness deepseek` and `--deepseek-image roller-wildclaw-deepseek:1.3-deepseek0.1.5rc1`.
 
+Build the OpenCode task image from the cleaned base and the pinned OpenCode
+runtime, which includes the native plugin dependencies.
+
+```bash
+docker build --platform linux/amd64 -f docker/wildclawbench/Dockerfile.opencode \
+  -t roller-wildclaw-opencode:1.3-opencode1.18.30 docker/wildclawbench
+```
+
+Set `OPENCODE_IMAGE` to this tag when running the
+[OpenCode collection example](../../examples/cookbook/wildclawbench-open-models/#opencode).
+
 ### Remote execution
 
 Roller can run single-agent WildClawBench tasks with DeepSeek through an
