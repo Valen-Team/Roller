@@ -42,6 +42,7 @@ from roller.models import HarnessResult, RunRequest
 from roller.native_images import openclaw_message
 from roller.storage import safe_component
 from roller.thinking import normalize_thinking, resolve_thinking
+from roller.token_ids import TOKEN_IDS_FILE
 from roller.usage import ZERO_USAGE, extract_openclaw_usage
 from roller.wire_trace import (
     WireTraceProxy,
@@ -257,6 +258,7 @@ class OpenClawConfig:
     thinking: str | None = None
     capture_cache_trace: bool = True
     capture_calls: bool = False
+    token_ids: bool = False
     capture_debug: str = "on-error"
     wire_trace_mode: str = "actf"
     keep_thinking: bool = True
@@ -312,6 +314,8 @@ class OpenClawConfig:
             raise ValueError(
                 "OpenClaw call capture requires --model-config, host network, wire tracing and cache trace"
             )
+        if self.token_ids and not self.capture_calls:
+            raise ValueError("OpenClaw --token-ids requires --capture-calls")
         if self.wire_trace_mode not in ("off", "actf", "full"):
             raise ValueError(
                 f"wire_trace_mode must be off|actf|full: {self.wire_trace_mode}"
@@ -574,6 +578,8 @@ exec node --input-type=module -e "$1"
         else:  # Internal-only native thinking-history compatibility proxy.
             log_path = output_dir / "rollout" / "wire_strip.jsonl"
             log_mode = "tools"
+        token_ids_path = output_dir / TOKEN_IDS_FILE
+        token_ids_path.unlink(missing_ok=True)
         try:
             self._wire_proxy = WireTraceProxy(
                 upstream,
@@ -586,6 +592,7 @@ exec node --input-type=module -e "$1"
                 capture_run_header="x-roller-native-run-id" if self.capture else None,
                 strip_thinking=not self.config.keep_thinking,
                 normalize_reasoning_replay=self.config.keep_thinking,
+                token_ids_path=token_ids_path if self.config.token_ids else None,
             )
             self._wire_proxy.start()
         except Exception as exc:

@@ -11,6 +11,9 @@ import json
 import uuid
 from typing import Any
 
+# The path of the API this module translates, below the API base.
+ROUTE = "/messages"
+
 STOP_REASONS = {"stop": "end_turn", "length": "max_tokens", "tool_calls": "tool_use"}
 
 # Request fields both APIs spell the same way.
@@ -175,7 +178,7 @@ def _usage(usage: dict[str, Any] | None, prompt_tokens: int = 0) -> dict[str, in
     }
 
 
-def messages_response(chat: dict[str, Any]) -> dict[str, Any]:
+def response(chat: dict[str, Any]) -> dict[str, Any]:
     """The Messages response for one complete Chat Completions response."""
 
     choice = chat["choices"][0]
@@ -209,7 +212,7 @@ def messages_response(chat: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def messages_error(status: int | None, payload: bytes) -> dict[str, Any]:
+def error(status: int | None, payload: bytes) -> dict[str, Any]:
     """The Messages error body for a failed Chat Completions response."""
 
     try:
@@ -235,15 +238,12 @@ def messages_error(status: int | None, payload: bytes) -> dict[str, Any]:
     }
 
 
-def sse(event: dict[str, Any]) -> bytes:
-    data = json.dumps(event, ensure_ascii=False)
-    return f"event: {event['type']}\ndata: {data}\n\n".encode()
-
-
-class MessagesStream:
+class Stream:
     """Turn the chunks of a Chat Completions stream into Messages stream events."""
 
-    def __init__(self) -> None:
+    def __init__(self, request: dict[str, Any]) -> None:
+        """``request`` is the Messages request, which the events do not depend on."""
+
         self.started = False
         self.index = -1
         # The open content block: "thinking", "text" or a tool call's index.

@@ -9,13 +9,9 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
+from roller import messages_bridge
 from roller.capture import CallRecorder, read_jsonl
-from roller.messages_bridge import (
-    MessagesStream,
-    chat_request,
-    messages_error,
-    messages_response,
-)
+from roller.messages_bridge import Stream, chat_request, error, response
 from roller.model_protocols import anthropic_response
 from roller.wire_trace import WireTraceProxy
 
@@ -275,7 +271,7 @@ def stream_bytes(chunks) -> bytes:
 
 class MessagesStreamTests(unittest.TestCase):
     def test_chunks_become_thinking_text_and_tool_use_blocks(self):
-        stream = MessagesStream()
+        stream = Stream(MESSAGES_REQUEST)
         events = [event for chunk in CHUNKS for event in stream.feed(chunk)]
         events += stream.finish()
 
@@ -318,7 +314,7 @@ class MessagesStreamTests(unittest.TestCase):
 
 class UnstreamedTests(unittest.TestCase):
     def test_response_and_error_take_the_messages_shape(self):
-        message = messages_response(
+        message = response(
             {
                 "id": "chatcmpl-1",
                 "model": "glm",
@@ -348,7 +344,7 @@ class UnstreamedTests(unittest.TestCase):
         self.assertEqual(message["stop_reason"], "max_tokens")
         self.assertEqual(message["usage"]["input_tokens"], 5)
         self.assertEqual(
-            messages_error(429, b'{"error": {"message": "slow down"}}'),
+            error(429, b'{"error": {"message": "slow down"}}'),
             {
                 "type": "error",
                 "error": {"type": "rate_limit_error", "message": "slow down"},
@@ -395,7 +391,7 @@ class BridgedProxyTests(unittest.TestCase):
             mode="full",
             capture_recorder=self.recorder,
             drop_query_parameters=("beta",),
-            messages_as_chat=True,
+            chat_bridge=messages_bridge,
             token_ids_path=self.root / "token_ids.jsonl",
         )
         self.proxy.start()

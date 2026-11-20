@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from roller import messages_bridge
 from roller.artifacts import ArtifactCollectionResult
 from roller.capture_runtime import CaptureRuntime
 from roller.claude_code_actf import convert_claude_code_trace
@@ -292,7 +293,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             if self.config.unique_tool_ids
             else None,
             anthropic_pdf_as_images=self.config.pdf_as_images,
-            messages_as_chat=self.config.chat_completions,
+            chat_bridge=messages_bridge if self.config.chat_completions else None,
             token_ids_path=token_ids_path if self.config.token_ids else None,
         )
         self._wire_proxy.start()

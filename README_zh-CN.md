@@ -325,6 +325,7 @@ Roller 以单个宿主机进程运行。Collector 并行调度 rollout，并为�
 | [SFT 数据格式](https://valen-team.github.io/zh-Hans/roller/traces/sft-format/) | 记录结构、图片和压缩分段 |
 | [Viewer](https://valen-team.github.io/zh-Hans/roller/traces/viewer/) | 启动、端口和远程访问 |
 | [会话导入](https://valen-team.github.io/zh-Hans/roller/traces/import/) | 导入本机 Claude Code 和 Codex 会话，以及上传前的脱敏 |
+| [Token id 与 logprob](https://valen-team.github.io/zh-Hans/roller/traces/token-ids/) | 采集每次模型调用的 token id 和 logprob，并导出成序列 |
 | [Bench 接入与评分](https://valen-team.github.io/zh-Hans/roller/benches/bench-format/) | bench 运行、评分和新 bench 的接入 |
 | [Examples](examples/README.md) | 各 Harness 的可运行命令 |
 | [Coverage 功能测试](examples/coverage/README.md) | 覆盖全部 7 种 Harness 的 1624 个功能测试任务 |

@@ -19,8 +19,8 @@ class HarnessCapabilities:
     # The CLI or SDK accepts ``files.attach_images`` on a user message.
     attach_images: bool = False
     # From the API base to the Chat Completions endpoint whose calls
-    # ``--token-ids`` records; empty when the Harness reaches no such endpoint.
-    chat_completions: str = ""
+    # ``--token-ids`` records.
+    chat_completions: str = "/chat/completions"
 
 
 HARNESSES = {
@@ -43,14 +43,13 @@ HARNESSES = {
         capture_reader="roller.claude_capture:read_claude_native",
         compaction_mode="claude",
         attach_images=True,
-        # With --claude-chat-completions, which translates its Messages calls.
+        # Its API base has no version segment.
         chat_completions="/v1/chat/completions",
     ),
     "hermes": HarnessCapabilities(
         "Hermes",
         capture_reader="roller.bridge_capture:read_bridge_native",
         capture_reader_kwargs=(("harness", "hermes"),),
-        chat_completions="/chat/completions",
     ),
     "opencode": HarnessCapabilities(
         "OpenCode",
@@ -58,13 +57,11 @@ HARNESSES = {
         compaction_mode="opencode",
         allows_raw_only_actf=True,
         attach_images=True,
-        chat_completions="/chat/completions",
     ),
     "deepseek": HarnessCapabilities(
         "DeepSeek Harness",
         capture_reader="roller.bridge_capture:read_bridge_native",
         capture_reader_kwargs=(("harness", "deepseek"),),
-        chat_completions="/chat/completions",
     ),
     "pi": HarnessCapabilities(
         "Pi Agent",
@@ -72,7 +69,6 @@ HARNESSES = {
         capture_reader_kwargs=(("harness", "pi"),),
         compaction_mode="pi",
         attach_images=True,
-        chat_completions="/chat/completions",
     ),
 }
 HARNESS_NAMES = tuple(HARNESSES)

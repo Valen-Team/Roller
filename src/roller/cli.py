@@ -645,10 +645,10 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "save the prompt and completion token ids of every model call with "
-            "the logprobs of the sampled tokens in token_ids.jsonl; for Claude "
-            "Code with --claude-chat-completions, Hermes, OpenCode, DeepSeek "
-            "Harness and Pi Agent, with --capture-calls and an endpoint that "
-            "returns token ids, such as vLLM"
+            "the logprobs of the sampled tokens in token_ids.jsonl; needs "
+            "--capture-calls and a Chat Completions endpoint that returns token "
+            "ids, such as vLLM; Claude Code also needs --claude-chat-completions "
+            "and Codex --codex-chat-completions"
         ),
     )
     runtime.add_argument(
@@ -988,6 +988,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--codex-tool-images-as-user",
         action="store_true",
         help="attach tool-returned images as user images for Responses backends that ignore multimodal tool outputs",
+    )
+    codex.add_argument(
+        "--codex-chat-completions",
+        action="store_true",
+        help=(
+            "translate Codex's Responses requests to Chat Completions at the "
+            "request recording proxy, for endpoints that serve only that API"
+        ),
     )
 
     claude = collect.add_argument_group("Claude Code")
@@ -1346,12 +1354,18 @@ def _token_logprobs(
     modes: dict[str, str] = {}
     for request in requests:
         name = cli_harness or request.task.harness
-        if request.model not in modes:
-            modes[request.model] = logprobs_mode(
-                configs[name].api_base.rstrip("/") + HARNESSES[name].chat_completions,
-                request.model,
-                host_api_key(HARNESSES[name].label, configs[name].api_key_env),
-            )
+        if request.model in modes:
+            continue
+        if name == "openclaw":  # Its endpoint and key are in --model-config.
+            provider, model = request.model.split("/", 1)
+            entry = configs[name].model_config["providers"][provider]
+            api_base, api_key = entry["baseUrl"], entry["apiKey"]
+        else:
+            model, api_base = request.model, configs[name].api_base
+            api_key = host_api_key(HARNESSES[name].label, configs[name].api_key_env)
+        modes[request.model] = logprobs_mode(
+            api_base.rstrip("/") + HARNESSES[name].chat_completions, model, api_key
+        )
     return modes
 
 
@@ -1574,12 +1588,6 @@ def _collect(args: argparse.Namespace) -> int:
         raise ValueError("--sandbox-template requires a remote --sandbox-provider")
     if args.claude_capture_calls and "claude-code" not in selected_harnesses:
         raise ValueError("--claude-capture-calls requires a Claude Code participant")
-    if args.token_ids:
-        unsupported = sorted(
-            name for name in selected_harnesses if not HARNESSES[name].chat_completions
-        )
-        if unsupported:
-            raise ValueError(f"--token-ids does not support {', '.join(unsupported)}")
     cli_harness = args.harness
     args._cli_harness = cli_harness
     # Resolve the historical global default after loading tasks.  This keeps
@@ -1764,6 +1772,7 @@ def _collect(args: argparse.Namespace) -> int:
             capture_cache_trace=args.cache_trace,
             wire_trace_mode=args.wire_trace,
             capture_calls=args.capture_calls,
+            token_ids=args.token_ids,
             capture_debug=args.capture_debug,
             keep_thinking=args.keep_thinking,
             collect_paths=tuple(args.collect_path),
@@ -1815,6 +1824,8 @@ def _collect(args: argparse.Namespace) -> int:
             supports_websockets=args.codex_websockets,
             responses_image_detail=args.codex_image_detail,
             responses_tool_images_as_user=args.codex_tool_images_as_user,
+            chat_completions=args.codex_chat_completions,
+            token_ids=args.token_ids,
             wire_trace_mode=args.wire_trace,
             capture_calls=args.capture_calls,
             capture_debug=args.capture_debug,
@@ -2116,6 +2127,7 @@ def _collect(args: argparse.Namespace) -> int:
                 if codex_config.responses_tool_images_as_user
                 else {}
             ),
+            **({"chat_completions": True} if codex_config.chat_completions else {}),
             "pass_env_names": list(codex_config.pass_env),
             **(
                 {"capture_calls": True, "capture_debug": args.capture_debug}
