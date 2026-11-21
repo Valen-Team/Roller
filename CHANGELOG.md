@@ -8,6 +8,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 - `--token-ids` works in a remote sandbox (`--sandbox-provider`). The wire recorder in the sandbox writes `token_ids.jsonl` and Roller copies it into the sample. The sandbox template needs this Roller version.
 - `roller export --format hf` writes the trace of a Hermes sample as a Hermes session, the format of `hermes sessions export`, so the Hub lists it as a Hermes trace. It was a Pi session converted from ACTF.
+- The `pdf` extra installs on Python 3.11 and later, with Pillow 13 or later. Pillow 13 has the fixes for the vulnerabilities reported in earlier versions and needs Python 3.11. On Python 3.10, `--claude-pdf-as-images` reports that the extra needs Python 3.11.
 
 ### Fixed
 
