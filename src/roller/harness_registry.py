@@ -70,6 +70,11 @@ HARNESSES = {
         compaction_mode="pi",
         attach_images=True,
     ),
+    "stirrup": HarnessCapabilities(
+        "Stirrup",
+        capture_reader="roller.stirrup_actf:read_stirrup_native",
+        compaction_mode="stirrup",
+    ),
 }
 HARNESS_NAMES = tuple(HARNESSES)
 

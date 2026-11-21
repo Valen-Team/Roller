@@ -30,6 +30,7 @@ pdf = [
     "Pillow>=13; python_version >= '3.11'",
 ]
 e2b = ["e2b==2.64.0; python_version >= '3.11'"]
+stirrup = ["stirrup==0.2.1; python_version >= '3.12'"]
 
 [project.urls]
 Homepage = "https://github.com/Valen-Team/Roller"
@@ -74,6 +75,10 @@ replacement = 'href="https://github.com/Valen-Team/Roller/blob/v$HFPR_VERSION/\1
 [[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
 pattern = '\]\((?!https?://|#)([^)]+)\)'
 replacement = '](https://github.com/Valen-Team/Roller/blob/v$HFPR_VERSION/\1)'
+
+# Stirrup needs moviepy, which caps Pillow below the version the pdf extra requires.
+[tool.uv]
+conflicts = [[{extra = "pdf"}, {extra = "stirrup"}]]
 
 [tool.ruff]
 target-version = "py310"

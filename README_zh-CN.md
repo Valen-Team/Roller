@@ -196,7 +196,7 @@ roller view runs/quickstart
 
 ## Harness
 
-Harness 是容器内的 Agent 运行时，负责启动 Agent、提供工具并调用模型 API。可通过 `--harness` 为全部 task 指定 Harness，或在 task 中通过 `harness` 字段单独指定。7 种 Harness 使用相同的 task 格式，产生的 sample 采用相同的目录结构。
+Harness 是容器内的 Agent 运行时，负责启动 Agent、提供工具并调用模型 API。可通过 `--harness` 为全部 task 指定 Harness，或在 task 中通过 `harness` 字段单独指定。8 种 Harness 使用相同的 task 格式，产生的 sample 采用相同的目录结构。
 
 | Harness | 模型 API | 说明 |
 | --- | --- | --- |
@@ -207,8 +207,11 @@ Harness 是容器内的 Agent 运行时，负责启动 Agent、提供工具并�
 | OpenCode | OpenAI Chat Completions | OpenCode CLI session；提供文本与文件工具 |
 | DeepSeek Harness | DeepSeek Chat Completions | 官方 SDK；提供单个持久化 Bash 工具 |
 | Pi Agent | OpenAI Chat Completions | Pi SDK；提供 7 个工具：`read`、`bash`、`edit`、`write`、`grep`、`find`、`ls` |
+| Stirrup | OpenAI Chat Completions | Stirrup 0.2.1；提供 `code_exec`、`view_image`、`finish`；Agent 在 Roller 进程中运行，容器执行它的代码 |
 
-OpenClaw 通过 `--model-config` 读取模型定义，其余六种 Harness 使用 `--api-base` 与 `--api-key-env`；同一次运行组合多种 Harness 时，各 Harness 使用带前缀的参数，例如 `--hermes-api-base` 与 `--hermes-api-key-env`。所有 Harness 均可作为 Task Agent 或 [User Simulator](https://valen-team.github.io/zh-Hans/roller/tasks/user-simulator/)，后者由另一个模型扮演用户并生成下一条用户消息。
+OpenClaw 通过 `--model-config` 读取模型定义，其余七种 Harness 使用 `--api-base` 与 `--api-key-env`；同一次运行组合多种 Harness 时，各 Harness 使用带前缀的参数，例如 `--hermes-api-base` 与 `--hermes-api-key-env`。除 Stirrup 外，所有 Harness 均可作为 Task Agent 或 [User Simulator](https://valen-team.github.io/zh-Hans/roller/tasks/user-simulator/)，后者由另一个模型扮演用户并生成下一条用户消息。
+
+Stirrup 每个 task 运行一条 prompt，需要 Python 3.12 及以上和 `stirrup` extra。这个 extra 已在 `main` 上，随下一个版本发布：`pip install 'roller-agent[stirrup] @ git+https://github.com/Valen-Team/Roller.git'`。它不能与 `pdf` extra 同时安装。请求由以下参数设置：`--stirrup-max-steps`、`--stirrup-context-length`（上下文用到 70% 时摘要历史）、`--stirrup-output-tokens`（`max_tokens`）、`--stirrup-command-timeout`、`--stirrup-temperature`、`--stirrup-top-p`、`--stirrup-seed`（每个 sample 的 seed 由它、task ID 和 sample 序号导出），以及用于其他请求字段的 `--stirrup-request-set KEY=JSON`；`--thinking` 写入 `chat_template_kwargs.reasoning_effort`。镜像只需带 bash、GNU coreutils 和 task 需要的软件，默认 `python:3.13-slim`。
 
 rollout 在 Docker 容器中运行。DeepSeek Harness 还可以在 E2B 沙箱里运行 WildClawBench：安装 `roller-agent[e2b]` 并传入 `--sandbox-provider e2b --sandbox-template NAME`，见 [DeepSeek 指南](https://valen-team.github.io/zh-Hans/roller/harnesses/deepseek-configuration/#在-e2b-上运行-wildclawbench)。
 
@@ -418,7 +421,7 @@ Roller 是 [Valen Team · 万澜](https://github.com/Valen-Team)的开源项目�
 
 Roller 基于 [Apache License 2.0](LICENSE) 发布。
 
-Roller 调用以下第三方 Agent 运行时和 Benchmark：OpenClaw、Codex、Claude Code、Hermes Agent、OpenCode、DeepSeek Harness、Pi Agent、WildClawBench、SkillsBench、PinchBench、QwenClawBench 和 SWE-Bench Pro。上述项目的镜像、代码和数据遵循其各自的许可证。感谢这些项目的作者。
+Roller 调用以下第三方 Agent 运行时和 Benchmark：OpenClaw、Codex、Claude Code、Hermes Agent、OpenCode、DeepSeek Harness、Pi Agent、Stirrup、WildClawBench、SkillsBench、PinchBench、QwenClawBench 和 SWE-Bench Pro。上述项目的镜像、代码和数据遵循其各自的许可证。感谢这些项目的作者。
 
 <a id="citation"></a>
 

@@ -120,7 +120,9 @@ class CliResumeCompatibilityTests(unittest.TestCase):
             "opencode": "OpenCodeHarness",
             "deepseek": "DeepSeekHarness",
             "pi": "PiHarness",
+            "stirrup": "StirrupHarness",
         }
+        patches.enter_context(patch("roller.cli._stirrup_installed", return_value=True))
         for name, constructor in constructors.items():
             patches.enter_context(
                 patch(

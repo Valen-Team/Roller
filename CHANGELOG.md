@@ -4,6 +4,11 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ## Unreleased
 
+### Added
+
+- Stirrup Harness (`--harness stirrup`, the `stirrup` extra, Python 3.12 or later). Stirrup 0.2.1's agent loop runs in the Roller process with `code_exec`, `view_image` and `finish`; the sample's Docker container or remote sandbox executes the commands and holds the files, and gets no model key. Model requests go from Roller through the local request recording proxy, so `--wire-trace full`, `--capture-calls` and `--token-ids` work in Docker and remote sandboxes alike. The request fields are set by `--stirrup-*` options and `--thinking`, in a fixed order. A history summary splits SFT into windows from captured Calls, and the summary request is a window of its own.
+- SFT windows built from captured Chat Completions Calls keep the images of user and tool messages, as the linear export does.
+
 ### Changed
 
 - `--token-ids` works in a remote sandbox (`--sandbox-provider`). The wire recorder in the sandbox writes `token_ids.jsonl` and Roller copies it into the sample. The sandbox template needs this Roller version.

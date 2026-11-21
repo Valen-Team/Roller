@@ -28,11 +28,14 @@ from roller.harness_registry import compaction_mode
 from roller.opencode_actf import root_session_ids
 from roller.pi_actf import PI_COMPACTION_SFT_REASON
 from roller.sft import (
+    IMAGE_PLACEHOLDER,
     SFTConversionError,
     _arguments_json,
+    _image_data_uri,
     _normalize_tool_call,
     validate_sft_record,
 )
+from roller.stirrup_actf import STIRRUP_COMPACTION_SFT_REASON, kept_call_ids
 from roller.storage import atomic_write_json
 
 SFT_SEGMENTS_DIR = "sft_segments"
@@ -40,6 +43,7 @@ SFT_SEGMENTS_DIR = "sft_segments"
 _CONTEXT_ONLY_REASONS = {
     CLAUDE_COMPACTION_SFT_REASON,
     PI_COMPACTION_SFT_REASON,
+    STIRRUP_COMPACTION_SFT_REASON,
     OPENCLAW_ANNOUNCEMENT_SFT_REASON,
 }
 
@@ -150,6 +154,8 @@ def has_main_compaction(
         return any(_is_main_compaction(row, mode) for row in rows)
     if mode == "openclaw":
         return any(row.get("type") == "compaction" for row in rows)
+    if mode == "stirrup":
+        return any(row.get("type") == "summary" for row in rows)
     if mode == "pi" and any(
         row.get("type") == "event"
         and (row.get("event") or {}).get("type") == "compaction_end"
@@ -360,14 +366,35 @@ def _responses_item(item: Mapping[str, Any]) -> list[dict[str, Any]]:
     raise SFTConversionError(f"unsupported Responses input item: {kind}")
 
 
-def _chat_message(message: Mapping[str, Any]) -> dict[str, Any]:
+def _chat_content(content: Any, images: list[str]) -> str:
+    """Text with one placeholder per image, as the linear SFT export writes it."""
+    if not isinstance(content, list):
+        return _text_blocks(content, kinds={"text"})
+    parts = []
+    for block in content:
+        image = block.get("image_url") if isinstance(block, Mapping) else None
+        if block.get("type") == "image_url" and isinstance(image, Mapping):
+            images.append(_image_data_uri({"data": image.get("url")}, "image_url"))
+            parts.append(IMAGE_PLACEHOLDER)
+        else:
+            parts.append(_text_blocks([block], kinds={"text"}))
+    return "\n".join(parts)
+
+
+def _chat_message(
+    message: Mapping[str, Any], images: list[str] | None = None
+) -> dict[str, Any]:
     role = message.get("role")
     if role not in {"system", "developer", "user", "assistant", "tool"}:
         raise SFTConversionError(f"unsupported Chat Completions role: {role}")
     content = message.get("content")
     if content is None and role == "assistant":
         content = ""
-    value = _text_blocks(content, kinds={"text"})
+    value = (
+        _text_blocks(content, kinds={"text"})
+        if images is None or role in {"system", "developer", "assistant"}
+        else _chat_content(content, images)
+    )
     if role == "tool":
         identifier = message.get("tool_call_id")
         if not isinstance(identifier, str) or not identifier:
@@ -418,12 +445,13 @@ def _merge_response_items(messages: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def _prompt_from_call(
     call: Mapping[str, Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     context = call.get("context")
     if not isinstance(context, Mapping):
         raise SFTConversionError("captured Call lacks context")
     protocol = call.get("protocol")
     messages: list[dict[str, Any]] = []
+    images: list[str] = []
     tools_value = context.get("tools", [])
     if not isinstance(tools_value, list):
         raise SFTConversionError("captured tools are invalid")
@@ -476,13 +504,13 @@ def _prompt_from_call(
                 raise SFTConversionError(
                     "Chat Completions request has an invalid message"
                 )
-            messages.append(_chat_message(item))
+            messages.append(_chat_message(item, images))
         tools = deepcopy(tools_value)
     else:
         raise SFTConversionError(f"unsupported compaction Call protocol: {protocol}")
     if not isinstance(tools, list):
         raise SFTConversionError("captured tools are invalid")
-    return messages, tools
+    return messages, tools, images
 
 
 def _target_messages_from_call(call: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -522,7 +550,14 @@ def _target_messages_from_call(call: Mapping[str, Any]) -> list[dict[str, Any]]:
             raise SFTConversionError(
                 "Chat Completions output lacks an assistant target"
             )
-        return [_chat_message(message)]
+        target = _chat_message(message)
+        # vLLM returns the thinking as ``reasoning``; a main step takes it
+        # from ACTF instead, a kept summary from here.
+        if not target["reasoning_content"] and isinstance(
+            message.get("reasoning"), str
+        ):
+            target["reasoning_content"] = message["reasoning"]
+        return [target]
     raise SFTConversionError("unsupported compaction response protocol")
 
 
@@ -644,13 +679,17 @@ def _is_summary_call(
 
 
 def _calls_matching_main_steps(
-    sample_dir: Path, calls: list[dict[str, Any]], boundaries: list[dict[str, Any]]
+    sample_dir: Path,
+    calls: list[dict[str, Any]],
+    boundaries: list[dict[str, Any]],
+    summaries: set[str] | None = None,
 ) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
     """Bind root Calls to ACTF main steps in order; only native summaries are skipped.
 
     Codex and OpenClaw send compaction requests under the main identity. A
     Call is skipped only when it does not match the next main step and its
-    text is recorded verbatim in the following native compaction row.
+    text is recorded verbatim in the following native compaction row. With
+    ``summaries``, such a Call is kept as a target and its ID added there.
     """
     trajectory = json.loads(
         (sample_dir / "trace_ACTF.json").read_text(encoding="utf-8")
@@ -677,7 +716,7 @@ def _calls_matching_main_steps(
         if call.get("export_status") != "available":
             raise SFTConversionError(f"main Call {call.get('call_id')} is incomplete")
         messages = _target_messages_from_call(call)
-        index = len(verified)
+        index = len(verified) - len(summaries or ())
         if (
             index < len(steps)
             and len(messages) == 1
@@ -694,7 +733,10 @@ def _calls_matching_main_steps(
                 f"root Calls do not correspond one-to-one with ACTF main steps; Call "
                 f"{call.get('call_id')} matches neither the next step nor a native summary"
             )
-    if len(verified) != len(steps):
+        elif summaries is not None:
+            summaries.add(call["call_id"])
+            verified.append((call, messages))
+    if len(verified) - len(summaries or ()) != len(steps):
         raise SFTConversionError(
             "root Calls do not correspond one-to-one with ACTF main steps; "
             f"{len(steps) - len(verified)} steps have no Call"
@@ -714,11 +756,13 @@ def _compaction_boundaries(
             and row.get("type") == "compaction"
             and isinstance(row.get("id"), str)
             and isinstance(row.get("summary"), str)
+            or mode == "stirrup"
+            and row.get("type") == "summary"
         ):
             continue
         if mode == "claude":
             event_id, summary = row.get("uuid"), None
-        elif mode == "openclaw":
+        elif mode in {"openclaw", "stirrup"}:
             event_id, summary = row["id"], row["summary"]
         else:
             payload = row.get("payload") or {}
@@ -829,8 +873,13 @@ def _segment_records(
     calls: list[tuple[dict[str, Any], list[dict[str, Any]]]],
     boundaries: list[dict[str, Any]],
     keep_thinking: bool,
+    summaries: set[str] = frozenset(),
 ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-    """Use one continuation rule; window_index counts emitted SFT records."""
+    """Use one continuation rule; window_index counts emitted SFT records.
+
+    A summary Call in ``summaries`` is a record of its own, so the summary
+    never extends the window before it or the one after it.
+    """
     times = [_time(boundary["timestamp"]) for boundary in boundaries]
     if any(
         not isinstance(boundary["event_id"], str) or not boundary["event_id"]
@@ -848,17 +897,20 @@ def _segment_records(
                 "main Call starts at an ambiguous compaction boundary"
             )
         current_native = sum(when > boundary for boundary in times) if when else 0
-        prompt, tools = _prompt_from_call(call)
+        prompt, tools, images = _prompt_from_call(call)
         if not prompt:
             raise SFTConversionError("compaction segment lacks its actual input")
         if not keep_thinking:
-            for message in prompt:
+            for message in [*prompt, *target]:
                 if message["role"] == "assistant":
                     message["reasoning_content"] = ""
         previous = exported[-1][1] if exported else None
         prefix = previous["messages"] if previous else []
+        summary = call["call_id"] in summaries
         continuation = (
             previous is not None
+            and not summary
+            and exported[-1][0]["first_call_id"] not in summaries
             and current_native == native_index
             and tools == previous["tools"]
             and _replayed_prefix_matches(prompt[: len(prefix)], prefix)
@@ -867,6 +919,8 @@ def _segment_records(
         if continuation:
             # The newest prompt carries the IDs the harness actually replayed.
             previous["messages"] = prompt + target
+            if images:
+                previous["images"] = images
             exported[-1][0]["last_call_id"] = call["call_id"]
         else:
             boundary = (
@@ -878,7 +932,9 @@ def _segment_records(
                 "path": f"{SFT_SEGMENTS_DIR}/{len(exported) + 1:04d}.json",
                 "window_index": len(exported),
                 "boundary_source": (
-                    "native_boundary"
+                    "summary_request"
+                    if summary
+                    else "native_boundary"
                     if boundary
                     else "observed_context_change"
                     if exported
@@ -891,6 +947,7 @@ def _segment_records(
             record = {
                 "messages": prompt + target,
                 "tools": tools,
+                **({"images": images} if images else {}),
                 "target_start_index": len(prompt),
             }
             # Only assistant messages at/after this index enter the loss;
@@ -949,6 +1006,17 @@ def build_compaction_segments(
     elif not native_reset and not _raw_context_changed(calls):
         return []
     main = _root_calls(calls, manifest)
+    summaries: set[str] | None = None
+    if mode == "stirrup":
+        # Drop the calls whose replies the agent discarded: retried transport
+        # faults, context overflows and summaries without text.
+        kept = kept_call_ids(rows)
+        main = [
+            call
+            for call in main
+            if (call.get("native_identity") or {}).get("run_id") in kept
+        ]
+        summaries = set()
     if not boundaries:
         if not main or any(
             call.get("protocol") != "openai-chat-completions" for call in main
@@ -960,8 +1028,8 @@ def build_compaction_segments(
             return []
         if not native_reset and not _raw_context_changed(main):
             return []  # Preserve the existing linear SFT path, including images.
-    main = _calls_matching_main_steps(sample_dir, main, boundaries)
-    return _segment_records(main, boundaries, keep_thinking)
+    main = _calls_matching_main_steps(sample_dir, main, boundaries, summaries)
+    return _segment_records(main, boundaries, keep_thinking, summaries or set())
 
 
 def export_compaction_segments(

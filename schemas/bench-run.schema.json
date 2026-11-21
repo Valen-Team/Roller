@@ -81,7 +81,8 @@
             "hermes",
             "opencode",
             "deepseek",
-            "pi"
+            "pi",
+            "stirrup"
           ]
         },
         "image": {"$ref": "#/$defs/nullableNonEmptyString"},
@@ -134,7 +135,12 @@
             "max_steps": {"$ref": "#/$defs/positiveIntegerOrEnv"},
             "context_length": {"$ref": "#/$defs/positiveIntegerOrEnv"},
             "output_tokens": {"$ref": "#/$defs/positiveIntegerOrEnv"},
-            "vision": {"type": "boolean"}
+            "vision": {"type": "boolean"},
+            "command_timeout": {"$ref": "#/$defs/positiveIntegerOrEnv"},
+            "temperature": {"$ref": "#/$defs/nonNegativeNumberOrEnv"},
+            "top_p": {"$ref": "#/$defs/positiveNumberOrEnv"},
+            "seed": {"$ref": "#/$defs/nonNegativeIntegerOrEnv"},
+            "request_set": {"$ref": "#/$defs/stringList"}
           },
           "additionalProperties": false
         }

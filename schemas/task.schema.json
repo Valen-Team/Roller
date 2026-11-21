@@ -246,7 +246,7 @@
   ],
   "$defs": {
     "harness": {
-      "enum": ["openclaw", "codex", "claude-code", "hermes", "opencode", "deepseek", "pi"]
+      "enum": ["openclaw", "codex", "claude-code", "hermes", "opencode", "deepseek", "pi", "stirrup"]
     },
     "relativePath": {
       "type": "string",

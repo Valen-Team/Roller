@@ -355,6 +355,8 @@ class TrajectoryAuditTests(unittest.TestCase):
             ("off", {"thinking": {"type": "disabled"}}, "matched"),
             ("off", {"thinking": {"type": "enabled"}}, "mismatch"),
             ("off", {"chat_template_kwargs": {"enable_thinking": True}}, "mismatch"),
+            ("max", {"chat_template_kwargs": {"reasoning_effort": "max"}}, "matched"),
+            ("max", {"chat_template_kwargs": {"reasoning_effort": "low"}}, "mismatch"),
             ("low", {"reasoning": {"effort": "high"}}, "mismatch"),
             ("high", {"output_config": {"effort": "high"}}, "matched"),
             ("low", {"thinking": {"budget_tokens": 1024}}, "unverified"),
