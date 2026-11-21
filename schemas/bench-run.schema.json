@@ -166,6 +166,7 @@
         "resume": {"type": "boolean"},
         "resume_verify_outputs": {"type": "boolean"},
         "resume_unscored": {"type": "boolean"},
+        "training_files_only": {"type": "boolean"},
         "wire_trace": {"enum": ["off", "actf", "full"]},
         "capture_debug": {"enum": ["off", "on-error", "full"]},
         "capture_calls": {"type": "boolean"},

@@ -281,8 +281,10 @@ The following figure shows how each file is produced. Dashed paths are enabled b
 Three files are written only under specific conditions:
 
 - `sft_segments/`: written when the Task Agent compacts its context. The rollout is then left out of `sft.jsonl`, and each verified context window is a separate record whose `target_start_index` marks the first supervised message.
-- `wire_trace.jsonl`: written with `--wire-trace full`. It contains every request body that Roller's proxy forwarded to the model API.
+- `wire_trace.jsonl`: written with `--wire-trace full`. It contains every request body that Roller's proxy forwarded to the model API. Each image is stored once in the sample's `blobs/` directory and referenced from the request bodies, here and in the captured Calls of `--capture-calls`; Roller restores the original data URIs when it reads them.
 - `conversation.json`: written for User Simulator tasks. It contains the dialogue visible to both participants.
+
+`--training-files-only` (on `main`, follows in the next release) keeps only what training needs once a sample has finished and been graded: `trace_SFT.json` or `sft_segments/`, `token_ids.jsonl`, `info.json` and `score.json`, with each image of the SFT records stored once for the whole run, in the run directory's `blobs/`. It also removes the files that `--wire-trace full` and `--capture-calls` keep, after the context windows have been cut from the Calls. The run-level `sft.jsonl` is not written; `roller export --format sft`, `--format xtuner` and `--format tokens` give the same output as for the run collected without the option. Such a run cannot be opened in the Viewer, exported to Hugging Face or ATIF, or have its SFT rebuilt. Samples that failed, or whose grading failed, keep all their files for `--resume`.
 
 `--keep-thinking` is on by default and stores the visible reasoning that the model service returns; `--thinking` sets the requested reasoning level. The [trajectory output guide](https://valen-team.github.io/roller/traces/trajectory-outputs/) specifies when each file is written, and the [SFT format](https://valen-team.github.io/roller/traces/sft-format/) describes the training records.
 
@@ -342,7 +344,7 @@ New users should start with [Getting started](https://valen-team.github.io/rolle
 - Before a container starts, Roller rejects inputs and Context that contain symlinks or special files, escape their declared paths or exceed the size limits, and records a digest of every file.
 - API keys are read from the host environment or from external configuration and are not written to run metadata.
 - Only regular files and directories inside the task's `output_dir` are collected.
-- `wire_trace.jsonl` stores full request text, including prompts, reasoning and tool results. Treat it as sensitive data.
+- `wire_trace.jsonl` and `blobs/` store the full requests, including prompts, reasoning, tool results and images. Treat them as sensitive data.
 - The Viewer listens on `127.0.0.1` by default. Use SSH port forwarding for remote access.
 
 The complete rules are specified in [Security and privacy boundaries](https://valen-team.github.io/roller/tasks/task-bundle-and-storage/#8-security-and-privacy-boundaries).

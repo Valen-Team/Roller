@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from roller.blobs import BLOBS_DIR
 from roller.sft import normalize_sft_record, parse_image_data_uri
 from roller.sft_dataset import (
     Sample,
@@ -300,7 +301,9 @@ def write_xtuner_dataset(
 
     def records() -> Iterator[dict[str, Any]]:
         for sample_dir, result, row in kept:
-            for record, idx_row in sample_records(sample_dir, result, row):
+            for record, idx_row in sample_records(
+                sample_dir, result, row, run_dir / BLOBS_DIR
+            ):
                 converted = sft_to_xtuner(
                     record, media_dir=media_dir, written_media=written_media
                 )

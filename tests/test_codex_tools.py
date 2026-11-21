@@ -8,6 +8,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from roller.blobs import BLOBS_DIR, load_blobs
 from roller.codex_actf import codex_events_to_actf, convert_codex_trace
 from roller.codex_tools import read_tool_capture, tool_snapshot
 from roller.collector import Collector
@@ -513,7 +514,10 @@ class CodexToolsProxyTests(unittest.TestCase):
             recorded = json.loads(
                 (root / "wire_trace.jsonl").read_text().splitlines()[0]
             )
-            self.assertEqual(recorded["body"]["input"], expected["input"])
+            self.assertEqual(
+                load_blobs(recorded["body"]["input"], root / BLOBS_DIR),
+                expected["input"],
+            )
 
             plain = CodexHarness(CodexConfig(api_base="http://example.test/v1"), 0)
             with (

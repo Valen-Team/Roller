@@ -28,6 +28,7 @@ from urllib import request as urllib_request
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from roller.anthropic_pdf import render_anthropic_pdfs
+from roller.blobs import BLOBS_DIR, load_blobs, store_blobs
 from roller.capture import CallRecorder
 from roller.codex_tools import tool_snapshot
 from roller.response_metadata import ResponseMetadata
@@ -359,7 +360,8 @@ def wire_text_digest(text: str) -> str:
 def extract_wire_image_requests(path: Path) -> list[dict[str, Any]]:
     """Return image-bearing model requests in wire order.
 
-    Full traces expose the original request body. Compact ACTF-mode traces keep
+    Full traces expose the original request body, with its images read back
+    from ``blobs/``. Compact ACTF-mode traces keep
     ``image_inputs`` (each distinct image's bytes once, later occurrences as a
     ``sha256`` reference) and digests of the accompanying text, so image bytes
     survive long enough to enrich ACTF without retaining prompt text.
@@ -399,7 +401,9 @@ def extract_wire_image_requests(path: Path) -> list[dict[str, Any]]:
             if not isinstance(text_digests, list):
                 text_digests = []
         else:
-            images, texts = _request_image_inputs(body)
+            images, texts = _request_image_inputs(
+                load_blobs(body, path.parent / BLOBS_DIR)
+            )
             text_digests = [wire_text_digest(text) for text in texts]
         if images:
             body_tools = body.get("tools") if isinstance(body, Mapping) else None
@@ -539,7 +543,7 @@ class _ProxyHandler(BaseHTTPRequestHandler):
                     }
                 )
             if proxy.mode == "full":
-                entry["body"] = parsed
+                entry["body"] = parsed = store_blobs(parsed, proxy.blob_dir)
             else:
                 params = {k: v for k, v in parsed.items() if k not in BODY_KEYS}
                 entry["params"] = params
@@ -910,6 +914,7 @@ class WireTraceProxy:
         self.upstream_origin = f"{parts.scheme}://{parts.netloc}"
         self.base_path = parts.path.rstrip("/")
         self.log_path = log_path
+        self.blob_dir = log_path.parent / BLOBS_DIR
         self.mode = mode
         self.responses_tools_path = responses_tools_path
         self.capture_recorder = capture_recorder

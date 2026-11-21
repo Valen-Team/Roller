@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from roller.actf import OPENCLAW_ANNOUNCEMENT_SFT_REASON
+from roller.blobs import BLOBS_DIR, load_blobs
 from roller.capture import _safe_file, read_jsonl
 from roller.claude_code_actf import (
     CLAUDE_COMPACTION_SFT_REASON,
@@ -999,7 +1000,7 @@ def build_compaction_segments(
         raise SFTConversionError("OpenClaw compaction requires ACTF main-step evidence")
     manifest_path = _safe_file(sample_dir, manifest_relative)
     capture_dir = manifest_path.parent
-    calls = read_jsonl(capture_dir / "calls.jsonl")
+    calls = load_blobs(read_jsonl(capture_dir / "calls.jsonl"), sample_dir / BLOBS_DIR)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if boundaries:
         # Compaction after the last captured Call changed no model prompt.

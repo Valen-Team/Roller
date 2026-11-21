@@ -628,7 +628,11 @@ class CaptureTests(unittest.TestCase):
                 [row["call_id"] for row in calls], [row["call_id"] for row in observed]
             )
             for call, source in zip(calls, observed, strict=True):
-                self.assertEqual(call["output"], source["output"])
+                # An index row: the request and response stay in the sample.
+                self.assertNotIn("context", call)
+                self.assertNotIn("output", call)
+                self.assertEqual(call["schema_version"], "roller.call-index/v1")
+                self.assertEqual(call["request_seq"], source["request_seq"])
                 self.assertEqual(call["sample_status"], "error")
                 self.assertEqual(call["sample_capture_status"], "partial")
             self.assertEqual(read_jsonl(run / "sft.jsonl"), [])

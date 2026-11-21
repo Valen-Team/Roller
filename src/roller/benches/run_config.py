@@ -284,6 +284,7 @@ _EXECUTION_SWITCHES = {
     "resume": "--resume",
     "resume_verify_outputs": "--resume-verify-outputs",
     "resume_unscored": "--resume-unscored",
+    "training_files_only": "--training-files-only",
     "capture_calls": "--capture-calls",
     "token_ids": "--token-ids",
     "keep_container_on_error": "--keep-container-on-error",

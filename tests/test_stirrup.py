@@ -16,13 +16,21 @@ from unittest.mock import patch
 
 import pytest
 
+from roller import sft_dataset, xtuner_dataset
+from roller.blobs import BLOBS_DIR, load_blobs, store_blobs
 from roller.cli import _build_parser, _collect, _request_field
-from roller.compaction_sft import build_compaction_segments, has_main_compaction
+from roller.collector import CollectionConfig, Collector
+from roller.compaction_sft import (
+    build_compaction_segments,
+    export_compaction_segments,
+    has_main_compaction,
+)
 from roller.harnesses.docker import DockerRuntime
 from roller.harnesses.stirrup import StirrupConfig, StirrupHarness, sample_seed
 from roller.models import RunRequest, Task
 from roller.sandbox import SandboxRun, SandboxTarget
-from roller.sft import actf_to_sft, validate_sft_record
+from roller.sft import actf_to_sft, normalize_sft_record, validate_sft_record
+from roller.sft_dataset import sample_records
 from roller.stirrup_actf import (
     STIRRUP_COMPACTION_SFT_REASON,
     extract_stirrup_usage,
@@ -283,7 +291,8 @@ def write_compacted_sample(directory: Path) -> str:
 class StirrupCompactionTests(unittest.TestCase):
     def test_summary_request_is_a_window_of_its_own(self):
         with tempfile.TemporaryDirectory() as tmp:
-            sample = Path(tmp)
+            sample, run_blobs = Path(tmp) / "sample", Path(tmp) / BLOBS_DIR
+            sample.mkdir()
             manifest = write_compacted_sample(sample)
             actf = json.loads((sample / "trace_ACTF.json").read_text())
             self.assertEqual(
@@ -294,6 +303,44 @@ class StirrupCompactionTests(unittest.TestCase):
             without = build_compaction_segments(
                 sample, "stirrup", manifest, keep_thinking=False
             )
+            # Calls recorded with image references give the same windows.
+            path = sample / "capture/attempt-0001/calls.jsonl"
+            calls = [json.loads(line) for line in path.read_text().splitlines()]
+            for call in calls:
+                call["context"] = store_blobs(call["context"], sample / BLOBS_DIR)
+            path.write_text("".join(json.dumps(c) + "\n" for c in calls))
+            self.assertNotIn(PNG, path.read_text())
+            self.assertEqual(
+                build_compaction_segments(sample, "stirrup", manifest), segments
+            )
+            # --training-files-only: the windows share one copy of the image.
+            metas = export_compaction_segments(sample, "stirrup", manifest)
+            capture = {"manifest": manifest, "capture_status": "complete"}
+            metadata = {"capture": capture}
+            Collector._keep_training_files(sample, metadata, run_blobs)
+            kept = sorted(path.name for path in sample.iterdir())
+            blob_files = list(run_blobs.iterdir())
+            on_disk = "".join(
+                path.read_text() for path in (sample / "sft_segments").iterdir()
+            )
+            records = [
+                record
+                for record, _ in sample_records(
+                    sample, {"trajectory": {"sft_segments": metas}}, {}, run_blobs
+                )
+            ]
+        self.assertEqual(kept, ["sft_segments"])
+        self.assertEqual(len(blob_files), 1)
+        self.assertNotIn(PNG, on_disk)
+        self.assertEqual(records, [normalize_sft_record(r) for _, r in segments])
+        self.assertTrue(metadata["training_files_only"])
+        self.assertEqual(
+            capture,
+            {
+                "capture_status": "complete",
+                "participant_ids": {str(i): "session:s1" for i in range(1, 5)},
+            },
+        )
         self.assertEqual(
             [meta["boundary_source"] for meta, _ in segments],
             ["initial", "summary_request", "native_boundary"],
@@ -591,6 +638,17 @@ class StirrupLoopTests(unittest.TestCase):
                 json.loads(line)
                 for line in (Path(tmp) / "capture/attempt-0001/calls.jsonl").open()
             ]
+            blobs = Path(tmp) / BLOBS_DIR
+            blob_files = [path.name for path in blobs.iterdir()]
+            sent = [
+                json.dumps(load_blobs(entry["body"], blobs)).encode()
+                for entry in map(json.loads, wire.splitlines())
+                if "body" in entry
+            ]
+            contexts = [
+                json.dumps(load_blobs(call["context"], blobs)).encode()
+                for call in captured
+            ]
             self.assertEqual((Path(tmp) / "results/answer.txt").read_text(), "391")
         # The model key stays in this process; the container never sees it.
         self.assertFalse(any("secret" in " ".join(args) for args in runtime.calls))
@@ -617,6 +675,12 @@ class StirrupLoopTests(unittest.TestCase):
             ],
         )
         self.assertEqual(ScriptedModel.bodies[0], json.dumps(first).encode())
+        # Each image is stored once; the wire trace and the Calls reference it
+        # and restore the exact bytes sent to the model.
+        self.assertEqual(len(blob_files), 1)
+        self.assertNotIn(";base64,iVBOR", wire)
+        self.assertEqual(sent, ScriptedModel.bodies)
+        self.assertEqual(contexts, ScriptedModel.bodies)
         self.assertEqual(ScriptedModel.bodies[1], ScriptedModel.bodies[2])
         self.assertEqual(
             [tool["function"]["name"] for tool in first["tools"]],
@@ -642,6 +706,81 @@ class StirrupLoopTests(unittest.TestCase):
             third[-1]["content"][0]["text"],
         )
         self.assertIn("391", third[-2]["content"][0]["text"])
+
+    def test_training_files_only_keeps_what_the_exports_read(self):
+        def collect(run: Path, **options) -> tuple[list[dict], int]:
+            # Two samples of one task view the same image.
+            server = ModelServer(episode_script() * 2)
+            self.addCleanup(server.close)
+            config = StirrupConfig(
+                api_base=server.base,
+                api_key_env="LOCAL_TEST_KEY",
+                command_timeout=5,
+                capture_calls=True,
+                wire_trace_mode="full",
+            )
+            launched = []
+
+            def factory(slot):
+                launched.append(slot)
+                return StirrupHarness(config, slot, FakeContainer())
+
+            task = Task("boxes", ("Read a.png",), 0)
+            requests = [
+                RunRequest(i, task, "m", 120, sample_index=i, sample_count=2)
+                for i in range(2)
+            ]
+            with (
+                patch.dict(os.environ, {"LOCAL_TEST_KEY": "secret"}),
+                patch("roller.stirrup_agent.time.sleep"),
+            ):
+                collector = Collector(
+                    CollectionConfig(run_dir=run, keep_aux_traces=True, **options),
+                    factory,
+                )
+                return collector.collect(requests), len(launched)
+
+        def exported(run: Path) -> dict[str, bytes]:
+            sft_dataset.export_run(run, run / "sft")
+            xtuner_dataset.export_run(run, run / "xtuner")
+            return {
+                path.relative_to(run).as_posix(): path.read_bytes()
+                for name in ("sft", "xtuner")
+                for path in sorted((run / name).rglob("*"))
+                if path.is_file()
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            full, pruned = Path(tmp) / "full", Path(tmp) / "pruned"
+            collect(full)
+            results, _ = collect(pruned, training_files_only=True)
+            samples = sorted((pruned / "samples/m").iterdir())
+            kept = [
+                sorted(path.name for path in sample.iterdir()) for sample in samples
+            ]
+            blob_files = list((pruned / BLOBS_DIR).iterdir())
+            sft_text = "".join(
+                (sample / "trace_SFT.json").read_text() for sample in samples
+            )
+            run_files = sorted(path.name for path in pruned.iterdir())
+            same = exported(full) == exported(pruned)
+            resumed, launched = collect(pruned, training_files_only=True, resume=True)
+        result = results[0]
+        self.assertEqual(result["status"], "ok", result["error"])
+        self.assertTrue(result["runtime"]["training_files_only"])
+        self.assertEqual(
+            (result["trajectory"]["raw"], result["trajectory"]["actf"]), (None, None)
+        )
+        self.assertEqual(kept, [["info.json", "trace_SFT.json"]] * 2)
+        # One copy of the image for the run.
+        self.assertEqual(len(blob_files), 1)
+        self.assertNotIn(";base64,iVBOR", sft_text)
+        self.assertNotIn("sft.jsonl", run_files)
+        self.assertTrue(same)
+        # Resume takes the sample as finished without its trace or Calls.
+        self.assertEqual(
+            ([r["status"] for r in resumed], launched), (["skipped"] * 2, 0)
+        )
 
     def test_remote_sandbox_shares_the_backend_and_the_local_proxy(self):
         server = ModelServer(episode_script())

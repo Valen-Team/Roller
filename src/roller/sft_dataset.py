@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from roller.benches import get_bench, mean_aggregate
+from roller.blobs import BLOBS_DIR, load_blobs
 from roller.capture import _safe_file
 from roller.compaction_sft import SFT_SEGMENTS_DIR
 from roller.sft import normalize_sft_record
@@ -106,9 +107,9 @@ def index_row(
     }
 
 
-def _record(path: Path) -> dict[str, Any]:
+def _record(path: Path, blobs: Path) -> dict[str, Any]:
     try:
-        record = json.loads(path.read_text(encoding="utf-8"))
+        record = load_blobs(json.loads(path.read_text(encoding="utf-8")), blobs)
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"cannot aggregate SFT sample {path}: {exc}") from exc
     if not isinstance(record, dict):
@@ -120,13 +121,17 @@ def _record(path: Path) -> dict[str, Any]:
 
 
 def sample_records(
-    sample_dir: Path, result: Mapping[str, Any], row: dict[str, Any]
+    sample_dir: Path, result: Mapping[str, Any], row: dict[str, Any], blobs: Path
 ) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
-    """Yield every SFT record (linear or compaction segments) of one kept sample."""
+    """Yield every SFT record (linear or compaction segments) of one kept sample.
+
+    ``blobs`` is the run's ``blobs/``, which holds the images of the records of
+    a run collected with ``--training-files-only``.
+    """
     segments = (result.get("trajectory") or {}).get("sft_segments") or []
     if not segments:
         path = sample_dir / "trace_SFT.json"
-        record = _record(path)
+        record = _record(path, blobs)
         if "target_start_index" in record:
             raise RuntimeError(f"legacy SFT record has a target mask: {path}")
         yield record, row
@@ -147,13 +152,15 @@ def sample_records(
                 f"cannot aggregate SFT segment {relative}: {exc}"
             ) from exc
         yield (
-            _record(path),
+            _record(path, blobs),
             {**row, "segment": relative, "window_index": item.get("window_index")},
         )
 
 
 def _records(
-    samples: Iterable[tuple[Path, Mapping[str, Any], dict[str, Any]]], segmented: bool
+    samples: Iterable[tuple[Path, Mapping[str, Any], dict[str, Any]]],
+    segmented: bool,
+    blobs: Path,
 ) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
     """Yield the records of the linear or the segmented samples with their index rows."""
 
@@ -162,7 +169,7 @@ def _records(
         # Keep masked segments separate from legacy linear records.
         if bool(segments) != segmented:
             continue
-        yield from sample_records(sample_dir, result, row)
+        yield from sample_records(sample_dir, result, row, blobs)
 
 
 def _write(
@@ -291,13 +298,16 @@ def write_sft_dataset(
     sample_list = list(samples)
     kept, dropped, score_range, total = select_samples(run_dir, sample_list, min_score)
 
-    records = {SFT_FILE: _write(directory, SFT_FILE, _records(kept, False))}
+    blobs = run_dir / BLOBS_DIR
+    records = {SFT_FILE: _write(directory, SFT_FILE, _records(kept, False, blobs))}
     if any(
         isinstance(result.get("trajectory"), dict)
         and result["trajectory"].get("sft_segments")
         for _, result in sample_list
     ):
-        records[SEGMENTS_FILE] = _write(directory, SEGMENTS_FILE, _records(kept, True))
+        records[SEGMENTS_FILE] = _write(
+            directory, SEGMENTS_FILE, _records(kept, True, blobs)
+        )
     else:
         for name in (SEGMENTS_FILE, INDEX_FILES[SEGMENTS_FILE]):
             (directory / name).unlink(missing_ok=True)

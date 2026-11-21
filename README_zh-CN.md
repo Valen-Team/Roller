@@ -281,8 +281,10 @@ runs/quickstart/
 以下三个文件仅在特定条件下生成：
 
 - `sft_segments/`：Task Agent 压缩上下文时生成。此时该 rollout 不写入 `sft.jsonl`，每段通过校验的上下文窗口单独导出为一条记录，`target_start_index` 标识首条参与训练的消息。
-- `wire_trace.jsonl`：启用 `--wire-trace full` 时生成，包含 Roller 代理转发给模型 API 的全部请求体。
+- `wire_trace.jsonl`：启用 `--wire-trace full` 时生成，包含 Roller 代理转发给模型 API 的全部请求体。每张图片在 sample 的 `blobs/` 目录中只存一份，这里的请求体和 `--capture-calls` 采集的 Calls 都引用它；Roller 读取时还原为原来的 data URI。
 - `conversation.json`：User Simulator task 生成，包含双方可见的对话内容。
+
+`--training-files-only`（已在 `main` 上，随下一个版本发布）在 sample 结束并完成判分后只保留训练需要的文件：`trace_SFT.json` 或 `sft_segments/`、`token_ids.jsonl`、`info.json` 和 `score.json`，SFT 记录中的每张图片在整个 run 里只存一份，放在 run 目录的 `blobs/` 中。`--wire-trace full` 和 `--capture-calls` 保留的文件也会在上下文窗口从 Calls 切分完成后删除。run 目录不再写 `sft.jsonl`；`roller export --format sft`、`--format xtuner` 和 `--format tokens` 的输出与不加该选项采集的 run 相同。这样的 run 不能再用 Viewer 打开，不能导出为 Hugging Face 数据集或 ATIF，也不能重新生成 SFT。执行失败或判分失败的 sample 保留全部文件，供 `--resume` 使用。
 
 `--keep-thinking` 默认启用，保存模型服务返回的可见 reasoning；`--thinking` 设置请求的推理档位。各文件的生成条件见[轨迹产出文件指南](https://valen-team.github.io/zh-Hans/roller/traces/trajectory-outputs/)，训练记录的结构见 [SFT 数据格式](https://valen-team.github.io/zh-Hans/roller/traces/sft-format/)。
 
@@ -342,7 +344,7 @@ Roller 以单个宿主机进程运行。Collector 并行调度 rollout，并为�
 - 容器启动前，Roller 检查输入和 Context：包含符号链接或特殊文件、路径超出声明范围或超过大小限制的文件将被拒绝；所有文件均记录内容摘要。
 - API Key 仅从宿主机环境或外部配置读取，不写入运行元数据。
 - 仅回收 task `output_dir` 中的普通文件和目录。
-- `wire_trace.jsonl` 保存完整请求文本，包括 prompt、reasoning 和工具结果，应作为敏感数据处理。
+- `wire_trace.jsonl` 和 `blobs/` 保存完整请求，包括 prompt、reasoning、工具结果和图片，应作为敏感数据处理。
 - Viewer 默认仅监听 `127.0.0.1`，远程访问应通过 SSH 端口转发。
 
 完整规则见[安全与隐私边界](https://valen-team.github.io/zh-Hans/roller/tasks/task-bundle-and-storage/#8-安全与隐私边界)。

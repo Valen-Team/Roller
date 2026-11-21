@@ -24,6 +24,7 @@ from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 from roller.artifacts import collect_output_directory
+from roller.blobs import BLOBS_DIR
 from roller.capture_runtime import CaptureRuntime
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
 from roller.harnesses.container import (
@@ -701,6 +702,11 @@ class BridgeSession(InteractiveSession):
             finished = box.run(["cat", f"{directory}/finished.json"], timeout=15)
             finished.check_returncode()
             self.capture.recorder.error = json.loads(finished.stdout)["error"]
+        source = f"{directory}/{BLOBS_DIR}"
+        if box.run(["test", "-d", source], timeout=15).returncode == 0:
+            box.download(
+                source, self.output_dir / BLOBS_DIR, contents=True, timeout=120
+            )
         source = f"{directory}/wire_trace.jsonl"
         if box.run(["test", "-f", source], timeout=15).returncode == 0:
             wire = self.output_dir / "wire_trace.jsonl"

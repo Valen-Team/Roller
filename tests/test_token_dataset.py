@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -87,6 +88,21 @@ class SequenceTests(unittest.TestCase):
             counts = export_run(run, run / "tokens")
 
             rows = (run / "tokens" / "tokens.jsonl").read_text().splitlines()
+            # --training-files-only removes the capture and keeps its map.
+            shutil.rmtree(sample / "capture")
+            pruned = {
+                **result,
+                "runtime": {
+                    "capture": {
+                        "participant_ids": {str(k): v for k, v in PARTICIPANTS.items()}
+                    }
+                },
+            }
+            (sample / "info.json").write_text(json.dumps(pruned))
+            export_run(run, run / "pruned")
+            self.assertEqual(
+                (run / "pruned" / "tokens.jsonl").read_text().splitlines(), rows
+            )
         row = json.loads(rows[0])
         self.assertEqual(counts, (1, 3, 12))
         self.assertEqual(len(rows), 1)
