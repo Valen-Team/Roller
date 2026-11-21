@@ -36,7 +36,6 @@ SPLIT = "test"
 DEFAULT_REVISION = "76be0fc34a7b2fbd27de0bac2aa58e07973d1095"
 REVISION_VARIABLE = "VIALS_REVISION"
 WORKDIR = "/task"
-OUTPUT_DIR_NAME = ".roller_outputs"
 # The longest reference episodes ran about two and a half hours.
 TIMEOUT_SECONDS = 14400
 GRADE_TIMEOUT_SECONDS = 1800
@@ -157,6 +156,7 @@ def load_questions(root: Path, revision: str) -> list[dict[str, Any]]:
                 if not file.is_file():
                     file.parent.mkdir(parents=True, exist_ok=True)
                     file.write_bytes(data)
+                    file.chmod(0o644)
                 images.append(file)
             metadata = row["metadata"]
             questions.append(
@@ -274,7 +274,8 @@ class VIALSAdapter(BenchAdapter):
                             for path, name in zip(question["images"], names)
                         ],
                         "input_mode": "copy",
-                        "output_dir": OUTPUT_DIR_NAME,
+                        # The answer is read from the workspace; /task holds only the images.
+                        "output_dir": None,
                     },
                     "runtime": {"workspace_path": WORKDIR},
                     "bench": binding.as_dict(),

@@ -491,7 +491,8 @@ class BridgeSession(InteractiveSession):
                 script += f" && cp -a {WORKSPACE_INPUT_CONTAINER_PATH}/. {workspace}/ && chmod -R u+w {workspace}"
             if bundle:
                 script += f" && cp -a {CONTEXT_CONTAINER_PATH}/. {workspace}/"
-        script += f" && rm -rf {output} && mkdir -p {output} && ln -s {output} {OUTPUTS_CONTAINER_PATH}"
+        if task.output_dir is not None:
+            script += f" && rm -rf {output} && mkdir -p {output} && ln -s {output} {OUTPUTS_CONTAINER_PATH}"
         self.command(["/bin/bash", "-c", script], f"{self.label} workspace setup")
         if self.agent_in_container:
             self.upload(self.runner_source, self.runner, f"{self.label} runner copy")
@@ -752,7 +753,7 @@ class BridgeSession(InteractiveSession):
                         f"{self.label} trace conversion failed: "
                         + self.redact(str(exc))
                     )
-                if self.collect_outputs:
+                if self.collect_outputs and self.request.task.output_dir is not None:
                     if self.sandbox is None:
                         collected, copy_error = collect_outputs(
                             runtime,

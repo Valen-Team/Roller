@@ -100,7 +100,7 @@ class Task:
     schema_version: str = "roller.task/v1"
     inputs: tuple[InputFile, ...] = ()
     context_files: tuple[ContextFile, ...] = ()
-    output_dir: str = "outputs"
+    output_dir: str | None = "outputs"
     legacy_workspace: bool = False
     workspace: Path | None = None
     model: str | None = None

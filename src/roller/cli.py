@@ -1659,6 +1659,12 @@ def _collect(args: argparse.Namespace) -> int:
         if request.task.user_simulator is not None
     }
     selected_harnesses = agent_harnesses | simulator_harnesses
+    if any(
+        request.task.output_dir is None
+        and (args.harness or request.task.harness) != "stirrup"
+        for request in requests
+    ):
+        raise ValueError("files.output_dir null is supported by Stirrup only")
     remote = args.sandbox_provider != "docker"
     if remote:
         if not args.sandbox_template:
@@ -2067,7 +2073,11 @@ def _collect(args: argparse.Namespace) -> int:
                 "extra: pip install 'roller-agent[stirrup]'"
             )
         stirrup_config = StirrupConfig(
-            **bridge_options("stirrup", stirrup_api_base, stirrup_api_key_env),
+            **{
+                **bridge_options("stirrup", stirrup_api_base, stirrup_api_key_env),
+                # The agent runs here, so the container makes no requests of its own.
+                "pass_env": _deduplicate(args.pass_env),
+            },
             remote_sandbox=remote,
             max_steps=args.stirrup_max_steps,
             context_length=args.stirrup_context_length,
