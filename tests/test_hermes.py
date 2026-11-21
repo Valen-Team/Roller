@@ -202,8 +202,14 @@ class HermesTraceTests(unittest.TestCase):
         )
         sft = actf_to_sft(trajectory)
         tool_result = next(m for m in sft["messages"] if m["role"] == "tool")
-        self.assertEqual(tool_result["content"], "image\n<image>")
-        self.assertEqual(sft["images"], [data_url])
+        self.assertEqual(
+            tool_result["content"],
+            [
+                {"type": "text", "text": "image"},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        )
+        self.assertNotIn("images", sft)
 
     def test_normalizes_openai_image_url_tool_result(self):
         events = sample_events()
@@ -219,7 +225,16 @@ class HermesTraceTests(unittest.TestCase):
             trajectory["steps"][0]["observation"][0]["content"][1],
             {"type": "image", "data": data_url},
         )
-        self.assertEqual(actf_to_sft(trajectory)["images"], [data_url])
+        tool_result = next(
+            m for m in actf_to_sft(trajectory)["messages"] if m["role"] == "tool"
+        )
+        self.assertEqual(
+            tool_result["content"],
+            [
+                {"type": "text", "text": "image"},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        )
 
     def test_corrupt_jsonl_is_not_accepted(self):
         with tempfile.TemporaryDirectory() as tmp:

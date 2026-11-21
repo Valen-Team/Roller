@@ -20,11 +20,11 @@ class SFTUnsupportedContentError(SFTConversionError):
     """Raised when valid ACTF content cannot be represented without data loss."""
 
 
-# Multimodal SFT contract: every image in user or tool content becomes one
-# ``<image>`` placeholder in the message text and one entry in the top-level
-# ``images`` list. Scanning ``messages`` front to back, the Nth placeholder
-# maps to ``images[N-1]``, so the placeholder count must equal the list length.
-IMAGE_PLACEHOLDER = "<image>"
+# Multimodal SFT contract: messages with images use standard OpenAI multimodal
+# content lists (`{"type": "text", "text": ...}` and
+# `{"type": "image_url", "image_url": {"url": "data:<mime>;base64,..."}}`).
+# Text-only messages keep a plain string ``content``.
+_LEGACY_IMAGE_PLACEHOLDER = "<image>"
 _IMAGE_MEDIA_TYPES = frozenset({"image/png", "image/jpeg", "image/webp", "image/gif"})
 
 
@@ -189,17 +189,35 @@ def _image_data_uri(block: Any, field: str) -> str:
     return f"data:{media_type};base64,{canonical}"
 
 
-def _message_content(value: Any, field: str, images: list[str]) -> str:
+def parse_image_data_uri(uri: str, field: str = "image_url.url") -> tuple[str, bytes]:
+    """Validate a canonical ``data:<mime>;base64,<payload>`` URI and decode its bytes."""
+    if not isinstance(uri, str) or not uri.startswith("data:"):
+        raise SFTConversionError(f"{field} must be a base64 image data URI")
+    header, separator, payload = uri.partition(",")
+    if not separator or not header.endswith(";base64"):
+        raise SFTConversionError(f"{field} must be a base64 image data URI")
+    media_type = _image_media_type(header[5:-7], f"{field} media type")
+    if not payload:
+        raise SFTConversionError(f"{field} image data must be non-empty base64")
+    try:
+        decoded = base64.b64decode(payload, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise SFTConversionError(f"{field} image data is not valid base64") from exc
+    return media_type, decoded
+
+
+def _message_content(value: Any, field: str) -> str | list[dict[str, Any]]:
     if isinstance(value, str):
         return value
     if not isinstance(value, list):
         raise SFTConversionError(f"{field} must be a string or content-block list")
 
-    parts: list[str] = []
+    parts: list[dict[str, Any]] = []
+    has_image = False
     for index, block in enumerate(value):
         block_field = f"{field}[{index}]"
         if isinstance(block, str):
-            parts.append(block)
+            parts.append({"type": "text", "text": block})
             continue
         if not isinstance(block, dict):
             raise SFTUnsupportedContentError(
@@ -209,39 +227,72 @@ def _message_content(value: Any, field: str, images: list[str]) -> str:
             text = block.get("text")
             if not isinstance(text, str):
                 raise SFTConversionError(f"{block_field}.text must be a string")
-            parts.append(text)
+            parts.append({"type": "text", "text": text})
         elif block.get("type") == "image":
-            # Append without deduplication: images encode the occurrence
-            # sequence, the Nth placeholder must keep mapping to images[N-1].
-            images.append(_image_data_uri(block, block_field))
-            parts.append(IMAGE_PLACEHOLDER)
+            uri = _image_data_uri(block, block_field)
+            parts.append({"type": "image_url", "image_url": {"url": uri}})
+            has_image = True
+        elif block.get("type") == "image_url":
+            image = block.get("image_url")
+            if not isinstance(image, dict):
+                raise SFTConversionError(f"{block_field}.image_url must be an object")
+            uri = _image_data_uri({"data": image.get("url")}, block_field)
+            parts.append({"type": "image_url", "image_url": {"url": uri}})
+            has_image = True
         elif block.get("type") == "tool_reference":
             # A tool search result names the tool it loaded; keep it as text.
-            parts.append(json.dumps(block, ensure_ascii=False))
+            parts.append(
+                {"type": "text", "text": json.dumps(block, ensure_ascii=False)}
+            )
         else:
             raise SFTUnsupportedContentError(
                 f"{block_field} is non-text; SFT export would lose data"
             )
-    return "\n".join(parts)
+    if not has_image:
+        return "\n".join(part["text"] for part in parts)
+    return parts
 
 
-def _placeholder_count(message: Mapping[str, Any]) -> int:
-    # Tool-call arguments also enter training text. Count all message strings,
-    # not just content/reasoning_content, without escaping the reserved token.
-    return json.dumps(message, ensure_ascii=False).count(IMAGE_PLACEHOLDER)
+def _validate_content_part(part: Any, field: str) -> None:
+    if not isinstance(part, Mapping):
+        raise ValueError(f"{field} must be an object")
+    part_type = part.get("type")
+    if part_type == "text":
+        if not isinstance(part.get("text"), str):
+            raise ValueError(f"{field}.text must be a string")
+        return
+    if part_type == "image_url":
+        image = part.get("image_url")
+        if not isinstance(image, Mapping):
+            raise ValueError(f"{field}.image_url must be an object")
+        uri = image.get("url")
+        if not isinstance(uri, str) or not uri.startswith("data:"):
+            raise ValueError(f"{field}.image_url.url must be a base64 image data URI")
+        try:
+            canonical = _image_data_uri({"data": uri}, f"{field}.image_url.url")
+        except SFTConversionError as exc:
+            raise ValueError(
+                f"{field}.image_url.url must be a base64 image data URI: {exc}"
+            ) from exc
+        if canonical != uri:
+            raise ValueError(
+                f"{field}.image_url.url must be a canonical base64 image data URI"
+            )
+        return
+    raise ValueError(f"{field}.type must be 'text' or 'image_url'; got {part_type!r}")
+
+
+def _legacy_placeholder_count(message: Mapping[str, Any]) -> int:
+    return json.dumps(message, ensure_ascii=False).count(_LEGACY_IMAGE_PLACEHOLDER)
 
 
 def validate_sft_record(record: Any) -> None:
-    """Check the top-level shape and the multimodal alignment contract.
+    """Check the top-level shape and OpenAI multimodal content contract.
 
-    Legacy text-only records keep exactly ``messages`` + ``tools`` and remain
-    the only records in run-level ``sft.jsonl``. Separate compaction segments
-    carry ``target_start_index``. Assistant messages at
-    or after that index are supervised targets; intervening user/tool messages
-    are context, and earlier assistant messages are preserved prompt history.
-    Records with
-    images add a non-empty ``images`` list of base64 data URIs whose length
-    equals the number of ``<image>`` placeholders in ``messages``.
+    Records carry ``messages`` + ``tools`` (and ``target_start_index`` on
+    compaction segments). Text-only messages store a string ``content``;
+    multimodal messages store an OpenAI content-part list of ``text`` and
+    ``image_url`` blocks with canonical base64 data URIs.
     """
     if not isinstance(record, Mapping):
         raise ValueError("SFT record must be a JSON object")
@@ -262,8 +313,37 @@ def validate_sft_record(record: Any) -> None:
         if not isinstance(target, Mapping) or target.get("role") != "assistant":
             raise ValueError("target_start_index must point to an assistant target")
         keys.remove("target_start_index")
-    if keys == {"messages", "tools"}:
-        return
+    if keys != {"messages", "tools"}:
+        raise ValueError("SFT record may only contain messages and tools")
+    messages = record["messages"]
+    if not isinstance(messages, list):
+        raise ValueError("SFT messages must be a list")
+    for index, message in enumerate(messages):
+        if not isinstance(message, Mapping):
+            raise ValueError(f"messages[{index}] must be an object")
+        content = message.get("content")
+        if isinstance(content, str):
+            continue
+        if isinstance(content, list):
+            if not content:
+                raise ValueError(f"messages[{index}].content list must not be empty")
+            for part_index, part in enumerate(content):
+                _validate_content_part(part, f"messages[{index}].content[{part_index}]")
+            continue
+        raise ValueError(
+            f"messages[{index}].content must be a string or content-part list"
+        )
+
+
+def normalize_sft_record(record: Any) -> dict[str, Any]:
+    """Validate an SFT record, upgrading legacy ``<image>`` + ``images`` records."""
+    if not isinstance(record, Mapping):
+        raise ValueError("SFT record must be a JSON object")
+    if "images" not in record:
+        validate_sft_record(record)
+        return deepcopy(dict(record))
+
+    keys = set(record) - {"target_start_index"}
     if keys != {"messages", "tools", "images"}:
         raise ValueError("SFT record may only contain messages, tools, and images")
     images = record["images"]
@@ -279,18 +359,62 @@ def validate_sft_record(record: Any) -> None:
             raise ValueError(f"{field} must be a base64 image data URI: {exc}") from exc
         if canonical != uri:
             raise ValueError(f"{field} must be a canonical base64 image data URI")
-    messages = record["messages"]
-    if not isinstance(messages, list):
+
+    raw_messages = record["messages"]
+    if not isinstance(raw_messages, list):
         raise ValueError("SFT messages must be a list")
     placeholders = sum(
-        _placeholder_count(message)
-        for message in messages
+        _legacy_placeholder_count(message)
+        for message in raw_messages
         if isinstance(message, Mapping)
     )
     if placeholders != len(images):
         raise ValueError(
             "SFT <image> placeholder count does not match the images length"
         )
+
+    upgraded_messages: list[dict[str, Any]] = []
+    image_index = 0
+    for message in raw_messages:
+        if not isinstance(message, Mapping):
+            raise ValueError("SFT message must be an object")
+        copy_msg = deepcopy(dict(message))
+        content = copy_msg.get("content")
+        if isinstance(content, str) and _LEGACY_IMAGE_PLACEHOLDER in content:
+            pieces = content.split(_LEGACY_IMAGE_PLACEHOLDER)
+            blocks: list[dict[str, Any]] = []
+            for piece_index, piece in enumerate(pieces):
+                # Strip the single newline legacy export inserted around <image>.
+                if piece_index < len(pieces) - 1 and piece.endswith("\n"):
+                    piece = piece[:-1]
+                if piece_index > 0 and piece.startswith("\n"):
+                    piece = piece[1:]
+                if piece:
+                    blocks.append({"type": "text", "text": piece})
+                if piece_index < len(pieces) - 1:
+                    blocks.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": images[image_index]},
+                        }
+                    )
+                    image_index += 1
+            copy_msg["content"] = blocks
+        upgraded_messages.append(copy_msg)
+
+    if image_index != len(images):
+        raise ValueError(
+            "SFT <image> placeholder count in message content does not match the images length"
+        )
+
+    upgraded: dict[str, Any] = {
+        "messages": upgraded_messages,
+        "tools": deepcopy(record["tools"]),
+    }
+    if "target_start_index" in record:
+        upgraded["target_start_index"] = record["target_start_index"]
+    validate_sft_record(upgraded)
+    return upgraded
 
 
 def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
@@ -345,7 +469,6 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
     seen_call_ids: set[str] = set()
     user_count = 0
     assistant_count = 0
-    images: list[str] = []
 
     for step_index, step in enumerate(steps):
         prefix = f"steps[{step_index}]"
@@ -353,7 +476,7 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
             raise SFTConversionError(f"{prefix} must be an object")
 
         user_content = _message_content(
-            step.get("user_content", ""), f"{prefix}.user_content", images
+            step.get("user_content", ""), f"{prefix}.user_content"
         )
         if user_content:
             messages.append({"role": "user", "content": user_content})
@@ -449,8 +572,6 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
 
         # Parallel tools can finish in any order. Canonicalize only the SFT
         # output, matching by ID rather than completion order or tool name.
-        # Serialize media in this same order so positional image references
-        # remain aligned with the emitted <image> placeholders.
         tool_messages: list[dict[str, Any]] = []
         for call in calls:
             observation, field = results_by_id[call["id"]]
@@ -459,7 +580,7 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
                     "role": "tool",
                     "tool_call_id": call["id"],
                     "content": _message_content(
-                        observation.get("content", []), f"{field}.content", images
+                        observation.get("content", []), f"{field}.content"
                     ),
                 }
             )
@@ -479,17 +600,6 @@ def actf_to_sft(trajectory: Mapping[str, Any]) -> dict[str, Any]:
         raise SFTConversionError("trajectory contains no user message")
     if assistant_count == 0:
         raise SFTConversionError("trajectory contains no assistant message")
-    if images:
-        # Every appended image contributed one placeholder, so any surplus
-        # occurrence is a literal <image> in source text and would silently
-        # misalign the positional images mapping.
-        placeholders = sum(_placeholder_count(message) for message in messages)
-        if placeholders != len(images):
-            raise SFTConversionError(
-                "text already contains a literal <image> placeholder; "
-                "multimodal alignment would be ambiguous"
-            )
-        return {"messages": messages, "tools": tools, "images": images}
     return {"messages": messages, "tools": tools}
 
 

@@ -535,8 +535,45 @@ class ExportTests(unittest.TestCase):
         code, printed = _cli("export", "--help")
 
         self.assertEqual(code, 0)
-        self.assertIn("{atif,hf,sft,tokens}", "\n".join(printed))
+        self.assertIn("{atif,hf,sft,tokens,xtuner}", "\n".join(printed))
         self.assertIn("--min-score X", "\n".join(printed))
+        self.assertIn("--inline-images", "\n".join(printed))
+
+    def test_sft_export_upgrades_legacy_placeholder_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _run(Path(tmp))
+            sft_path = sorted((run_dir / "samples").glob("*/*/trace_SFT.json"))[0]
+            uri = "data:image/png;base64,AA=="
+            legacy = {
+                "messages": [
+                    {"role": "system", "content": ""},
+                    {"role": "user", "content": "Inspect\n<image>"},
+                    {
+                        "role": "assistant",
+                        "reasoning_content": "",
+                        "content": "done",
+                        "tool_calls": [],
+                    },
+                ],
+                "tools": [],
+                "images": [uri],
+            }
+            sft_path.write_text(json.dumps(legacy), encoding="utf-8")
+            output = Path(tmp) / "exported"
+            code, _ = _cli("export", "--format", "sft", str(run_dir), "-o", str(output))
+            self.assertEqual(code, 0)
+            rows = _lines(output / "sft.jsonl")
+            upgraded = next(
+                row for row in rows if isinstance(row["messages"][1]["content"], list)
+            )
+            self.assertNotIn("images", upgraded)
+            self.assertEqual(
+                upgraded["messages"][1]["content"],
+                [
+                    {"type": "text", "text": "Inspect"},
+                    {"type": "image_url", "image_url": {"url": uri}},
+                ],
+            )
 
     def test_hugging_face_run_directories_index_their_own_samples(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

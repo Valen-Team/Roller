@@ -152,8 +152,17 @@ class OpenCodeTraceTests(unittest.TestCase):
             ],
         )
         record = actf_to_sft(actf)
-        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
-        self.assertEqual(record["messages"][1]["content"], "Read token\n<image>")
+        self.assertNotIn("images", record)
+        self.assertEqual(
+            record["messages"][1]["content"],
+            [
+                {"type": "text", "text": "Read token"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                },
+            ],
+        )
 
         # A path-only reference stays in ACTF; SFT export never reads files.
         parts[-1]["url"] = "file:///roller/workspace/chart.png"
@@ -552,8 +561,14 @@ class OpenCodeTraceTests(unittest.TestCase):
 
         sft = actf_to_sft(actf)
         tool_result = next(m for m in sft["messages"] if m["role"] == "tool")
-        self.assertEqual(tool_result["content"], "TOKEN\n<image>")
-        self.assertEqual(sft["images"], [data_url])
+        self.assertEqual(
+            tool_result["content"],
+            [
+                {"type": "text", "text": "TOKEN"},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        )
+        self.assertNotIn("images", sft)
 
     def test_tool_image_attachments_keep_occurrence_order(self):
         events = sample_events()
@@ -568,8 +583,15 @@ class OpenCodeTraceTests(unittest.TestCase):
         sft = actf_to_sft(opencode_events_to_actf(events))
 
         tool_result = next(m for m in sft["messages"] if m["role"] == "tool")
-        self.assertEqual(tool_result["content"], "TOKEN\n<image>\n<image>")
-        self.assertEqual(sft["images"], [first, second])
+        self.assertEqual(
+            tool_result["content"],
+            [
+                {"type": "text", "text": "TOKEN"},
+                {"type": "image_url", "image_url": {"url": first}},
+                {"type": "image_url", "image_url": {"url": second}},
+            ],
+        )
+        self.assertNotIn("images", sft)
 
     def test_non_image_attachment_keeps_bounded_audit_summary(self):
         events = sample_events()

@@ -176,9 +176,12 @@ class StirrupJournalTests(unittest.TestCase):
         self.assertEqual(record["messages"][2]["reasoning_content"], "look first")
         self.assertEqual(
             record["messages"][4]["content"],
-            "Here is the image for tool call t1\n<image>",
+            [
+                {"type": "text", "text": "Here is the image for tool call t1"},
+                {"type": "image_url", "image_url": {"url": URL}},
+            ],
         )
-        self.assertEqual(record["images"], [URL])
+        self.assertNotIn("images", record)
         self.assertNotIn("sft_unavailable_reason", actf)
         without = stirrup_events_to_actf(rows, keep_thinking=False)
         self.assertEqual(
@@ -299,10 +302,13 @@ class StirrupCompactionTests(unittest.TestCase):
         self.assertEqual(first["target_start_index"], 2)
         self.assertNotIn("images", first)
         self.assertEqual(summary["target_start_index"], 6)
-        self.assertEqual(summary["images"], [URL])
+        self.assertNotIn("images", summary)
         self.assertEqual(
             summary["messages"][4]["content"],
-            "Here is the image for tool call t1\n<image>",
+            [
+                {"type": "text", "text": "Here is the image for tool call t1"},
+                {"type": "image_url", "image_url": {"url": URL}},
+            ],
         )
         self.assertEqual(summary["messages"][-1]["content"], "SUMMARY")
         self.assertEqual(summary["messages"][-1]["reasoning_content"], "sum up")
@@ -621,8 +627,15 @@ class StirrupLoopTests(unittest.TestCase):
             actf["steps"][0]["assistant_content"]["reasoning_content"], "view it"
         )
         # Stirrup sends every image as PNG of at most one megapixel.
-        self.assertEqual(len(record["images"]), 1)
-        self.assertTrue(record["images"][0].startswith("data:image/png;base64,"))
+        image_urls = [
+            part["image_url"]["url"]
+            for message in record["messages"]
+            if isinstance(message.get("content"), list)
+            for part in message["content"]
+            if isinstance(part, dict) and part.get("type") == "image_url"
+        ]
+        self.assertEqual(len(image_urls), 1)
+        self.assertTrue(image_urls[0].startswith("data:image/png;base64,"))
         third = json.loads(ScriptedModel.bodies[3])["messages"]
         self.assertIn(
             "Command timed out after 5 seconds",

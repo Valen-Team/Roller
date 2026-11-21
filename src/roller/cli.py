@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from roller import hf_dataset, sft_dataset, token_dataset
+from roller import hf_dataset, sft_dataset, token_dataset, xtuner_dataset
 from roller import importer as importer_module
 from roller.atif import export_run
 from roller.benches import (
@@ -203,14 +203,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     export.add_argument(
         "--format",
-        choices=("atif", "hf", "sft", "tokens"),
+        choices=("atif", "hf", "sft", "tokens", "xtuner"),
         default="atif",
         help=(
             "target format: atif, the trajectory format Harbor reads (default), "
-            "hf, a Hugging Face dataset folder, sft, the SFT records of the "
-            "run with an index of the task, model and bench score of each, or "
-            "tokens, the token ids and logprobs --token-ids recorded, "
-            "joined into one sequence per conversation"
+            "hf, a Hugging Face dataset folder, sft, the OpenAI-format SFT "
+            "records of the run with an index of the task, model and bench "
+            "score of each, tokens, the token ids and logprobs --token-ids "
+            "recorded, joined into one sequence per conversation, or xtuner, "
+            "merged XTuner multimodal SFT JSONL with image_wh, parsed tool "
+            "arguments and per-turn loss masks"
         ),
     )
     export.add_argument(
@@ -221,11 +223,19 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         metavar="X",
         help=(
-            "with --format sft, keep only the samples whose bench score is at "
-            "least X and leave out the samples without a score. The score is "
-            "the one `roller bench report` lists for the sample: from 0 to 1 "
-            "for WildClawBench, PinchBench, QwenClawBench and SkillsBench, and "
-            "0 or 1 for SWE-Bench Pro"
+            "with --format sft or xtuner, keep only the samples whose bench "
+            "score is at least X and leave out the samples without a score. "
+            "The score is the one `roller bench report` lists for the sample: "
+            "from 0 to 1 for WildClawBench, PinchBench, QwenClawBench, "
+            "SkillsBench and VIALS, and 0 or 1 for SWE-Bench Pro"
+        ),
+    )
+    export.add_argument(
+        "--inline-images",
+        action="store_true",
+        help=(
+            "with --format xtuner, keep base64 image data URIs inline instead "
+            "of writing image files under media/"
         ),
     )
     export.add_argument(
@@ -3102,8 +3112,10 @@ def _export(args: argparse.Namespace) -> int:
     if not (run_dir / "samples").is_dir():
         raise FileNotFoundError(f"{run_dir} has no samples directory")
     output = Path(args.output) if args.output else run_dir / args.format
-    if args.min_score is not None and args.format != "sft":
-        raise ValueError("--min-score applies to --format sft")
+    if args.min_score is not None and args.format not in {"sft", "xtuner"}:
+        raise ValueError("--min-score applies to --format sft and --format xtuner")
+    if args.inline_images and args.format != "xtuner":
+        raise ValueError("--inline-images applies to --format xtuner")
     if args.format == "hf":
         rules = (
             hf_dataset.load_rules(Path(args.redact_rules))
@@ -3137,6 +3149,13 @@ def _export(args: argparse.Namespace) -> int:
         return 0
     if args.format == "sft":
         summary = sft_dataset.export_run(run_dir, output, args.min_score)
+        for line in summary.lines(output, args.min_score):
+            print(line)
+        return 0
+    if args.format == "xtuner":
+        summary = xtuner_dataset.export_run(
+            run_dir, output, args.min_score, inline_images=args.inline_images
+        )
         for line in summary.lines(output, args.min_score):
             print(line)
         return 0

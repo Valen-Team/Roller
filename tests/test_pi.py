@@ -115,8 +115,17 @@ class PiTraceTests(unittest.TestCase):
             [{"type": "text", "text": "Read token"}, image],
         )
         record = actf_to_sft(actf)
-        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
-        self.assertEqual(record["messages"][1]["content"], "Read token\n<image>")
+        self.assertNotIn("images", record)
+        self.assertEqual(
+            record["messages"][1]["content"],
+            [
+                {"type": "text", "text": "Read token"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                },
+            ],
+        )
         events[1] = native(
             {"role": "user", "content": [{"type": "image", "path": "/tmp/a.png"}]}
         )
@@ -245,26 +254,52 @@ class PiTraceTests(unittest.TestCase):
         image = actf["steps"][0]["observation"][0]["content"][1]
         self.assertEqual(image["type"], "image")
         sft = actf_to_sft(actf)
-        self.assertEqual(sft["messages"][3]["content"], "TOKEN\n<image>")
-        self.assertEqual(sft["images"], ["data:image/png;base64,iVBORw0KGgo="])
+        self.assertEqual(
+            sft["messages"][3]["content"],
+            [
+                {"type": "text", "text": "TOKEN"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+                },
+            ],
+        )
+        self.assertNotIn("images", sft)
 
     def test_pure_and_multiple_image_tool_results_survive_in_order(self):
         image1 = {"type": "image", "data": "AA==", "mimeType": "image/png"}
         image2 = {"type": "image", "data": "AQ==", "mimeType": "image/jpeg"}
-        for content, expected_text, expected_images in (
-            ([image1], "<image>", ["data:image/png;base64,AA=="]),
+        for content, expected_content in (
+            (
+                [image1],
+                [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AA=="},
+                    }
+                ],
+            ),
             (
                 [{"type": "text", "text": "two frames"}, image1, image2],
-                "two frames\n<image>\n<image>",
-                ["data:image/png;base64,AA==", "data:image/jpeg;base64,AQ=="],
+                [
+                    {"type": "text", "text": "two frames"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AA=="},
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,AQ=="},
+                    },
+                ],
             ),
         ):
-            with self.subTest(expected_text=expected_text):
+            with self.subTest(expected_content=expected_content):
                 events = sample_events()
                 events[4]["event"]["message"]["content"] = deepcopy(content)
                 sft = actf_to_sft(pi_events_to_actf(events))
-                self.assertEqual(sft["messages"][3]["content"], expected_text)
-                self.assertEqual(sft["images"], expected_images)
+                self.assertEqual(sft["messages"][3]["content"], expected_content)
+                self.assertNotIn("images", sft)
 
     def test_incomplete_or_lossy_data_rejected(self):
         for case in (

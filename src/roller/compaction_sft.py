@@ -28,7 +28,6 @@ from roller.harness_registry import compaction_mode
 from roller.opencode_actf import root_session_ids
 from roller.pi_actf import PI_COMPACTION_SFT_REASON
 from roller.sft import (
-    IMAGE_PLACEHOLDER,
     SFTConversionError,
     _arguments_json,
     _image_data_uri,
@@ -366,24 +365,32 @@ def _responses_item(item: Mapping[str, Any]) -> list[dict[str, Any]]:
     raise SFTConversionError(f"unsupported Responses input item: {kind}")
 
 
-def _chat_content(content: Any, images: list[str]) -> str:
-    """Text with one placeholder per image, as the linear SFT export writes it."""
+def _chat_content(content: Any) -> str | list[dict[str, Any]]:
+    """OpenAI multimodal content list when images are present, plain text otherwise."""
     if not isinstance(content, list):
         return _text_blocks(content, kinds={"text"})
-    parts = []
+    parts: list[dict[str, Any]] = []
+    has_image = False
     for block in content:
         image = block.get("image_url") if isinstance(block, Mapping) else None
-        if block.get("type") == "image_url" and isinstance(image, Mapping):
-            images.append(_image_data_uri({"data": image.get("url")}, "image_url"))
-            parts.append(IMAGE_PLACEHOLDER)
+        if (
+            isinstance(block, Mapping)
+            and block.get("type") == "image_url"
+            and isinstance(image, Mapping)
+        ):
+            uri = _image_data_uri({"data": image.get("url")}, "image_url")
+            parts.append({"type": "image_url", "image_url": {"url": uri}})
+            has_image = True
         else:
-            parts.append(_text_blocks([block], kinds={"text"}))
-    return "\n".join(parts)
+            parts.append(
+                {"type": "text", "text": _text_blocks([block], kinds={"text"})}
+            )
+    if not has_image:
+        return "\n".join(part["text"] for part in parts)
+    return parts
 
 
-def _chat_message(
-    message: Mapping[str, Any], images: list[str] | None = None
-) -> dict[str, Any]:
+def _chat_message(message: Mapping[str, Any]) -> dict[str, Any]:
     role = message.get("role")
     if role not in {"system", "developer", "user", "assistant", "tool"}:
         raise SFTConversionError(f"unsupported Chat Completions role: {role}")
@@ -392,8 +399,8 @@ def _chat_message(
         content = ""
     value = (
         _text_blocks(content, kinds={"text"})
-        if images is None or role in {"system", "developer", "assistant"}
-        else _chat_content(content, images)
+        if role in {"system", "developer", "assistant"}
+        else _chat_content(content)
     )
     if role == "tool":
         identifier = message.get("tool_call_id")
@@ -445,13 +452,12 @@ def _merge_response_items(messages: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def _prompt_from_call(
     call: Mapping[str, Any],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     context = call.get("context")
     if not isinstance(context, Mapping):
         raise SFTConversionError("captured Call lacks context")
     protocol = call.get("protocol")
     messages: list[dict[str, Any]] = []
-    images: list[str] = []
     tools_value = context.get("tools", [])
     if not isinstance(tools_value, list):
         raise SFTConversionError("captured tools are invalid")
@@ -504,13 +510,13 @@ def _prompt_from_call(
                 raise SFTConversionError(
                     "Chat Completions request has an invalid message"
                 )
-            messages.append(_chat_message(item, images))
+            messages.append(_chat_message(item))
         tools = deepcopy(tools_value)
     else:
         raise SFTConversionError(f"unsupported compaction Call protocol: {protocol}")
     if not isinstance(tools, list):
         raise SFTConversionError("captured tools are invalid")
-    return messages, tools, images
+    return messages, tools
 
 
 def _target_messages_from_call(call: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -897,7 +903,7 @@ def _segment_records(
                 "main Call starts at an ambiguous compaction boundary"
             )
         current_native = sum(when > boundary for boundary in times) if when else 0
-        prompt, tools, images = _prompt_from_call(call)
+        prompt, tools = _prompt_from_call(call)
         if not prompt:
             raise SFTConversionError("compaction segment lacks its actual input")
         if not keep_thinking:
@@ -919,8 +925,6 @@ def _segment_records(
         if continuation:
             # The newest prompt carries the IDs the harness actually replayed.
             previous["messages"] = prompt + target
-            if images:
-                previous["images"] = images
             exported[-1][0]["last_call_id"] = call["call_id"]
         else:
             boundary = (
@@ -947,7 +951,6 @@ def _segment_records(
             record = {
                 "messages": prompt + target,
                 "tools": tools,
-                **({"images": images} if images else {}),
                 "target_start_index": len(prompt),
             }
             # Only assistant messages at/after this index enter the loss;

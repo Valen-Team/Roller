@@ -111,8 +111,17 @@ class ClaudeCodeActfTests(unittest.TestCase):
                     [{"type": "text", "text": text}, image],
                 )
                 record = actf_to_sft(trajectory)
-                self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
-                self.assertEqual(record["messages"][1]["content"], f"{text}\n<image>")
+                self.assertNotIn("images", record)
+                self.assertEqual(
+                    record["messages"][1]["content"],
+                    [
+                        {"type": "text", "text": text},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,AA=="},
+                        },
+                    ],
+                )
 
         # A message without prompt text is not user input Roller sent.
         events[0]["message"]["content"] = [image]
@@ -367,12 +376,19 @@ class ClaudeCodeActfTests(unittest.TestCase):
             "image",
         )
         record = actf_to_sft(trajectory)
-        self.assertEqual(set(record), {"messages", "tools", "images"})
+        self.assertEqual(set(record), {"messages", "tools"})
         tool_message = record["messages"][3]
         self.assertEqual(tool_message["role"], "tool")
         self.assertEqual(tool_message["tool_call_id"], "toolu-1")
-        self.assertEqual(tool_message["content"], "<image>")
-        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+        self.assertEqual(
+            tool_message["content"],
+            [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                }
+            ],
+        )
 
     def test_preserves_text_and_multiple_tool_images_in_order(self) -> None:
         events = _events()
@@ -396,11 +412,21 @@ class ClaudeCodeActfTests(unittest.TestCase):
             claude_code_events_to_actf(events, user_messages=["inspect input.txt"])
         )
         tool_message = record["messages"][3]
-        self.assertEqual(tool_message["content"], "two frames\n<image>\n<image>")
         self.assertEqual(
-            record["images"],
-            ["data:image/png;base64,AA==", "data:image/jpeg;base64,AQ=="],
+            tool_message["content"],
+            [
+                {"type": "text", "text": "two frames"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/jpeg;base64,AQ=="},
+                },
+            ],
         )
+        self.assertNotIn("images", record)
 
     def test_file_conversion_and_usage_deduplicate_streamed_message_ids(self) -> None:
         events = _events()

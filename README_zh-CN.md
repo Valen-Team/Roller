@@ -50,10 +50,11 @@ uv tool install roller-agent    # 或：python -m pip install roller-agent
 
 ### 1. 把 Agent 运行变成训练数据
 
-每个成功的 rollout 在 `sft.jsonl` 中生成一条 `messages` + `tools` 记录。记录保留模型的可见 reasoning，轨迹包含图片时附带 `images` 字段。Agent 压缩上下文时，每段通过校验的上下文窗口作为独立记录导出至 `sft_segments/`。对评过分的 run，可以只保留得分高于阈值的 sample：
+每个成功的 rollout 在 `sft.jsonl` 中生成一条 `messages` + `tools` 记录。记录保留模型的可见 reasoning，包含图片的消息采用标准 OpenAI 多模态内容列表（`text` 与 `image_url` 块）。Agent 压缩上下文时，每段通过校验的上下文窗口作为独立记录导出至 `sft_segments/`。对评过分的 run，可以按得分筛选，或一键导出为 XTuner 多模态 JSONL（已在 `main` 上，随下一个版本发布）：
 
 ```bash
 roller export runs/wildclaw --format sft --min-score 0.5 --output training
+roller export runs/wildclaw --format xtuner --min-score 0.5 --output training-xtuner
 ```
 
 [SFT 数据格式 →](https://valen-team.github.io/zh-Hans/roller/traces/sft-format/)

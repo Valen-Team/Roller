@@ -200,9 +200,16 @@ class CodexActfTests(unittest.TestCase):
             [{"type": "text", "text": "Describe this image."}, image],
         )
         record = actf_to_sft(trajectory)
-        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+        self.assertNotIn("images", record)
         self.assertEqual(
-            record["messages"][1]["content"], "Describe this image.\n<image>"
+            record["messages"][1]["content"],
+            [
+                {"type": "text", "text": "Describe this image."},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                },
+            ],
         )
 
         # Without the task prompts there is nothing to clean: keep native order.
@@ -217,7 +224,8 @@ class CodexActfTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            actf_to_sft(trajectory)["images"], ["data:image/png;base64,AA=="]
+            actf_to_sft(trajectory)["messages"][1]["content"][1],
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
         )
 
     def test_user_message_with_only_an_image_is_not_task_input(self) -> None:
@@ -413,11 +421,19 @@ class CodexActfTests(unittest.TestCase):
             ],
         )
         sft = actf_to_sft(trajectory)
-        self.assertEqual(sft["images"], ["data:image/png;base64,AA=="])
+        self.assertNotIn("images", sft)
         tool_result = next(
             message for message in sft["messages"] if message["role"] == "tool"
         )
-        self.assertEqual(tool_result["content"], "<image>")
+        self.assertEqual(
+            tool_result["content"],
+            [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                }
+            ],
+        )
 
     def test_preserves_text_and_multiple_view_images_in_order(self) -> None:
         events = _events()
@@ -435,11 +451,21 @@ class CodexActfTests(unittest.TestCase):
         tool_result = next(
             message for message in record["messages"] if message["role"] == "tool"
         )
-        self.assertEqual(tool_result["content"], "two frames\n<image>\n<image>")
         self.assertEqual(
-            record["images"],
-            ["data:image/png;base64,AA==", "data:image/jpeg;base64,AQ=="],
+            tool_result["content"],
+            [
+                {"type": "text", "text": "two frames"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/jpeg;base64,AQ=="},
+                },
+            ],
         )
+        self.assertNotIn("images", record)
 
     def test_preserves_ordinary_json_array_tool_outputs(self) -> None:
         cases = (
@@ -628,8 +654,17 @@ class CodexActfTests(unittest.TestCase):
                     for message in record["messages"]
                     if message["role"] == "tool"
                 )
-                self.assertEqual(tool_result["content"], f"<image>\n{expected_text}")
-                self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+                self.assertEqual(
+                    tool_result["content"],
+                    [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": "data:image/png;base64,AA=="},
+                        },
+                        {"type": "text", "text": expected_text},
+                    ],
+                )
+                self.assertNotIn("images", record)
 
     def test_rejects_unsupported_typed_file_and_audio_blocks(self) -> None:
         cases = (
@@ -713,8 +748,17 @@ class CodexActfTests(unittest.TestCase):
         tool_result = next(
             message for message in record["messages"] if message["role"] == "tool"
         )
-        self.assertEqual(tool_result["content"], "frame\n<image>")
-        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+        self.assertEqual(
+            tool_result["content"],
+            [
+                {"type": "text", "text": "frame"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                },
+            ],
+        )
+        self.assertNotIn("images", record)
 
     def test_prefers_visible_reasoning_content_and_filters_codex_context(self) -> None:
         events = _events()
