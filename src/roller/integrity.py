@@ -403,6 +403,9 @@ def validate_resumable_sample(
                 f"{info.get(key)!r} != {expected!r}"
             )
 
+    if info.get("runtime", {}).get("training_files_only"):
+        # Collected with --training-files-only: only its training files remain.
+        return []
     rebuilt = _validate_trajectory_files(
         sample_dir,
         info,

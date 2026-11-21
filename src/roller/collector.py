@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from roller.benches.report import brief_reason, grading_failure
+from roller.blobs import BLOBS_DIR, store_blobs
 from roller.capture import (
     read_jsonl,
     recover_capture_retention,
@@ -44,6 +45,7 @@ from roller.sandbox import SandboxRun
 from roller.sft import SFTConversionError, write_sft
 from roller.sft_dataset import write_sft_dataset
 from roller.storage import atomic_write_json, safe_component, write_jsonl
+from roller.token_dataset import capture_participants
 from roller.trajectory_audit import record_training_audits, training_summary
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,17 @@ RUN_CHECKPOINT_RESULT_INTERVAL = 25
 RUN_CHECKPOINT_TIME_INTERVAL_SECONDS = 30.0
 # Silence after which a run reports the rollouts it is still waiting for.
 HEARTBEAT_SECONDS = 60.0
+
+
+# What --training-files-only keeps of a finished sample. The images of its SFT
+# records go to the run's ``blobs/``, shared by every sample of the run.
+TRAINING_FILES = {
+    "info.json",
+    "score.json",
+    "trace_SFT.json",
+    SFT_SEGMENTS_DIR,
+    "token_ids.jsonl",
+}
 
 
 def _clear_sft_segments(sample_dir: Path) -> None:
@@ -197,6 +210,8 @@ class CollectionConfig:
     max_consecutive_errors: int = 0
     # On Resume, rerun bench samples whose agent finished but whose grading failed.
     resume_unscored: bool = False
+    # Keep only the training files of a sample once it finished and was graded.
+    training_files_only: bool = False
     sandbox_run: SandboxRun | None = None
 
     def __post_init__(self) -> None:
@@ -401,6 +416,7 @@ class Collector:
             "conversation.json",
             "user_simulator",
             "capture",  # Formal per-attempt calls/native evidence, not diagnostics.
+            BLOBS_DIR,  # Images of the recorded requests, once each.
             # Written by bench grading, which runs before the container dies.
             "score.json",
         }
@@ -428,6 +444,34 @@ class Collector:
                     path.rmdir()
                 continue
             _remove_path(path)
+
+    @staticmethod
+    def _keep_training_files(
+        sample_dir: Path, metadata: dict[str, Any], blobs: Path
+    ) -> None:
+        """Remove all but ``TRAINING_FILES``; SFT images go to ``blobs``, once each."""
+
+        records = {
+            path: json.loads(path.read_text(encoding="utf-8"))
+            for path in (
+                sample_dir / "trace_SFT.json",
+                *sorted((sample_dir / SFT_SEGMENTS_DIR).glob("*.json")),
+            )
+            if path.is_file()
+        }
+        capture = metadata.get("capture")
+        if isinstance(capture, dict) and capture.get("manifest"):
+            # roller export --format tokens names the participant of each call.
+            capture["participant_ids"] = {
+                str(seq): pid for seq, pid in capture_participants(sample_dir).items()
+            }
+            del capture["manifest"]
+        metadata["training_files_only"] = True
+        for path in sample_dir.iterdir():
+            if path.name not in TRAINING_FILES:
+                _remove_path(path)
+        for path, record in records.items():
+            atomic_write_json(path, store_blobs(record, blobs))
 
     def _finalize_sample(
         self,
@@ -530,6 +574,18 @@ class Collector:
             trajectory if isinstance(trajectory, dict) else None,
             sample_dir / "wire_trace.jsonl",
         )
+        if (
+            self.config.training_files_only
+            and final.status == "ok"
+            and grading_failure({"status": "ok", "runtime": metadata}) is None
+        ):
+            self._keep_training_files(sample_dir, metadata, self.run_dir / BLOBS_DIR)
+        else:
+            self._prune_sample(
+                sample_dir,
+                keep_aux_traces=self.config.keep_aux_traces,
+                keep_rollout_logs=final.status != "ok",
+            )
         if attempts and attempts[-1].get("status") != final.status:
             attempts[-1]["status"] = final.status
             attempts[-1]["error"] = final.error
@@ -583,11 +639,6 @@ class Collector:
             },
             "provenance": provenance,
         }
-        self._prune_sample(
-            sample_dir,
-            keep_aux_traces=self.config.keep_aux_traces,
-            keep_rollout_logs=final.status != "ok",
-        )
         atomic_write_json(sample_dir / "info.json", result)
         return result
 
@@ -788,11 +839,13 @@ class Collector:
         atomic_write_json(info_path, info)
 
     def _write_sft_dataset(self, results: list[dict[str, Any]]) -> None:
-        write_sft_dataset(
-            self.run_dir,
-            self.run_dir,
-            [(self._sample_dir_from_result(result), result) for result in results],
-        )
+        # With --training-files-only, roller export --format sft writes them.
+        if not self.config.training_files_only:
+            write_sft_dataset(
+                self.run_dir,
+                self.run_dir,
+                [(self._sample_dir_from_result(result), result) for result in results],
+            )
 
         def calls() -> Iterator[dict[str, Any]]:
             for result in results:
@@ -804,8 +857,12 @@ class Collector:
                 manifest_path = sample / capture["manifest"]
                 for call in read_jsonl(manifest_path.parent / "calls.jsonl"):
                     if call.get("export_status") == "available":
+                        # The request and response stay in the sample's capture.
+                        call.pop("context")
+                        call.pop("output")
                         yield {
                             **call,
+                            "schema_version": "roller.call-index/v1",
                             "sample": sample.relative_to(self.run_dir).as_posix(),
                             "sample_status": result["status"],
                             "sample_capture_status": capture.get("capture_status"),

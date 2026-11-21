@@ -56,7 +56,7 @@ def sequences(
     return joined
 
 
-def _participants(sample_dir: Path) -> dict[int, str]:
+def capture_participants(sample_dir: Path) -> dict[int, str]:
     """The participant of each call, from the capture of the last attempt."""
 
     attempts = sorted(sample_dir.glob("capture/*/calls.jsonl"))
@@ -65,6 +65,14 @@ def _participants(sample_dir: Path) -> dict[int, str]:
     return {
         call["request_seq"]: call["participant_id"] for call in read_jsonl(attempts[-1])
     }
+
+
+def _participants(sample_dir: Path, result: Mapping[str, Any]) -> dict[int, str]:
+    capture = result.get("runtime", {}).get("capture") or {}
+    if "participant_ids" in capture:
+        # --training-files-only removed the capture and kept this map.
+        return {int(seq): pid for seq, pid in capture["participant_ids"].items()}
+    return capture_participants(sample_dir)
 
 
 def export_run(run_dir: Path, output: Path) -> tuple[int, int, int]:
@@ -87,7 +95,7 @@ def export_run(run_dir: Path, output: Path) -> tuple[int, int, int]:
                 "status": result.get("status"),
                 "logprobs_mode": logprobs_modes.get(result.get("model")),
                 "request": calls[0]["request"] if calls else None,
-                "sequences": sequences(calls, _participants(sample_dir)),
+                "sequences": sequences(calls, _participants(sample_dir, result)),
             }
         )
     write_jsonl(output / TOKENS_FILE, rows)

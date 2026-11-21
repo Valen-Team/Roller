@@ -673,6 +673,18 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     runtime.add_argument(
+        "--training-files-only",
+        action="store_true",
+        help=(
+            "once a sample has finished and been graded, keep only trace_SFT.json, "
+            "sft_segments/, token_ids.jsonl, info.json and score.json, with each "
+            "image stored once in blobs/; also removes what --wire-trace full and "
+            "--capture-calls keep. The run-level sft.jsonl is left to roller "
+            "export --format sft. Such samples cannot be viewed, exported to "
+            "Hugging Face or ATIF, or have their SFT rebuilt"
+        ),
+    )
+    runtime.add_argument(
         "--thinking",
         type=normalize_thinking,
         choices=THINKING_LEVELS,
@@ -2518,6 +2530,7 @@ def _collect(args: argparse.Namespace) -> int:
             "limit": args.limit,
             "resume": args.resume,
             "resume_unscored": args.resume_unscored,
+            "training_files_only": args.training_files_only,
             "task_schema": "roller.task/v1",
             "thinking_capabilities_path": (
                 str(thinking_capabilities_path) if thinking_capabilities_path else None
@@ -2782,6 +2795,7 @@ def _collect(args: argparse.Namespace) -> int:
                     resume=lock_decision.reuse_existing_samples,
                     verify_outputs=args.resume_verify_outputs,
                     resume_unscored=args.resume_unscored,
+                    training_files_only=args.training_files_only,
                     keep_aux_traces=keep_aux_traces,
                     capture_cache_trace=(
                         args.cache_trace if "openclaw" in selected_harnesses else False
