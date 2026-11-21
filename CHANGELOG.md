@@ -13,6 +13,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 - The Hugging Face export of imported sessions also replaces the local user name inside longer names, such as `pytest-of-<user>`, `_Users_<user>_` and `<user>.github.io`, and right after an escaped line break or a URL escape such as `%2F`. A user name still left, such as one joined to a word, is listed in the redaction report as `user_name`.
 - `roller export --format hf --include-runs` leaves out the `tokens/` folder that `roller export --format tokens` writes into the run, as it already did for the other export folders.
+- SFT windows built from captured Calls stay open when the Harness replays a tool call with schema defaults filled in or with the argument keys in another order, as Claude Code does. Each such call started a new SFT record that repeated the messages of the record before it.
 
 ## 0.6.0
 
