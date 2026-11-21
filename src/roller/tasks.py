@@ -91,7 +91,7 @@ def _parse_messages(value: Any, index: int) -> tuple[tuple[str, ...], tuple[bool
             raise TaskFormatError(
                 f"task {index}, message {message_index}: empty content"
             )
-        prompts.append(content.strip())
+        prompts.append(content)
         new_session.append(reset)
     return tuple(prompts), tuple(new_session)
 
@@ -413,11 +413,11 @@ def _parse_context(value: Any, base_dir: Path, index: int) -> tuple[ContextFile,
     return tuple(context_files)
 
 
-def _parse_output_dir(value: Any, index: int) -> str:
-    output_dir = normalize_relative_path(
-        "outputs" if value is None else value,
-        f"task {index}, files.output_dir",
-    )
+def _parse_output_dir(value: Any, index: int) -> str | None:
+    # null: the workspace gets no output directory and no files are collected.
+    if value is None:
+        return None
+    output_dir = normalize_relative_path(value, f"task {index}, files.output_dir")
     first_part = PurePosixPath(output_dir).parts[0]
     if first_part in {"inputs", "context"}:
         raise TaskFormatError(
@@ -559,7 +559,7 @@ def load_tasks(
                 raise TaskFormatError(
                     f"task {index}: missing non-empty {prompt_key!r} (or compatibility key 'question')"
                 )
-            prompts = (prompt.strip(),)
+            prompts = (prompt,)
             new_session = (False,)
 
         workspace = global_workspace
@@ -585,14 +585,15 @@ def load_tasks(
                 f"task {index}: files.outputs is no longer supported; all files under "
                 "files.output_dir are collected automatically"
             )
-        output_dir = _parse_output_dir(files.get("output_dir"), index)
+        output_dir = _parse_output_dir(files.get("output_dir", "outputs"), index)
         inputs = _parse_inputs(files.get("inputs"), file_root, index)
         input_mode = files.get("input_mode", "mount")
         if input_mode not in {"mount", "copy"}:
             raise TaskFormatError(
                 f"task {index}: files.input_mode must be 'mount' or 'copy'"
             )
-        _validate_output_input_paths(output_dir, inputs, index)
+        if output_dir is not None:
+            _validate_output_input_paths(output_dir, inputs, index)
         attach_images = _parse_attach_images(files.get("attach_images"), inputs, index)
         legacy_workspace = workspace is not None and not inputs
         if legacy_workspace:
@@ -600,7 +601,8 @@ def load_tasks(
         context_files = _parse_context(files.get("context"), file_root, index)
         context_files += _legacy_persona_context(row, workspace, index)
         _validate_input_context_paths(inputs, context_files, index)
-        _validate_output_context_paths(output_dir, context_files, index)
+        if output_dir is not None:
+            _validate_output_context_paths(output_dir, context_files, index)
 
         task_agent_value = row.get("task_agent")
         agent_alias_value = row.get("agent")

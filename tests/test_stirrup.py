@@ -824,6 +824,36 @@ class StirrupLoopTests(unittest.TestCase):
         self.assertFalse(any("sandbox_wire" in " ".join(argv) for argv in box.runs))
         self.assertFalse(any("secret" in json.dumps(env) for env in box.envs))
 
+    def test_a_task_without_output_dir_gets_no_output_directory(self):
+        server = ModelServer(episode_script())
+        self.addCleanup(server.close)
+        box = FakeSandbox()
+        with tempfile.TemporaryDirectory() as tmp:
+            config = StirrupConfig(
+                api_base=server.base,
+                api_key_env="LOCAL_TEST_KEY",
+                command_timeout=5,
+                remote_sandbox=True,
+                network=None,
+                sandbox_run=SandboxRun(
+                    Path(tmp) / "run",
+                    SandboxTarget("test", "runtime", "runtime-1"),
+                    FakeProvider(box),
+                ),
+            )
+            task = Task("boxes", ("Read a.png",), 0, output_dir=None)
+            sample = Path(tmp) / "sample"
+            with (
+                patch.dict(os.environ, {"LOCAL_TEST_KEY": "secret"}),
+                patch("roller.stirrup_agent.time.sleep"),
+            ):
+                result = StirrupHarness(config, 0, FakeContainer()).run(
+                    RunRequest(0, task, "m", 120), sample, 1
+                )
+            self.assertEqual(result.status, "ok", result.error)
+            self.assertFalse((sample / "results").exists())
+        self.assertFalse(any("outputs" in " ".join(argv) for argv in box.runs))
+
     def test_client_overflow_output_limit_and_reasoning(self):
         from stirrup.core.exceptions import (
             ContextOverflowError,

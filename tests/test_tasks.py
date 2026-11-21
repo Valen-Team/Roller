@@ -125,13 +125,14 @@ class TaskLoadingTests(unittest.TestCase):
             workspace.mkdir()
             task_file = root / "tasks.jsonl"
             rows = [
-                {"id": "one", "question": "research this", "workspace": "workspace"},
+                {"id": "one", "question": "research this\n", "workspace": "workspace"},
                 {
                     "id": "two",
                     "messages": [
                         {"role": "user", "content": "first"},
-                        {"role": "user", "content": "second"},
+                        {"role": "user", "content": "second\n"},
                     ],
+                    "files": {"output_dir": None},
                     "model": "provider/per-task",
                     "env": "TOKEN_A\nTOKEN_B",
                     "setup": ["echo ready"],
@@ -143,9 +144,12 @@ class TaskLoadingTests(unittest.TestCase):
 
             tasks = load_tasks(task_file)
 
-            self.assertEqual(tasks[0].prompts, ("research this",))
+            # Prompts reach the model as written, trailing newline included.
+            self.assertEqual(tasks[0].prompts, ("research this\n",))
             self.assertEqual(tasks[0].workspace, workspace.resolve())
-            self.assertEqual(tasks[1].prompts, ("first", "second"))
+            self.assertEqual(tasks[0].output_dir, "outputs")
+            self.assertEqual(tasks[1].prompts, ("first", "second\n"))
+            self.assertIsNone(tasks[1].output_dir)
             self.assertEqual(tasks[1].env_names, ("TOKEN_A", "TOKEN_B"))
             self.assertEqual(tasks[1].setup_commands, ("echo ready",))
 

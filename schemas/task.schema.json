@@ -97,9 +97,9 @@
       "type": "object",
       "properties": {
         "output_dir": {
-          "$ref": "#/$defs/relativePath",
+          "anyOf": [{"$ref": "#/$defs/relativePath"}, {"type": "null"}],
           "default": "outputs",
-          "description": "Writable subdirectory of the file_root workspace; every file under it is collected"
+          "description": "Writable subdirectory of the file_root workspace; every file under it is collected. null (Stirrup) creates none and collects nothing"
         },
         "inputs": {
           "type": "array",
