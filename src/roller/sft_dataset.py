@@ -21,7 +21,7 @@ from typing import Any
 from roller.benches import get_bench, mean_aggregate
 from roller.capture import _safe_file
 from roller.compaction_sft import SFT_SEGMENTS_DIR
-from roller.sft import validate_sft_record
+from roller.sft import normalize_sft_record
 from roller.storage import write_jsonl
 from roller.trajectory_audit import SEGMENTED_SFT_REASON, sft_exclusion_reason
 
@@ -114,10 +114,42 @@ def _record(path: Path) -> dict[str, Any]:
     if not isinstance(record, dict):
         raise RuntimeError(f"invalid SFT sample shape: {path}")
     try:
-        validate_sft_record(record)
+        return normalize_sft_record(record)
     except ValueError as exc:
         raise RuntimeError(f"invalid SFT sample shape ({exc}): {path}") from exc
-    return record
+
+
+def sample_records(
+    sample_dir: Path, result: Mapping[str, Any], row: dict[str, Any]
+) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+    """Yield every SFT record (linear or compaction segments) of one kept sample."""
+    segments = (result.get("trajectory") or {}).get("sft_segments") or []
+    if not segments:
+        path = sample_dir / "trace_SFT.json"
+        record = _record(path)
+        if "target_start_index" in record:
+            raise RuntimeError(f"legacy SFT record has a target mask: {path}")
+        yield record, row
+        return
+    for item in segments:
+        relative = item.get("path") if isinstance(item, dict) else None
+        parts = Path(relative).parts if isinstance(relative, str) else ()
+        if (
+            len(parts) != 2
+            or parts[0] != SFT_SEGMENTS_DIR
+            or not parts[1].endswith(".json")
+        ):
+            raise RuntimeError(f"invalid SFT segment path: {relative!r}")
+        try:
+            path = _safe_file(sample_dir, relative)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"cannot aggregate SFT segment {relative}: {exc}"
+            ) from exc
+        yield (
+            _record(path),
+            {**row, "segment": relative, "window_index": item.get("window_index")},
+        )
 
 
 def _records(
@@ -130,32 +162,7 @@ def _records(
         # Keep masked segments separate from legacy linear records.
         if bool(segments) != segmented:
             continue
-        if not segments:
-            path = sample_dir / "trace_SFT.json"
-            record = _record(path)
-            if "target_start_index" in record:
-                raise RuntimeError(f"legacy SFT record has a target mask: {path}")
-            yield record, row
-            continue
-        for item in segments:
-            relative = item.get("path") if isinstance(item, dict) else None
-            parts = Path(relative).parts if isinstance(relative, str) else ()
-            if (
-                len(parts) != 2
-                or parts[0] != SFT_SEGMENTS_DIR
-                or not parts[1].endswith(".json")
-            ):
-                raise RuntimeError(f"invalid SFT segment path: {relative!r}")
-            try:
-                path = _safe_file(sample_dir, relative)
-            except ValueError as exc:
-                raise RuntimeError(
-                    f"cannot aggregate SFT segment {relative}: {exc}"
-                ) from exc
-            yield (
-                _record(path),
-                {**row, "segment": relative, "window_index": item.get("window_index")},
-            )
+        yield from sample_records(sample_dir, result, row)
 
 
 def _write(
@@ -225,6 +232,48 @@ class Written:
         return lines
 
 
+def select_samples(
+    run_dir: Path,
+    samples: Iterable[Sample],
+    min_score: float | None = None,
+) -> tuple[
+    list[tuple[Path, Mapping[str, Any], dict[str, Any]]],
+    dict[str, int],
+    tuple[float, float] | None,
+    int,
+]:
+    """Filter samples by SFT eligibility and optional minimum bench score."""
+    sample_list = list(samples)
+    kept: list[tuple[Path, Mapping[str, Any], dict[str, Any]]] = []
+    dropped: Counter[str] = Counter()
+    scores: list[float] = []
+    for sample_dir, result in sample_list:
+        reason = sft_exclusion_reason(result)
+        if reason not in (None, SEGMENTED_SFT_REASON):
+            dropped[reason] += 1
+            continue
+        row = index_row(run_dir, sample_dir, result)
+        score = row["score"]
+        if score is not None:
+            scores.append(score)
+        if min_score is None or (score is not None and score >= min_score):
+            kept.append((sample_dir, result, row))
+        else:
+            dropped[UNGRADED if score is None else BELOW_MIN_SCORE] += 1
+    score_range = (min(scores), max(scores)) if scores else None
+    return kept, dict(dropped), score_range, len(sample_list)
+
+
+def load_run_samples(run_dir: Path) -> list[Sample]:
+    """Load all samples of a run directory in request order."""
+    samples = [
+        (path.parent, json.loads(path.read_text(encoding="utf-8")))
+        for path in sorted(run_dir.glob("samples/*/*/info.json"))
+    ]
+    samples.sort(key=lambda sample: sample[1].get("request_index") or 0)
+    return samples
+
+
 def write_sft_dataset(
     directory: Path,
     run_dir: Path,
@@ -239,29 +288,14 @@ def write_sft_dataset(
     bench score of at least that value.
     """
 
-    samples = list(samples)
-    kept: list[tuple[Path, Mapping[str, Any], dict[str, Any]]] = []
-    dropped: Counter[str] = Counter()
-    scores: list[float] = []
-    for sample_dir, result in samples:
-        reason = sft_exclusion_reason(result)
-        if reason not in (None, SEGMENTED_SFT_REASON):
-            dropped[reason] += 1
-            continue
-        row = index_row(run_dir, sample_dir, result)
-        score = row["score"]
-        if score is not None:
-            scores.append(score)
-        if min_score is None or (score is not None and score >= min_score):
-            kept.append((sample_dir, result, row))
-        else:
-            dropped[UNGRADED if score is None else BELOW_MIN_SCORE] += 1
+    sample_list = list(samples)
+    kept, dropped, score_range, total = select_samples(run_dir, sample_list, min_score)
 
     records = {SFT_FILE: _write(directory, SFT_FILE, _records(kept, False))}
     if any(
         isinstance(result.get("trajectory"), dict)
         and result["trajectory"].get("sft_segments")
-        for _, result in samples
+        for _, result in sample_list
     ):
         records[SEGMENTS_FILE] = _write(directory, SEGMENTS_FILE, _records(kept, True))
     else:
@@ -269,9 +303,9 @@ def write_sft_dataset(
             (directory / name).unlink(missing_ok=True)
     return Written(
         records=records,
-        samples=len(samples),
-        dropped=dict(dropped),
-        score_range=(min(scores), max(scores)) if scores else None,
+        samples=total,
+        dropped=dropped,
+        score_range=score_range,
     )
 
 
@@ -281,9 +315,4 @@ def export_run(run_dir: Path, output: Path, min_score: float | None = None) -> W
     Without ``min_score`` the files equal those collection wrote into the run.
     """
 
-    samples = [
-        (path.parent, json.loads(path.read_text(encoding="utf-8")))
-        for path in sorted(run_dir.glob("samples/*/*/info.json"))
-    ]
-    samples.sort(key=lambda sample: sample[1].get("request_index") or 0)
-    return write_sft_dataset(output, run_dir, samples, min_score)
+    return write_sft_dataset(output, run_dir, load_run_samples(run_dir), min_score)

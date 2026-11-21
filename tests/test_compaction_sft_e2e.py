@@ -681,7 +681,14 @@ def test_linear_multimodal_sample_keeps_original_sft_export(tmp_path: Path) -> N
     collector._write_sft_dataset([result])
     record = json.loads((sample / "trace_SFT.json").read_text())
     assert result["status"] == "ok" and "sft_segments" not in result["trajectory"]
-    assert record["images"] == ["data:image/png;base64,cG5n"]
+    assert "images" not in record
+    assert [
+        part["image_url"]["url"]
+        for message in record["messages"]
+        if isinstance(message.get("content"), list)
+        for part in message["content"]
+        if part.get("type") == "image_url"
+    ] == ["data:image/png;base64,cG5n"]
     assert len((tmp_path / "sft.jsonl").read_text().splitlines()) == 1
 
 

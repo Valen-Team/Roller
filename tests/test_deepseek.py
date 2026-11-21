@@ -387,9 +387,16 @@ class DeepSeekTraceTests(unittest.TestCase):
         )
         sft = actf_to_sft(actf)
         self.assertEqual(
-            sft["messages"][3]["content"], "image/png image\n<image>\n<image>"
+            sft["messages"][3]["content"],
+            [
+                {"type": "text", "text": "image/png image"},
+                *(
+                    {"type": "image_url", "image_url": {"url": url}}
+                    for url in IMAGE_URLS
+                ),
+            ],
         )
-        self.assertEqual(sft["images"], IMAGE_URLS)
+        self.assertNotIn("images", sft)
 
     def test_tool_images_must_match_what_the_model_received(self):
         for sent in ([], IMAGE_URLS[:1], ["https://example.test/a.png", IMAGE_URLS[1]]):

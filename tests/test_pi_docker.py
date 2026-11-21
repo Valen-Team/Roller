@@ -27,9 +27,9 @@ from roller.harnesses.pi import DEFAULT_PI_IMAGE, PiConfig, PiHarness
 from roller.models import RunRequest, Task
 
 
-def canonical_pi_messages(messages, images=()):
+def canonical_pi_messages(messages):
     """Fold Pi's synthetic image user messages back into tool observations."""
-    normalized, captured = [], list(images)
+    normalized, captured = [], []
     for original in messages:
         message = json.loads(json.dumps(original))
         content = message.get("content")
@@ -40,23 +40,31 @@ def canonical_pi_messages(messages, images=()):
             text = "\n".join(b["text"] for b in content if b.get("type") == "text")
             if attached:
                 if (
-                    message["role"] != "user"
-                    or text != "Attached image(s) from tool result:"
-                    or not normalized
-                    or normalized[-1]["role"] != "tool"
+                    message["role"] == "user"
+                    and text == "Attached image(s) from tool result:"
+                    and normalized
+                    and normalized[-1]["role"] == "tool"
                 ):
-                    raise AssertionError("Unexpected Pi image transport shape")
-                captured.extend(attached)
-                previous = normalized[-1]
-                previous["content"] = "\n".join(
-                    filter(
-                        None, [previous.get("content"), *["<image>"] * len(attached)]
+                    captured.extend(attached)
+                    previous = normalized[-1]
+                    previous["content"] = "\n".join(
+                        filter(
+                            None,
+                            [previous.get("content"), *["<image>"] * len(attached)],
+                        )
                     )
-                )
-                continue
-            if any(b.get("type") != "text" for b in content):
-                raise AssertionError("Unrecognized content block")
-            message["content"] = text
+                    continue
+                if message["role"] == "tool":
+                    captured.extend(attached)
+                    message["content"] = "\n".join(
+                        filter(None, [text, *["<image>"] * len(attached)])
+                    )
+                else:
+                    raise AssertionError("Unexpected Pi image transport shape")
+            else:
+                if any(b.get("type") != "text" for b in content):
+                    raise AssertionError("Unrecognized content block")
+                message["content"] = text
         for key in ("content", "reasoning_content", "tool_calls"):
             if message.get(key) in (None, "", []):
                 message.pop(key, None)
@@ -261,21 +269,24 @@ class PiDockerTests(unittest.TestCase):
                 actf = json.loads((sample / "trace_ACTF.json").read_text())
                 sft = json.loads((sample / "trace_SFT.json").read_text())
                 self.assertEqual(sft, actf_to_sft(actf))
-                self.assertEqual(sft["images"], expected)
+                sft_images = [
+                    b["image_url"]["url"]
+                    for m in sft["messages"]
+                    if isinstance(m.get("content"), list)
+                    for b in m["content"]
+                    if b.get("type") == "image_url"
+                ]
+                self.assertEqual(sft_images, expected)
                 if modalities == "text,image":
                     positions = [
                         i
                         for i, m in enumerate(sft["messages"])
                         if m["role"] == "assistant"
                     ]
-                    for index, (request, position) in enumerate(
-                        zip(requests, positions)
-                    ):
+                    for request, position in zip(requests, positions):
                         self.assertEqual(
                             canonical_pi_messages(request["messages"]),
-                            canonical_pi_messages(
-                                sft["messages"][:position], expected[:index]
-                            ),
+                            canonical_pi_messages(sft["messages"][:position]),
                         )
                 self.assertEqual(sft["messages"][-1]["content"], "red, blue")
                 self.assertTrue(

@@ -1249,7 +1249,14 @@ def export_run(
         and output != path
         and output not in path.parents
         and (run_dir / "samples") not in path.parents
-        and path.relative_to(run_dir).parts[0] not in {"atif", "hf", "sft", "tokens"}
+        and path.relative_to(run_dir).parts[0]
+        not in {
+            "atif",
+            "hf",
+            "sft",
+            "tokens",
+            "xtuner",
+        }
         and not path.name.endswith(".redaction-report.json")
     ]
     with contextlib.ExitStack() as stack:

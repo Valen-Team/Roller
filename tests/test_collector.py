@@ -509,9 +509,14 @@ class CollectorTests(unittest.TestCase):
 
             sample = next((run_dir / "samples").glob("*/*"))
             sft = json.loads((sample / "trace_SFT.json").read_text())
-            self.assertEqual(set(sft), {"messages", "tools", "images"})
-            self.assertEqual(sft["messages"][3]["content"], "<image>")
-            self.assertEqual(sft["images"], ["data:image/png;base64,AA=="])
+            self.assertEqual(set(sft), {"messages", "tools"})
+            expected_content = [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                }
+            ]
+            self.assertEqual(sft["messages"][3]["content"], expected_content)
             dataset = [
                 json.loads(line)
                 for line in (run_dir / "sft.jsonl").read_text().splitlines()
@@ -524,7 +529,9 @@ class CollectorTests(unittest.TestCase):
             ).collect(requests)
             self.assertEqual(resumed[0]["status"], "skipped")
 
-            sft["images"] = []
+            sft["messages"][3]["content"] = [
+                {"type": "image_url", "image_url": {"url": "not-a-uri"}}
+            ]
             (sample / "trace_SFT.json").write_text(
                 json.dumps(sft) + "\n", encoding="utf-8"
             )
@@ -536,8 +543,10 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(repaired[0]["status"], "skipped")
             self.assertEqual(state["calls"][("task-0", "provider/model")], 1)
             self.assertEqual(
-                json.loads((sample / "trace_SFT.json").read_text())["images"],
-                ["data:image/png;base64,AA=="],
+                json.loads((sample / "trace_SFT.json").read_text())["messages"][3][
+                    "content"
+                ],
+                expected_content,
             )
             self.assertEqual(
                 [
@@ -562,7 +571,15 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(run_info["state"], "finished")
             sample = next((run_dir / "samples").glob("*/*"))
             sft = json.loads((sample / "trace_SFT.json").read_text())
-            self.assertEqual(sft["images"], ["data:image/png;base64,AA=="])
+            self.assertEqual(
+                sft["messages"][3]["content"],
+                [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AA=="},
+                    }
+                ],
+            )
             self.assertEqual(json.loads((run_dir / "sft.jsonl").read_text()), sft)
             self.assertIn("AB==", (sample / "trace.jsonl").read_text())
             self.assertIn("AB==", (sample / "trace_ACTF.json").read_text())
@@ -630,7 +647,14 @@ class CollectorTests(unittest.TestCase):
                 dataset = (run_dir / "sft.jsonl").read_bytes()
                 rows = [json.loads(line) for line in dataset.splitlines()]
                 self.assertEqual(
-                    [row["images"] for row in rows],
+                    [
+                        [
+                            part["image_url"]["url"]
+                            for part in row["messages"][3]["content"]
+                            if part.get("type") == "image_url"
+                        ]
+                        for row in rows
+                    ],
                     ([["data:image/png;base64,AAAA"]] if accepted else [])
                     + [["data:image/png;base64,AA=="]],
                 )

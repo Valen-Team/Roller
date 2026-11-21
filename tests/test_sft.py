@@ -10,9 +10,25 @@ from pathlib import Path
 from roller.sft import (
     SFTConversionError,
     actf_to_sft,
+    normalize_sft_record,
     validate_sft_record,
     write_sft,
 )
+
+
+def _image_part(url: str) -> dict:
+    return {"type": "image_url", "image_url": {"url": url}}
+
+
+def _image_urls(record: dict) -> list[str]:
+    urls = []
+    for message in record["messages"]:
+        content = message.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    urls.append(part["image_url"]["url"])
+    return urls
 
 
 def _trajectory() -> dict:
@@ -310,9 +326,21 @@ class ParallelResultOrderTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     [m["content"] for m in emitted],
-                    ["0", "1\n<image>", "2\n<image>\n<image>"],
+                    [
+                        "0",
+                        [
+                            {"type": "text", "text": "1"},
+                            _image_part(expected_images[0]),
+                        ],
+                        [
+                            {"type": "text", "text": "2"},
+                            _image_part(expected_images[1]),
+                            _image_part(expected_images[2]),
+                        ],
+                    ],
                 )
-                self.assertEqual(record["images"], expected_images)
+                self.assertNotIn("images", record)
+                self.assertEqual(_image_urls(record), expected_images)
                 validate_sft_record(record)
                 self.assertEqual(trajectory, original)
                 if expected is not None:
@@ -347,7 +375,7 @@ class MultimodalSFTTests(unittest.TestCase):
         trajectory["steps"][0]["observation"][0]["content"] = list(blocks)
         return trajectory
 
-    def test_anthropic_source_image_becomes_placeholder_and_uri(self) -> None:
+    def test_anthropic_source_image_becomes_openai_image_url_part(self) -> None:
         record = actf_to_sft(
             self._trajectory(
                 {
@@ -361,10 +389,12 @@ class MultimodalSFTTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(set(record), {"messages", "tools", "images"})
+        self.assertEqual(set(record), {"messages", "tools"})
         self.assertEqual(record["messages"][3]["role"], "tool")
-        self.assertEqual(record["messages"][3]["content"], "<image>")
-        self.assertEqual(record["images"], [f"data:image/png;base64,{self.png}"])
+        self.assertEqual(
+            record["messages"][3]["content"],
+            [_image_part(f"data:image/png;base64,{self.png}")],
+        )
 
     def test_flat_native_image_block_and_inline_data_uri(self) -> None:
         flat = actf_to_sft(
@@ -381,12 +411,16 @@ class MultimodalSFTTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(flat["images"], [f"data:image/png;base64,{self.png}"])
-        self.assertEqual(inline["images"], [f"data:image/jpeg;base64,{self.jpeg}"])
-        self.assertEqual(flat["messages"][3]["content"], "<image>")
-        self.assertEqual(inline["messages"][3]["content"], "<image>")
+        self.assertEqual(
+            flat["messages"][3]["content"],
+            [_image_part(f"data:image/png;base64,{self.png}")],
+        )
+        self.assertEqual(
+            inline["messages"][3]["content"],
+            [_image_part(f"data:image/jpeg;base64,{self.jpeg}")],
+        )
 
-    def test_keeps_text_blocks_around_the_placeholder_in_order(self) -> None:
+    def test_keeps_text_blocks_around_the_image_in_order(self) -> None:
         record = actf_to_sft(
             self._trajectory(
                 {"type": "text", "text": "Image size: 2x1"},
@@ -397,9 +431,12 @@ class MultimodalSFTTests(unittest.TestCase):
 
         self.assertEqual(
             record["messages"][3]["content"],
-            "Image size: 2x1\n<image>\nImage read successfully",
+            [
+                {"type": "text", "text": "Image size: 2x1"},
+                _image_part(f"data:image/png;base64,{self.png}"),
+                {"type": "text", "text": "Image read successfully"},
+            ],
         )
-        self.assertEqual(len(record["images"]), 1)
 
     def test_user_and_tool_images_share_message_order(self) -> None:
         trajectory = self._trajectory(
@@ -413,11 +450,18 @@ class MultimodalSFTTests(unittest.TestCase):
         record = actf_to_sft(trajectory)
 
         self.assertEqual(
-            record["messages"][1]["content"], "Describe this input\n<image>"
+            record["messages"][1]["content"],
+            [
+                {"type": "text", "text": "Describe this input"},
+                _image_part(f"data:image/png;base64,{self.png}"),
+            ],
         )
-        self.assertEqual(record["messages"][3]["content"], "<image>")
         self.assertEqual(
-            record["images"],
+            record["messages"][3]["content"],
+            [_image_part(f"data:image/jpeg;base64,{self.jpeg}")],
+        )
+        self.assertEqual(
+            _image_urls(record),
             [
                 f"data:image/png;base64,{self.png}",
                 f"data:image/jpeg;base64,{self.jpeg}",
@@ -438,7 +482,7 @@ class MultimodalSFTTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(
-                    record["images"], [f"data:{media_type};base64,{payload}"]
+                    _image_urls(record), [f"data:{media_type};base64,{payload}"]
                 )
 
     def test_orders_images_across_steps_and_within_one_result(self) -> None:
@@ -459,7 +503,7 @@ class MultimodalSFTTests(unittest.TestCase):
         record = actf_to_sft(trajectory)
 
         self.assertEqual(
-            record["images"],
+            _image_urls(record),
             [
                 f"data:image/png;base64,{self.png}",
                 f"data:image/jpeg;base64,{self.jpeg}",
@@ -471,7 +515,17 @@ class MultimodalSFTTests(unittest.TestCase):
             for message in record["messages"]
             if message["role"] == "tool"
         ]
-        self.assertEqual(tool_contents, ["<image>", "two frames\n<image>\n<image>"])
+        self.assertEqual(
+            tool_contents,
+            [
+                [_image_part(f"data:image/png;base64,{self.png}")],
+                [
+                    {"type": "text", "text": "two frames"},
+                    _image_part(f"data:image/jpeg;base64,{self.jpeg}"),
+                    _image_part(f"data:image/jpeg;base64,{self.jpeg}"),
+                ],
+            ],
+        )
 
     def test_does_not_deduplicate_identical_images(self) -> None:
         record = actf_to_sft(
@@ -482,7 +536,7 @@ class MultimodalSFTTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            record["images"],
+            _image_urls(record),
             [f"data:image/png;base64,{self.png}"] * 2,
         )
 
@@ -534,7 +588,7 @@ class MultimodalSFTTests(unittest.TestCase):
                     else:
                         record = actf_to_sft(self._trajectory(block))
                         self.assertEqual(
-                            record["images"], [f"data:image/png;base64,{canonical}"]
+                            _image_urls(record), [f"data:image/png;base64,{canonical}"]
                         )
                         validate_sft_record(record)
                     self.assertEqual(block, original)
@@ -577,22 +631,27 @@ class MultimodalSFTTests(unittest.TestCase):
                 )
             )
 
-    def test_rejects_literal_placeholder_in_user_text_or_reasoning(self) -> None:
-        user_conflict = self._trajectory(
+    def test_allows_literal_image_tag_in_multimodal_records(self) -> None:
+        user_record = self._trajectory(
             {"type": "image", "mimeType": "image/png", "data": self.png}
         )
-        user_conflict["steps"][0]["user_content"] = "describe <image> please"
-        with self.assertRaisesRegex(SFTConversionError, "literal <image>"):
-            actf_to_sft(user_conflict)
+        user_record["steps"][0]["user_content"] = "describe <image> please"
+        record = actf_to_sft(user_record)
+        validate_sft_record(record)
+        self.assertEqual(record["messages"][1]["content"], "describe <image> please")
+        self.assertEqual(_image_urls(record), [f"data:image/png;base64,{self.png}"])
 
-        reasoning_conflict = self._trajectory(
+        reasoning_record = self._trajectory(
             {"type": "image", "mimeType": "image/png", "data": self.png}
         )
-        reasoning_conflict["steps"][0]["assistant_content"]["reasoning_content"] = (
+        reasoning_record["steps"][0]["assistant_content"]["reasoning_content"] = (
             "The <image> shows a chart."
         )
-        with self.assertRaisesRegex(SFTConversionError, "literal <image>"):
-            actf_to_sft(reasoning_conflict)
+        record = actf_to_sft(reasoning_record)
+        validate_sft_record(record)
+        self.assertEqual(
+            record["messages"][2]["reasoning_content"], "The <image> shows a chart."
+        )
 
     def test_allows_literal_placeholder_in_text_only_records(self) -> None:
         trajectory = _trajectory()
@@ -602,7 +661,7 @@ class MultimodalSFTTests(unittest.TestCase):
         self.assertEqual(set(record), {"messages", "tools"})
         self.assertIn("<image>", record["messages"][1]["content"])
 
-    def test_rejects_literal_placeholder_in_tool_arguments(self) -> None:
+    def test_allows_literal_image_tag_in_tool_arguments(self) -> None:
         for arguments in (
             {"path": "<image>.png"},
             {"nested": {"values": ["<image>"]}},
@@ -614,10 +673,8 @@ class MultimodalSFTTests(unittest.TestCase):
                 )
                 call = trajectory["steps"][0]["assistant_content"]["tool_calls"][0]
                 call["arguments"] = arguments
-                with self.assertRaisesRegex(SFTConversionError, "literal <image>"):
-                    actf_to_sft(trajectory)
-                trajectory["steps"][0]["observation"][0]["content"] = "text only"
                 record = actf_to_sft(trajectory)
+                validate_sft_record(record)
                 self.assertNotIn("images", record)
                 saved_call = record["messages"][2]["tool_calls"][0]
                 self.assertIn("<image>", saved_call["function"]["arguments"])
@@ -630,14 +687,22 @@ class MultimodalSFTTests(unittest.TestCase):
             path = Path(temporary) / "trace_SFT.json"
             expected = write_sft(path, trajectory)
             self.assertEqual(json.loads(path.read_text()), expected)
-            self.assertEqual(set(expected), {"messages", "tools", "images"})
+            self.assertEqual(set(expected), {"messages", "tools"})
+            self.assertEqual(
+                _image_urls(expected), [f"data:image/png;base64,{self.png}"]
+            )
 
 
 class ValidateSFTRecordTests(unittest.TestCase):
     png = base64.b64encode(b"png-bytes").decode()
 
     def _record(self, with_images: bool = True) -> dict:
-        record = {
+        tool_content: object = (
+            [_image_part(f"data:image/png;base64,{self.png}")]
+            if with_images
+            else "text only"
+        )
+        return {
             "messages": [
                 {"role": "system", "content": ""},
                 {"role": "user", "content": "read it"},
@@ -647,32 +712,24 @@ class ValidateSFTRecordTests(unittest.TestCase):
                     "content": "",
                     "tool_calls": [],
                 },
-                {"role": "tool", "tool_call_id": "call-1", "content": "<image>"},
+                {"role": "tool", "tool_call_id": "call-1", "content": tool_content},
             ],
             "tools": [],
         }
-        if with_images:
-            record["images"] = [f"data:image/png;base64,{self.png}"]
-        return record
 
-    def test_accepts_text_only_and_aligned_multimodal_records(self) -> None:
+    def test_accepts_text_only_and_multimodal_records(self) -> None:
         validate_sft_record(self._record(with_images=False))
         validate_sft_record(self._record())
 
-    def test_rejects_unknown_top_level_keys_and_empty_images(self) -> None:
+    def test_rejects_unknown_top_level_keys_and_legacy_images_key(self) -> None:
         record = self._record()
         record["extra"] = 1
         with self.assertRaisesRegex(ValueError, "may only contain"):
             validate_sft_record(record)
 
         record = self._record()
-        record["images"] = []
-        with self.assertRaisesRegex(ValueError, "non-empty list"):
-            validate_sft_record(record)
-
-        record = self._record()
-        record["images"] = "data:image/png;base64,AA=="
-        with self.assertRaisesRegex(ValueError, "non-empty list"):
+        record["images"] = [f"data:image/png;base64,{self.png}"]
+        with self.assertRaisesRegex(ValueError, "may only contain"):
             validate_sft_record(record)
 
     def test_rejects_malformed_image_entries(self) -> None:
@@ -686,11 +743,25 @@ class ValidateSFTRecordTests(unittest.TestCase):
             "data:image/png;base64,AB==",
         ):
             record = self._record()
-            record["images"] = [uri]
+            record["messages"][3]["content"] = [_image_part(uri)]
             with self.subTest(uri=uri), self.assertRaisesRegex(ValueError, "data URI"):
                 validate_sft_record(record)
 
-    def test_rejects_placeholder_in_saved_tool_arguments(self) -> None:
+    def test_rejects_malformed_content_parts(self) -> None:
+        for bad_content in (
+            [],
+            [{"type": "audio", "data": "AA=="}],
+            [{"type": "text", "text": 123}],
+            [{"type": "image_url", "image_url": "not-a-dict"}],
+            [{"type": "image_url", "image_url": {}}],
+            123,
+        ):
+            record = self._record()
+            record["messages"][3]["content"] = bad_content
+            with self.subTest(bad_content=bad_content), self.assertRaises(ValueError):
+                validate_sft_record(record)
+
+    def test_accepts_literal_image_tag_in_saved_tool_arguments(self) -> None:
         record = self._record()
         record["messages"][2]["tool_calls"] = [
             {
@@ -699,19 +770,47 @@ class ValidateSFTRecordTests(unittest.TestCase):
                 "function": {"name": "read", "arguments": '{"path":"<image>.png"}'},
             }
         ]
-        with self.assertRaisesRegex(ValueError, "placeholder count"):
-            validate_sft_record(record)
+        validate_sft_record(record)
 
-    def test_rejects_placeholder_count_mismatch(self) -> None:
-        record = self._record()
-        record["messages"][3]["content"] = "text only now"
-        with self.assertRaisesRegex(ValueError, "placeholder count"):
-            validate_sft_record(record)
+    def test_normalize_upgrades_legacy_placeholder_records(self) -> None:
+        uri = f"data:image/png;base64,{self.png}"
+        legacy = {
+            "messages": [
+                {"role": "system", "content": ""},
+                {"role": "user", "content": "See chart\n<image>"},
+                {
+                    "role": "assistant",
+                    "reasoning_content": "",
+                    "content": "",
+                    "tool_calls": [],
+                },
+                {"role": "tool", "tool_call_id": "call-1", "content": "<image>"},
+            ],
+            "tools": [],
+            "images": [uri, uri],
+        }
 
-        record = self._record()
-        record["images"] = record["images"] * 2
+        upgraded = normalize_sft_record(legacy)
+        validate_sft_record(upgraded)
+        self.assertNotIn("images", upgraded)
+        self.assertEqual(
+            upgraded["messages"][1]["content"],
+            [{"type": "text", "text": "See chart"}, _image_part(uri)],
+        )
+        self.assertEqual(upgraded["messages"][3]["content"], [_image_part(uri)])
+
+    def test_normalize_rejects_mismatched_legacy_records(self) -> None:
+        uri = f"data:image/png;base64,{self.png}"
+        mismatched = {
+            "messages": [
+                {"role": "system", "content": ""},
+                {"role": "user", "content": "no placeholder"},
+            ],
+            "tools": [],
+            "images": [uri],
+        }
         with self.assertRaisesRegex(ValueError, "placeholder count"):
-            validate_sft_record(record)
+            normalize_sft_record(mismatched)
 
 
 if __name__ == "__main__":

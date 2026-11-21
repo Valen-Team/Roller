@@ -303,8 +303,14 @@ class ActfConversionTests(unittest.TestCase):
         )
         sft = actf_to_sft(trajectory)
         tool_result = next(m for m in sft["messages"] if m["role"] == "tool")
-        self.assertEqual(tool_result["content"], "image\n<image>")
-        self.assertEqual(sft["images"], [data_url])
+        self.assertEqual(
+            tool_result["content"],
+            [
+                {"type": "text", "text": "image"},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        )
+        self.assertNotIn("images", sft)
 
     def test_preserves_images_in_user_messages(self) -> None:
         events = _events()
@@ -335,8 +341,17 @@ class ActfConversionTests(unittest.TestCase):
             ],
         )
         record = actf_to_sft(trajectory)
-        self.assertEqual(record["messages"][1]["content"], "clean first\n<image>")
-        self.assertEqual(record["images"], ["data:image/png;base64,AA=="])
+        self.assertEqual(
+            record["messages"][1]["content"],
+            [
+                {"type": "text", "text": "clean first"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                },
+            ],
+        )
+        self.assertNotIn("images", record)
 
     def test_attaches_generated_wire_image_to_image_tool_result(self) -> None:
         events = _events()
@@ -372,8 +387,18 @@ class ActfConversionTests(unittest.TestCase):
 
         content = trajectory["steps"][0]["observation"][0]["content"]
         self.assertEqual(content[-1], wire["image_inputs"][0])
+        tool_result = next(
+            m for m in actf_to_sft(trajectory)["messages"] if m["role"] == "tool"
+        )
         self.assertEqual(
-            actf_to_sft(trajectory)["images"], ["data:image/png;base64,AA=="]
+            tool_result["content"],
+            [
+                {"type": "text", "text": "red"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,AA=="},
+                },
+            ],
         )
 
     def _parallel_image_trajectory(self, prompts, wire_entries):

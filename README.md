@@ -50,10 +50,11 @@ uv tool install roller-agent    # or: python -m pip install roller-agent
 
 ### 1. Agent runs in, training data out
 
-Each successful rollout becomes a `messages` + `tools` record in `sft.jsonl`. The record keeps the visible reasoning of the model and has an `images` field when the trace contains images. When the agent compacts its context, each verified context window is exported as its own record under `sft_segments/`. On a graded run, keep the samples above a score:
+Each successful rollout becomes a `messages` + `tools` record in `sft.jsonl`. The record keeps the visible reasoning of the model, and messages containing images use standard OpenAI multimodal content lists (`text` and `image_url` blocks). When the agent compacts its context, each verified context window is exported as its own record under `sft_segments/`. On a graded run, keep the samples above a score, or export directly to XTuner multimodal JSONL (on `main`, follows in the next release):
 
 ```bash
 roller export runs/wildclaw --format sft --min-score 0.5 --output training
+roller export runs/wildclaw --format xtuner --min-score 0.5 --output training-xtuner
 ```
 
 [SFT format →](https://valen-team.github.io/roller/traces/sft-format/)
