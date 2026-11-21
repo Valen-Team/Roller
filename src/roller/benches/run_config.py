@@ -232,6 +232,16 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "output_tokens": ("--pi-output-tokens", "value"),
         "input_modalities": ("--pi-input-modalities", "value"),
     },
+    "stirrup": {
+        "max_steps": ("--stirrup-max-steps", "value"),
+        "context_length": ("--stirrup-context-length", "value"),
+        "output_tokens": ("--stirrup-output-tokens", "value"),
+        "command_timeout": ("--stirrup-command-timeout", "value"),
+        "temperature": ("--stirrup-temperature", "value"),
+        "top_p": ("--stirrup-top-p", "value"),
+        "seed": ("--stirrup-seed", "value"),
+        "request_set": ("--stirrup-request-set", "repeat"),
+    },
 }
 
 _HARNESS_API_PROTOCOL = {
@@ -241,6 +251,7 @@ _HARNESS_API_PROTOCOL = {
     "opencode": "openai-completions",
     "deepseek": "openai-completions",
     "pi": "openai-completions",
+    "stirrup": "openai-completions",
 }
 
 _EXECUTION_VALUES = {
@@ -304,18 +315,21 @@ COLLECT_ONLY_FLAGS = frozenset(
         "--opencode-image",
         "--deepseek-image",
         "--pi-image",
+        "--stirrup-image",
         "--codex-api-base",
         "--claude-api-base",
         "--hermes-api-base",
         "--opencode-api-base",
         "--deepseek-api-base",
         "--pi-api-base",
+        "--stirrup-api-base",
         "--codex-api-key-env",
         "--claude-api-key-env",
         "--hermes-api-key-env",
         "--opencode-api-key-env",
         "--deepseek-api-key-env",
         "--pi-api-key-env",
+        "--stirrup-api-key-env",
     }
 )
 

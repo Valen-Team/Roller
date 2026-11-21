@@ -196,7 +196,7 @@ Open the URL printed in the terminal (default `http://127.0.0.1:17865`).
 
 ## Harnesses
 
-A Harness is the agent runtime inside the container. It starts the agent, provides its tools and calls the model API. Specify the Harness for all tasks with `--harness`, or for an individual task with the `harness` field. All seven read the same task format and write the same sample layout.
+A Harness is the agent runtime inside the container. It starts the agent, provides its tools and calls the model API. Specify the Harness for all tasks with `--harness`, or for an individual task with the `harness` field. All eight read the same task format and write the same sample layout.
 
 | Harness | Model API | Description |
 | --- | --- | --- |
@@ -207,8 +207,11 @@ A Harness is the agent runtime inside the container. It starts the agent, provid
 | OpenCode | OpenAI Chat Completions | OpenCode CLI sessions with text and file tools |
 | DeepSeek Harness | DeepSeek Chat Completions | Official SDK with a single persistent Bash tool |
 | Pi Agent | OpenAI Chat Completions | Pi SDK with seven tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls` |
+| Stirrup | OpenAI Chat Completions | Stirrup 0.2.1 with `code_exec`, `view_image` and `finish`; the agent runs in the Roller process and the container executes its code |
 
-OpenClaw reads model definitions from `--model-config`. The other six Harnesses use `--api-base` and `--api-key-env`; in runs that combine several Harnesses, each takes its own prefixed pair, for example `--hermes-api-base` and `--hermes-api-key-env`. Every Harness can serve as the Task Agent or as the [User Simulator](https://valen-team.github.io/roller/tasks/user-simulator/), a second model that plays the user and writes the next turn.
+OpenClaw reads model definitions from `--model-config`. The other seven Harnesses use `--api-base` and `--api-key-env`; in runs that combine several Harnesses, each takes its own prefixed pair, for example `--hermes-api-base` and `--hermes-api-key-env`. Every Harness except Stirrup can serve as the Task Agent or as the [User Simulator](https://valen-team.github.io/roller/tasks/user-simulator/), a second model that plays the user and writes the next turn.
+
+Stirrup runs one prompt per task. It needs Python 3.12 or later and the `stirrup` extra, which is on `main` and follows in the next release: `pip install 'roller-agent[stirrup] @ git+https://github.com/Valen-Team/Roller.git'`. The extra cannot be installed together with the `pdf` extra. Its options set the request: `--stirrup-max-steps`, `--stirrup-context-length` (history is summarized at 70% of it), `--stirrup-output-tokens` (`max_tokens`), `--stirrup-command-timeout`, `--stirrup-temperature`, `--stirrup-top-p`, `--stirrup-seed` (each sample's seed is derived from it, the task ID and the sample index) and `--stirrup-request-set KEY=JSON` for further request fields; `--thinking` goes to `chat_template_kwargs.reasoning_effort`. The image only needs bash, GNU coreutils and the task's software; the default is `python:3.13-slim`.
 
 Rollouts run in Docker containers. DeepSeek Harness can also run WildClawBench in an E2B sandbox: install `roller-agent[e2b]` and pass `--sandbox-provider e2b --sandbox-template NAME`, as the [DeepSeek guide](https://valen-team.github.io/roller/harnesses/deepseek-configuration/#e2b-for-wildclawbench) describes.
 
@@ -418,7 +421,7 @@ Roller is one of the open-source projects of [Valen Team](https://github.com/Val
 
 Roller is licensed under the [Apache License 2.0](LICENSE).
 
-Roller invokes the following third-party agent runtimes and benchmarks: OpenClaw, Codex, Claude Code, Hermes Agent, OpenCode, DeepSeek Harness, Pi Agent, WildClawBench, SkillsBench, PinchBench, QwenClawBench and SWE-Bench Pro. Their images, code and data are subject to their respective licenses. We thank the authors of these projects.
+Roller invokes the following third-party agent runtimes and benchmarks: OpenClaw, Codex, Claude Code, Hermes Agent, OpenCode, DeepSeek Harness, Pi Agent, Stirrup, WildClawBench, SkillsBench, PinchBench, QwenClawBench and SWE-Bench Pro. Their images, code and data are subject to their respective licenses. We thank the authors of these projects.
 
 <a id="citation"></a>
 

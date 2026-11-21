@@ -3,7 +3,8 @@
 Hermes, OpenCode, DeepSeek and Pi each ship a ``runner.py`` under
 ``roller/assets`` that executes one turn from ``turn.json``, writes
 ``result.json`` and appends to a native journal. This module owns the Docker
-side of that contract; subclasses declare what differs per Harness.
+side of that contract; subclasses declare what differs per Harness. Stirrup
+reuses the container lifecycle with its agent in the collecting process.
 """
 
 from __future__ import annotations
@@ -96,7 +97,10 @@ def validate_bridge_config(config: Any, label: str) -> None:
             )
     if config.wire_trace_mode not in {"off", "actf", "full"}:
         raise ValueError(f"{label} wire trace mode must be off|actf|full")
-    remote = getattr(config, "remote_sandbox", False)
+    # A model client in the collecting process reaches the local proxy itself.
+    remote = getattr(config, "remote_sandbox", False) or not getattr(
+        config, "agent_in_container", True
+    )
     if config.wire_trace_mode == "full" and (
         not config.api_base or (not remote and config.network != "host")
     ):
@@ -156,6 +160,9 @@ class BridgeSession(InteractiveSession):
     supports_reset: ClassVar[bool] = False
     # The runner can put ``files.attach_images`` on the first user message.
     attaches_images: ClassVar[bool] = False
+    # False when the agent runs in the collecting process: the container then
+    # only executes commands, gets no model key, and model calls stay local.
+    agent_in_container: ClassVar[bool] = True
 
     def __init__(
         self,
@@ -337,11 +344,12 @@ class BridgeSession(InteractiveSession):
         if box.version != self.sandbox_run.target.version:
             raise RuntimeError("sandbox environment version changed since preflight")
         timeout = self.request.timeout_seconds
-        model_key = self.environment[self.api_key_name]
         route_judge_environment(box, self.environment, timeout)
-        api_base, self.environment[self.api_key_name] = route_sandbox_http(
-            box, api_base, model_key, timeout
-        )
+        if self.agent_in_container:
+            model_key = self.environment[self.api_key_name]
+            api_base, self.environment[self.api_key_name] = route_sandbox_http(
+                box, api_base, model_key, timeout
+            )
         self.command(
             ["mkdir", "-p", workspace, self.state_dir, self.home, "/roller/task"],
             "sandbox workspace setup",
@@ -365,7 +373,9 @@ class BridgeSession(InteractiveSession):
             box.upload(
                 task.workspace, workspace, contents=True, timeout=self.remaining()
             )
-        if self.harness.config.wire_trace_mode != "full" and self.capture is None:
+        if not self.agent_in_container or (
+            self.harness.config.wire_trace_mode != "full" and self.capture is None
+        ):
             return api_base
         directory = self.remote_wire_dir
         self.command(["mkdir", "-p", directory], "wire recorder setup")
@@ -410,9 +420,12 @@ class BridgeSession(InteractiveSession):
         self.effort()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         environment = self.inherited_environment()
-        environment[self.api_key_name] = host_api_key(self.label, config.api_key_env)
+        if self.agent_in_container:
+            environment[self.api_key_name] = host_api_key(
+                self.label, config.api_key_env
+            )
         api_base = config.api_base or self.default_api_base
-        if self.sandbox_run is None and (
+        if (self.sandbox_run is None or not self.agent_in_container) and (
             config.wire_trace_mode == "full" or config.capture_calls
         ):
             token_ids_path = self.output_dir / TOKEN_IDS_FILE
@@ -424,6 +437,11 @@ class BridgeSession(InteractiveSession):
                 capture_recorder=self.capture.recorder if self.capture else None,
                 capture_identity_header="x-roller-native-session-id"
                 if self.capture
+                else None,
+                # A model client here names each call, so its journal and the
+                # captured Calls can be matched.
+                capture_run_header="x-roller-native-run-id"
+                if self.capture and not self.agent_in_container
                 else None,
                 token_ids_path=token_ids_path if config.token_ids else None,
             )
@@ -474,7 +492,8 @@ class BridgeSession(InteractiveSession):
                 script += f" && cp -a {CONTEXT_CONTAINER_PATH}/. {workspace}/"
         script += f" && rm -rf {output} && mkdir -p {output} && ln -s {output} {OUTPUTS_CONTAINER_PATH}"
         self.command(["/bin/bash", "-c", script], f"{self.label} workspace setup")
-        self.upload(self.runner_source, self.runner, f"{self.label} runner copy")
+        if self.agent_in_container:
+            self.upload(self.runner_source, self.runner, f"{self.label} runner copy")
         for name, destination, description in self.assets:
             self.upload(
                 self.runner_source.with_name(name),
@@ -488,10 +507,11 @@ class BridgeSession(InteractiveSession):
                 cwd=config.workspace_container_path,
                 timeout=self.remaining(),
             )
-        self.version = self.command(
-            [self.python, self.runner, "--check"],
-            f"{self.label} {self.version_check}",
-        ).stdout.strip()
+        if self.agent_in_container:
+            self.version = self.command(
+                [self.python, self.runner, "--check"],
+                f"{self.label} {self.version_check}",
+            ).stdout.strip()
 
     def send(self, message: str, timeout_seconds: float) -> TurnResult:
         if not self.container_started or self._result is not None:
@@ -613,23 +633,27 @@ class BridgeSession(InteractiveSession):
             self.remote_native.kill()
             self.remote_native = None
 
+    def fetch_trace(self, trace: Path) -> bool:
+        """Copy the native journal out of the container; False when it fails."""
+
+        if self.sandbox is None:
+            return not self.harness.runtime.copy_out(
+                self.container, self.transcript_container_path, trace, timeout=30
+            ).returncode
+        self.sandbox.download(self.transcript_container_path, trace, timeout=60)
+        return True
+
     def _collect_trace(
         self, problems: list[str]
     ) -> tuple[Path | None, Path | None, dict[str, int | float]]:
-        runtime = self.harness.runtime
         usage: dict[str, int | float] = dict(ZERO_USAGE)
         trace = self.output_dir / "rollout" / "trace.jsonl"
         trace.parent.mkdir(parents=True, exist_ok=True)
-        if self.sandbox is None:
-            copied = runtime.copy_out(
-                self.container, self.transcript_container_path, trace, timeout=30
-            )
-            if copied.returncode:
-                problems.append(f"no {self.label} journal was collected")
-                return None, None, usage
-        else:
-            self.sandbox.download(self.transcript_container_path, trace, timeout=60)
-        if not trace.is_file() or not trace.stat().st_size:
+        if (
+            not self.fetch_trace(trace)
+            or not trace.is_file()
+            or not trace.stat().st_size
+        ):
             problems.append(f"no {self.label} journal was collected")
             return None, None, usage
         try:

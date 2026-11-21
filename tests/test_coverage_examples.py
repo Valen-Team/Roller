@@ -15,6 +15,9 @@ from pathlib import Path
 from roller.harness_registry import HARNESS_NAMES
 
 PROJECT = Path(__file__).resolve().parents[1]
+# Stirrup runs one prompt with its agent outside the container, so it is not a
+# user simulator and the matrix of multi-turn coverage cases leaves it out.
+MATRIX_HARNESSES = tuple(name for name in HARNESS_NAMES if name != "stirrup")
 
 
 class CoverageExamplesTests(unittest.TestCase):
@@ -95,7 +98,7 @@ class CoverageExamplesTests(unittest.TestCase):
             output,
         )
         payload = json.loads(output.read_text())
-        self.assertEqual(len(payload["tasks"]), 4 * len(HARNESS_NAMES))
+        self.assertEqual(len(payload["tasks"]), 4 * len(MATRIX_HARNESSES))
         for row in payload["tasks"]:
             self.assertEqual(
                 Path(row["file_root"]), (self.coverage / "fixtures").resolve()
@@ -123,7 +126,7 @@ class CoverageExamplesTests(unittest.TestCase):
         )
         payload = json.loads(output.read_text())
         self.assertEqual(payload["models"], models)
-        self.assertEqual(len(payload["tasks"]), 4 * len(HARNESS_NAMES) ** 2)
+        self.assertEqual(len(payload["tasks"]), 4 * len(MATRIX_HARNESSES) ** 2)
         self.assertEqual(len(payload["negative_cases"]), 20)
         inheritance = 0
         pairs = set()
@@ -140,8 +143,8 @@ class CoverageExamplesTests(unittest.TestCase):
             else:
                 inheritance += 1
                 self.assertEqual(agent, simulator["harness"])
-        self.assertEqual(len(pairs), len(HARNESS_NAMES) ** 2)
-        self.assertEqual(inheritance, len(HARNESS_NAMES))
+        self.assertEqual(len(pairs), len(MATRIX_HARNESSES) ** 2)
+        self.assertEqual(inheritance, len(MATRIX_HARNESSES))
         self.run_script("validate_merged.py", "--tasks", output)
 
     def test_local_model_cannot_overwrite_public_template(self):

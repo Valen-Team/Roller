@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import dataclasses
 import hashlib
+import importlib.util
 import json
 import logging
 import math
@@ -118,6 +119,12 @@ from roller.harnesses.pi import (
     PiConfig,
     PiHarness,
     pi_effort,
+)
+from roller.harnesses.stirrup import (
+    DEFAULT_STIRRUP_IMAGE,
+    STIRRUP_TOOLS,
+    StirrupConfig,
+    StirrupHarness,
 )
 from roller.image_build import prepare_task_images
 from roller.models import TaskBundle
@@ -605,6 +612,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--pi-image", help="Pi image override (for mixed Harness runs)"
     )
     runtime.add_argument(
+        "--stirrup-image",
+        help="Stirrup code execution image override (for mixed Harness runs)",
+    )
+    runtime.add_argument(
         "--claude-code-image",
         help="Claude Code image override (for mixed Harness runs)",
     )
@@ -792,6 +803,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     api.add_argument("--pi-api-key-env", help="Pi-only API key environment variable")
     api.add_argument(
+        "--stirrup-api-base", help="Stirrup-only Chat Completions API base"
+    )
+    api.add_argument(
+        "--stirrup-api-key-env", help="Stirrup-only API key environment variable"
+    )
+    api.add_argument(
         "--codex-api-base", help="Codex-only API base override (for mixed Harness runs)"
     )
     api.add_argument(
@@ -941,6 +958,58 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Pi maximum output tokens (default: 8192)",
     )
 
+    stirrup = collect.add_argument_group("Stirrup")
+    stirrup.add_argument(
+        "--stirrup-max-steps",
+        type=int,
+        default=30,
+        help="Stirrup max_turns: model turns per task, the finish turn included (default: 30)",
+    )
+    stirrup.add_argument(
+        "--stirrup-context-length",
+        type=int,
+        default=128000,
+        help=(
+            "Stirrup model context window; history is summarized at 70%% of it "
+            "(default: 128000 tokens)"
+        ),
+    )
+    stirrup.add_argument(
+        "--stirrup-output-tokens",
+        type=int,
+        default=8192,
+        help="max_tokens of every Stirrup request (default: 8192)",
+    )
+    stirrup.add_argument(
+        "--stirrup-command-timeout",
+        type=int,
+        default=300,
+        help="seconds before a code_exec command is stopped (default: 300)",
+    )
+    stirrup.add_argument(
+        "--stirrup-temperature", type=float, help="temperature of every request"
+    )
+    stirrup.add_argument("--stirrup-top-p", type=float, help="top_p of every request")
+    stirrup.add_argument(
+        "--stirrup-seed",
+        type=int,
+        help=(
+            "base seed; each sample's request seed is derived from it, the task ID "
+            "and the sample index"
+        ),
+    )
+    stirrup.add_argument(
+        "--stirrup-request-set",
+        action="append",
+        default=[],
+        type=_request_field,
+        metavar="KEY=JSON",
+        help=(
+            "add a top-level request field after Roller's own, such as n=1 or "
+            "stream=false; repeatable, in order"
+        ),
+    )
+
     codex = collect.add_argument_group("Codex")
     codex.add_argument(
         "--codex-config",
@@ -1050,6 +1119,20 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _deduplicate(values: Sequence[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value for value in values if value))
+
+
+def _stirrup_installed() -> bool:
+    return importlib.util.find_spec("stirrup") is not None
+
+
+def _request_field(text: str) -> tuple[str, object]:
+    key, separator, value = text.partition("=")
+    if not separator or not key.strip():
+        raise argparse.ArgumentTypeError(f"expected KEY=JSON, got {text!r}")
+    try:
+        return key.strip(), json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"{key}: {exc}") from None
 
 
 def _config_assignment(text: str) -> tuple[str, str]:
@@ -1558,9 +1641,11 @@ def _collect(args: argparse.Namespace) -> int:
     if remote:
         if not args.sandbox_template:
             raise ValueError("a remote sandbox requires --sandbox-template")
-        if args.bench != "wildclawbench" or agent_harnesses != {"deepseek"}:
+        if agent_harnesses != {"stirrup"} and (
+            args.bench != "wildclawbench" or agent_harnesses != {"deepseek"}
+        ):
             raise ValueError(
-                "remote sandboxes currently support WildClawBench with DeepSeek"
+                "remote sandboxes currently support Stirrup, and WildClawBench with DeepSeek"
             )
         if simulator_harnesses:
             raise ValueError(
@@ -1569,6 +1654,7 @@ def _collect(args: argparse.Namespace) -> int:
         if (
             args.docker_image
             or args.deepseek_image
+            or args.stirrup_image
             or args.rebuild_task_images
             or any(task.docker_image for task in tasks)
         ):
@@ -1615,6 +1701,9 @@ def _collect(args: argparse.Namespace) -> int:
     pi_api_base = (
         args.pi_api_base or requested_api_base or os.environ.get("OPENAI_BASE_URL")
     )
+    stirrup_api_base = (
+        args.stirrup_api_base or requested_api_base or os.environ.get("OPENAI_BASE_URL")
+    )
     codex_api_base = (
         args.codex_api_base or requested_api_base or os.environ.get("OPENAI_BASE_URL")
     )
@@ -1640,6 +1729,9 @@ def _collect(args: argparse.Namespace) -> int:
         args.deepseek_api_key_env or requested_api_key_env or "DEEPSEEK_API_KEY"
     )
     pi_api_key_env = args.pi_api_key_env or requested_api_key_env or "OPENAI_API_KEY"
+    stirrup_api_key_env = (
+        args.stirrup_api_key_env or requested_api_key_env or "OPENAI_API_KEY"
+    )
     codex_api_key_env = (
         args.codex_api_key_env or requested_api_key_env or "OPENAI_API_KEY"
     )
@@ -1651,6 +1743,7 @@ def _collect(args: argparse.Namespace) -> int:
         "opencode": os.environ.get("ROLLER_OPENCODE_IMAGE", DEFAULT_OPENCODE_IMAGE),
         "deepseek": os.environ.get("ROLLER_DEEPSEEK_IMAGE", DEFAULT_DEEPSEEK_IMAGE),
         "pi": os.environ.get("ROLLER_PI_IMAGE", DEFAULT_PI_IMAGE),
+        "stirrup": os.environ.get("ROLLER_STIRRUP_IMAGE", DEFAULT_STIRRUP_IMAGE),
         "openclaw": os.environ.get("ROLLER_OPENCLAW_IMAGE", DEFAULT_OPENCLAW_IMAGE),
         "codex": os.environ.get("ROLLER_CODEX_IMAGE", DEFAULT_CODEX_IMAGE),
         "claude-code": os.environ.get(
@@ -1662,6 +1755,7 @@ def _collect(args: argparse.Namespace) -> int:
         "opencode": args.opencode_image,
         "deepseek": args.deepseek_image,
         "pi": args.pi_image,
+        "stirrup": args.stirrup_image,
         "openclaw": args.openclaw_image,
         "codex": args.codex_image,
         "claude-code": args.claude_code_image,
@@ -1746,6 +1840,7 @@ def _collect(args: argparse.Namespace) -> int:
     opencode_config: OpenCodeConfig | None = None
     deepseek_config: DeepSeekConfig | None = None
     pi_config: PiConfig | None = None
+    stirrup_config: StirrupConfig | None = None
     openclaw_config: OpenClawConfig | None = None
     codex_config: CodexConfig | None = None
     claude_code_config: ClaudeCodeConfig | None = None
@@ -1943,11 +2038,30 @@ def _collect(args: argparse.Namespace) -> int:
             output_tokens=args.pi_output_tokens,
             input_modalities=tuple(args.pi_input_modalities.split(",")),
         )
+    if "stirrup" in selected_harnesses:
+        if not _stirrup_installed():
+            raise ValueError(
+                "the Stirrup Harness needs Python 3.12 or later with the stirrup "
+                "extra: pip install 'roller-agent[stirrup]'"
+            )
+        stirrup_config = StirrupConfig(
+            **bridge_options("stirrup", stirrup_api_base, stirrup_api_key_env),
+            remote_sandbox=remote,
+            max_steps=args.stirrup_max_steps,
+            context_length=args.stirrup_context_length,
+            output_tokens=args.stirrup_output_tokens,
+            command_timeout=args.stirrup_command_timeout,
+            temperature=args.stirrup_temperature,
+            top_p=args.stirrup_top_p,
+            seed=args.stirrup_seed,
+            request_fields=tuple(args.stirrup_request_set),
+        )
     for name, bridge_config, effort_validator, default_api_base in (
         ("hermes", hermes_config, hermes_effort, "https://api.openai.com/v1"),
         ("opencode", opencode_config, opencode_effort, "https://api.openai.com/v1"),
         ("deepseek", deepseek_config, deepseek_effort, "https://api.deepseek.com"),
         ("pi", pi_config, pi_effort, "https://api.openai.com/v1"),
+        ("stirrup", stirrup_config, normalize_thinking, "https://api.openai.com/v1"),
     ):
         if bridge_config is not None:
             _validate_thinking_requests(
@@ -1988,6 +2102,7 @@ def _collect(args: argparse.Namespace) -> int:
         "opencode": opencode_config,
         "deepseek": deepseek_config,
         "pi": pi_config,
+        "stirrup": stirrup_config,
     }
     _preflight_environment(requests, cli_harness, harness_configs)
     # Checked once here, for a dry run too: a judge key that is missing would
@@ -2021,8 +2136,14 @@ def _collect(args: argparse.Namespace) -> int:
             raise ValueError("sandbox provider did not resolve an environment version")
         target = SandboxTarget(args.sandbox_provider, args.sandbox_template, version)
         sandbox_run = SandboxRun(run_dir, target, provider)
-        assert deepseek_config is not None
-        deepseek_config = dataclasses.replace(deepseek_config, sandbox_run=sandbox_run)
+        if deepseek_config is not None:
+            deepseek_config = dataclasses.replace(
+                deepseek_config, sandbox_run=sandbox_run
+            )
+        if stirrup_config is not None:
+            stirrup_config = dataclasses.replace(
+                stirrup_config, sandbox_run=sandbox_run
+            )
         docker_image_digests = {}
         task_image_digests = {}
     else:
@@ -2307,6 +2428,40 @@ def _collect(args: argparse.Namespace) -> int:
             ),
         }
 
+    if stirrup_config is not None:
+        harness_configurations["stirrup"] = {
+            **(
+                sandbox_run.target.provenance()
+                if sandbox_run is not None
+                else {
+                    "docker_image": images["stirrup"],
+                    "container_user": args.container_user,
+                    "network": args.network,
+                }
+            ),
+            "api_base": stirrup_api_base or "https://api.openai.com/v1",
+            "api_key_env": stirrup_api_key_env,
+            "reasoning_effort": args.thinking,
+            "max_steps": args.stirrup_max_steps,
+            "context_length": args.stirrup_context_length,
+            "output_tokens": args.stirrup_output_tokens,
+            "command_timeout": args.stirrup_command_timeout,
+            "temperature": args.stirrup_temperature,
+            "top_p": args.stirrup_top_p,
+            "seed": args.stirrup_seed,
+            "request_fields": [list(item) for item in args.stirrup_request_set],
+            "tools": list(STIRRUP_TOOLS),
+            "api_mode": "chat_completions",
+            "wire_trace": args.wire_trace,
+            "keep_thinking": args.keep_thinking,
+            "pass_env_names": list(stirrup_config.pass_env),
+            **(
+                {"capture_calls": True, "capture_debug": args.capture_debug}
+                if stirrup_config.capture_calls
+                else {}
+            ),
+        }
+
     # OpenClaw user simulators run in the worker slots after the agents', so
     # their gateways get ports of their own.
     simulator_gateway_slot_offset = (
@@ -2529,6 +2684,7 @@ def _collect(args: argparse.Namespace) -> int:
                 "opencode": (OpenCodeHarness, opencode_config),
                 "deepseek": (DeepSeekHarness, deepseek_config),
                 "pi": (PiHarness, pi_config),
+                "stirrup": (StirrupHarness, stirrup_config),
             }
 
             def make_harness(

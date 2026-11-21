@@ -11,6 +11,7 @@ from roller.harnesses.hermes import HermesConfig, HermesHarness
 from roller.harnesses.openclaw import OpenClawConfig, OpenClawHarness
 from roller.harnesses.opencode import OpenCodeConfig, OpenCodeHarness
 from roller.harnesses.pi import PiConfig, PiHarness
+from roller.harnesses.stirrup import StirrupConfig, StirrupHarness
 
 __all__ = [
     "CodexConfig",
@@ -23,6 +24,8 @@ __all__ = [
     "OpenCodeHarness",
     "PiConfig",
     "PiHarness",
+    "StirrupConfig",
+    "StirrupHarness",
     "DeepSeekConfig",
     "DeepSeekHarness",
     "Harness",

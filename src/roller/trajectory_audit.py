@@ -154,6 +154,8 @@ def _request_effort(
         template = fields.get("chat_template_kwargs")
         if isinstance(template, dict):
             switches.append(template.get("enable_thinking"))
+            if "reasoning_effort" in template:
+                efforts.append(template["reasoning_effort"])
     efforts = ["off" if e == "none" else e for e in efforts]
     disabled = "disabled" in modes or any(v is False for v in switches)
     active = any(mode in ("enabled", "adaptive") for mode in modes) or any(
