@@ -34,6 +34,7 @@ from roller.benches.report import (
 )
 from roller.benches.skillsbench import SkillsBenchAdapter
 from roller.benches.swebench_pro import SWEBenchProAdapter
+from roller.benches.vials import VIALSAdapter
 from roller.benches.wildclaw import WildClawBenchAdapter
 
 BENCHES: dict[str, BenchAdapter] = {
@@ -43,6 +44,7 @@ BENCHES: dict[str, BenchAdapter] = {
         QwenClawBenchAdapter(),
         SkillsBenchAdapter(),
         SWEBenchProAdapter(),
+        VIALSAdapter(),
         WildClawBenchAdapter(),
     )
 }
@@ -99,6 +101,7 @@ __all__ = [
     "QwenClawBenchAdapter",
     "SkillsBenchAdapter",
     "SWEBenchProAdapter",
+    "VIALSAdapter",
     "WildClawBenchAdapter",
     "binding_from_task_row",
     "build_report",

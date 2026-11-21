@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import base64
 import ipaddress
 import json
 import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -264,6 +267,8 @@ class ContainerGrader:
         started = time.monotonic()
         workspace = self.spec.workspace_path or workspace_path
         execution = _GraderExecution(runtime, container, sandbox)
+        if self.spec.collector_files:
+            return self._grade_in_collector(execution, workspace, started)
         prepare = execution.run(["mkdir", "-p", GRADER_CONTAINER_DIR], timeout=30)
         if prepare.returncode != 0:
             detail = (prepare.stderr or prepare.stdout or "").strip()[-500:]
@@ -318,7 +323,66 @@ class ContainerGrader:
         finally:
             Path(host_runner).unlink(missing_ok=True)
 
-        elapsed = time.monotonic() - started
+        return self._outcome(result, time.monotonic() - started)
+
+    def _grade_in_collector(
+        self, execution: _GraderExecution, workspace: str, started: float
+    ) -> GradeOutcome:
+        """Copy ``collector_files`` out, then run the grader here on the copy."""
+
+        with tempfile.TemporaryDirectory(prefix="roller-grade-") as temporary:
+            root = Path(temporary)
+            for relative in self.spec.collector_files:
+                path = shlex.quote(f"{workspace}/{relative}")
+                read = execution.run(
+                    [
+                        "/bin/sh",
+                        "-c",
+                        f"if [ -f {path} ]; then base64 {path}; else exit 3; fi",
+                    ],
+                    timeout=60,
+                )
+                if read.returncode == 3:
+                    continue  # the agent wrote no such file
+                if read.returncode != 0:
+                    detail = (read.stderr or read.stdout or "").strip()[-500:]
+                    message = f"could not read {relative}: {detail}"
+                    return GradeOutcome(
+                        _error_scores(message),
+                        time.monotonic() - started,
+                        error=message,
+                    )
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(base64.b64decode(read.stdout))
+            for source, target in self.spec.stage:
+                destination = root / target
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if Path(source).is_dir():
+                    shutil.copytree(source, destination, dirs_exist_ok=True)
+                else:
+                    shutil.copyfile(source, destination)
+            runner = root / "_grade_runner.py"
+            runner.write_text(
+                build_runner_source(self.spec, str(root)), encoding="utf-8"
+            )
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(runner)],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.spec.timeout_seconds,
+                )
+            except subprocess.TimeoutExpired:
+                message = f"grading exceeded {self.spec.timeout_seconds}s"
+                return GradeOutcome(
+                    _error_scores(message), time.monotonic() - started, error=message
+                )
+        return self._outcome(result, time.monotonic() - started)
+
+    @staticmethod
+    def _outcome(result: subprocess.CompletedProcess, elapsed: float) -> GradeOutcome:
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "unknown error").strip()[-2000:]
             return GradeOutcome(

@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="#harnesses"><img src="https://img.shields.io/badge/Harnesses-7-00866F?style=flat&amp;labelColor=4B5563" alt="7 种 Harness"></a>
-  <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-5-00866F?style=flat&amp;labelColor=4B5563" alt="5 个 Benchmark 适配器"></a>
+  <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-6-00866F?style=flat&amp;labelColor=4B5563" alt="6 个 Benchmark 适配器"></a>
   <a href="https://pypi.org/project/roller-agent/"><img src="https://img.shields.io/pypi/v/roller-agent?style=flat&amp;labelColor=4B5563&amp;color=00866F" alt="PyPI 版本"></a>
   <a href="https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories"><img src="https://img.shields.io/badge/Dataset-WildClawBench_trajectories-00866F?style=flat&amp;logo=huggingface&amp;labelColor=4B5563" alt="Hugging Face 上的 Roller-WildClawBench-Trajectories 数据集"></a>
   <a href="https://github.com/Valen-Team/Roller/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/Valen-Team/Roller/tests.yml?branch=main&amp;style=flat&amp;labelColor=4B5563&amp;label=tests" alt="测试状态"></a>
@@ -60,7 +60,7 @@ roller export runs/wildclaw --format sft --min-score 0.5 --output training
 
 ### 2. 一条命令跑完一个 Benchmark
 
-`roller collect --bench` 转换 Benchmark 任务，用 7 种 Harness 中的任意一种执行，在任务运行的容器内执行评分程序，并写出 `bench-report.json`。已适配 WildClawBench、SkillsBench、PinchBench、QwenClawBench 和 SWE-Bench Pro。
+`roller collect --bench` 转换 Benchmark 任务，用 8 种 Harness 中的任意一种执行，在任务运行的容器内执行评分程序，并写出 `bench-report.json`。已适配 WildClawBench、SkillsBench、PinchBench、QwenClawBench、SWE-Bench Pro 和 VIALS。
 
 ```bash
 roller collect --bench wildclawbench --bench-root ~/WildClawBench \
@@ -221,7 +221,7 @@ rollout 在 Docker 容器中运行。DeepSeek Harness 还可以在 E2B 沙箱里
 
 ## Benchmark
 
-Bench 适配器将 Benchmark 任务转换为 Roller task，并在各 sample 的运行容器内完成评分。评分失败与零分分开记录，`bench-report.json` 按模型分别汇总，失败的 sample 计入分母。
+Bench 适配器将 Benchmark 任务转换为 Roller task，并在各 sample 的运行容器内完成评分；VIALS 的容器不联网，在 Roller 进程里对取回的答案文件评分。评分失败与零分分开记录，`bench-report.json` 按模型分别汇总，失败的 sample 计入分母。
 
 | Bench | 默认 Harness | 范围 |
 | --- | --- | --- |
@@ -230,6 +230,7 @@ Bench 适配器将 Benchmark 任务转换为 Roller task，并在各 sample 的�
 | [PinchBench](https://valen-team.github.io/zh-Hans/roller/benches/pinchbench/) | `openclaw` | 自动评分、LLM judge、混合评分与多 session 任务 |
 | [QwenClawBench](https://valen-team.github.io/zh-Hans/roller/benches/qwenclawbench/) | `openclaw` | 8 个领域的 100 个任务，支持单题多次运行 |
 | [SWE-Bench Pro](https://valen-team.github.io/zh-Hans/roller/benches/swebench-pro/) | `openclaw` | 11 个仓库的 731 个软件工程任务，在官方实例镜像中用隐藏测试评分 |
+| [VIALS](examples/cookbook/vials-stirrup) | `stirrup` | 161 道科学图像题，借助代码执行作答，由 LLM 判分；每题 3 次采样，报告 pass^3、avg@3、pass@3 |
 
 bench 运行用 `roller collect --bench` 启动，写法见[一条命令跑完一个 Benchmark](#what-roller-does)；也可以写成 YAML 文件，用 `roller bench run --config ...` 启动，见 [Benchmark 运行配置](https://valen-team.github.io/zh-Hans/roller/benches/benchmark-standard/)。各 bench 指南列出了须与上游保持一致的配置，以及评分程序所需的环境变量。接入新的 bench 见 [Bench 接入与评分](https://valen-team.github.io/zh-Hans/roller/benches/bench-format/#6-加一个新-bench)。
 
@@ -421,7 +422,7 @@ Roller 是 [Valen Team · 万澜](https://github.com/Valen-Team)的开源项目�
 
 Roller 基于 [Apache License 2.0](LICENSE) 发布。
 
-Roller 调用以下第三方 Agent 运行时和 Benchmark：OpenClaw、Codex、Claude Code、Hermes Agent、OpenCode、DeepSeek Harness、Pi Agent、Stirrup、WildClawBench、SkillsBench、PinchBench、QwenClawBench 和 SWE-Bench Pro。上述项目的镜像、代码和数据遵循其各自的许可证。感谢这些项目的作者。
+Roller 调用以下第三方 Agent 运行时和 Benchmark：OpenClaw、Codex、Claude Code、Hermes Agent、OpenCode、DeepSeek Harness、Pi Agent、Stirrup、WildClawBench、SkillsBench、PinchBench、QwenClawBench、SWE-Bench Pro 和 VIALS。上述项目的镜像、代码和数据遵循其各自的许可证。感谢这些项目的作者。
 
 <a id="citation"></a>
 

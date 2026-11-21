@@ -8,6 +8,8 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 - Stirrup Harness (`--harness stirrup`, the `stirrup` extra, Python 3.12 or later). Stirrup 0.2.1's agent loop runs in the Roller process with `code_exec`, `view_image` and `finish`; the sample's Docker container or remote sandbox executes the commands and holds the files, and gets no model key. Model requests go from Roller through the local request recording proxy, so `--wire-trace full`, `--capture-calls` and `--token-ids` work in Docker and remote sandboxes alike. The request fields are set by `--stirrup-*` options and `--thinking`, in a fixed order. A history summary splits SFT into windows from captured Calls, and the summary request is a window of its own.
 - SFT windows built from captured Chat Completions Calls keep the images of user and tool messages, as the linear export does.
+- VIALS bench (`--bench vials`, the `vials` extra): the 161 questions of the `tasks` test split, read from Hugging Face at a pinned revision (`VIALS_REVISION` to change it) and cached under `--bench-root`. Each task follows the upstream tool-assisted agent adapter: its prompt, the images as files under `/task`, and the answer in `/task/answer.txt`, judged against the reference with the upstream judge prompt. `bench report` adds pass^k, avg@k and pass@k over k samples per question. `docker/vials` builds the tools image and `examples/cookbook/vials-stirrup` runs the protocol with Stirrup.
+- `bench.grade.collector_files` grades a copy of those workspace files in the collecting process, for containers without network; the judge's key stays out of the container.
 
 ### Changed
 

@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="#harnesses"><img src="https://img.shields.io/badge/Harnesses-7-00866F?style=flat&amp;labelColor=4B5563" alt="7 Harnesses"></a>
-  <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-5-00866F?style=flat&amp;labelColor=4B5563" alt="5 benchmark adapters"></a>
+  <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-6-00866F?style=flat&amp;labelColor=4B5563" alt="6 benchmark adapters"></a>
   <a href="https://pypi.org/project/roller-agent/"><img src="https://img.shields.io/pypi/v/roller-agent?style=flat&amp;labelColor=4B5563&amp;color=00866F" alt="PyPI version"></a>
   <a href="https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories"><img src="https://img.shields.io/badge/Dataset-WildClawBench_trajectories-00866F?style=flat&amp;logo=huggingface&amp;labelColor=4B5563" alt="Roller-WildClawBench-Trajectories on Hugging Face"></a>
   <a href="https://github.com/Valen-Team/Roller/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/Valen-Team/Roller/tests.yml?branch=main&amp;style=flat&amp;labelColor=4B5563&amp;label=tests" alt="Test status"></a>
@@ -60,7 +60,7 @@ roller export runs/wildclaw --format sft --min-score 0.5 --output training
 
 ### 2. One command per benchmark
 
-`roller collect --bench` converts the benchmark tasks, runs them on any of the seven Harnesses, executes each grader in the container where the task ran, and writes `bench-report.json`. Adapters cover WildClawBench, SkillsBench, PinchBench, QwenClawBench and SWE-Bench Pro.
+`roller collect --bench` converts the benchmark tasks, runs them on any of the eight Harnesses, executes each grader in the container where the task ran, and writes `bench-report.json`. Adapters cover WildClawBench, SkillsBench, PinchBench, QwenClawBench, SWE-Bench Pro and VIALS.
 
 ```bash
 roller collect --bench wildclawbench --bench-root ~/WildClawBench \
@@ -221,7 +221,7 @@ Harness guides: [OpenClaw](https://valen-team.github.io/roller/harnesses/opencla
 
 ## Benchmarks
 
-Bench adapters convert benchmark tasks into Roller tasks and grade each sample in the container where it ran. Grading failures are recorded separately from zero scores, and `bench-report.json` aggregates each model with failed samples in the denominator.
+Bench adapters convert benchmark tasks into Roller tasks and grade each sample in the container where it ran; VIALS, whose containers have no network, grades a copy of the answer file in the Roller process. Grading failures are recorded separately from zero scores, and `bench-report.json` aggregates each model with failed samples in the denominator.
 
 | Bench | Default Harness | Scope |
 | --- | --- | --- |
@@ -230,6 +230,7 @@ Bench adapters convert benchmark tasks into Roller tasks and grade each sample i
 | [PinchBench](https://valen-team.github.io/roller/benches/pinchbench/) | `openclaw` | Automated, LLM-judge, hybrid and multi-session tasks |
 | [QwenClawBench](https://valen-team.github.io/roller/benches/qwenclawbench/) | `openclaw` | 100 tasks in 8 domains, with repeated runs per task |
 | [SWE-Bench Pro](https://valen-team.github.io/roller/benches/swebench-pro/) | `openclaw` | 731 software-engineering tasks in 11 repositories, scored by hidden tests in official instance images |
+| [VIALS](examples/cookbook/vials-stirrup) | `stirrup` | 161 scientific image questions answered with code execution, judged by an LLM; pass^3, avg@3 and pass@3 over three samples |
 
 A bench run starts with `roller collect --bench`, as in [One command per benchmark](#what-roller-does), or from a YAML file with `roller bench run --config ...`; see [Benchmark run configuration](https://valen-team.github.io/roller/benches/benchmark-standard/). Each bench guide lists the settings that must match the upstream configuration and the environment variables required by its graders. To add a bench, see [Bench integration and scoring](https://valen-team.github.io/roller/benches/bench-format/#6-adding-a-new-bench).
 
@@ -421,7 +422,7 @@ Roller is one of the open-source projects of [Valen Team](https://github.com/Val
 
 Roller is licensed under the [Apache License 2.0](LICENSE).
 
-Roller invokes the following third-party agent runtimes and benchmarks: OpenClaw, Codex, Claude Code, Hermes Agent, OpenCode, DeepSeek Harness, Pi Agent, Stirrup, WildClawBench, SkillsBench, PinchBench, QwenClawBench and SWE-Bench Pro. Their images, code and data are subject to their respective licenses. We thank the authors of these projects.
+Roller invokes the following third-party agent runtimes and benchmarks: OpenClaw, Codex, Claude Code, Hermes Agent, OpenCode, DeepSeek Harness, Pi Agent, Stirrup, WildClawBench, SkillsBench, PinchBench, QwenClawBench, SWE-Bench Pro and VIALS. Their images, code and data are subject to their respective licenses. We thank the authors of these projects.
 
 <a id="citation"></a>
 
