@@ -4,10 +4,10 @@ requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.12' and extra != 'extra-12-roller-agent-pdf' and extra == 'extra-12-roller-agent-stirrup'",
     "python_full_version == '3.11.*' and extra != 'extra-12-roller-agent-pdf' and extra == 'extra-12-roller-agent-stirrup'",
-    "python_full_version < '3.11' and extra != 'extra-12-roller-agent-pdf' and extra == 'extra-12-roller-agent-stirrup'",
     "python_full_version >= '3.11' and extra == 'extra-12-roller-agent-pdf' and extra != 'extra-12-roller-agent-stirrup'",
-    "python_full_version < '3.11' and extra == 'extra-12-roller-agent-pdf' and extra != 'extra-12-roller-agent-stirrup'",
     "python_full_version >= '3.11' and extra != 'extra-12-roller-agent-pdf' and extra != 'extra-12-roller-agent-stirrup'",
+    "python_full_version < '3.11' and extra != 'extra-12-roller-agent-pdf' and extra == 'extra-12-roller-agent-stirrup'",
+    "python_full_version < '3.11' and extra == 'extra-12-roller-agent-pdf' and extra != 'extra-12-roller-agent-stirrup'",
     "python_full_version < '3.11' and extra != 'extra-12-roller-agent-pdf' and extra != 'extra-12-roller-agent-stirrup'",
 ]
 conflicts = [[
@@ -1936,6 +1936,10 @@ test = [
     { name = "pytest" },
     { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-12-roller-agent-pdf' and extra == 'extra-12-roller-agent-stirrup')" },
 ]
+vials = [
+    { name = "pyarrow", version = "25.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-12-roller-agent-pdf' and extra == 'extra-12-roller-agent-stirrup')" },
+    { name = "pyarrow", version = "26.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-12-roller-agent-pdf' and extra == 'extra-12-roller-agent-stirrup')" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1943,6 +1947,7 @@ requires-dist = [
     { name = "jsonschema", marker = "extra == 'test'" },
     { name = "pillow", marker = "python_full_version >= '3.11' and extra == 'pdf'", specifier = ">=13" },
     { name = "pyarrow", marker = "extra == 'swebench-pro'", specifier = ">=14" },
+    { name = "pyarrow", marker = "extra == 'vials'", specifier = ">=14" },
     { name = "pypdfium2", marker = "python_full_version >= '3.11' and extra == 'pdf'", specifier = ">=4.30" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
@@ -1950,7 +1955,7 @@ requires-dist = [
     { name = "tomli", marker = "python_full_version < '3.11' and extra == 'test'" },
     { name = "zstandard", specifier = ">=0.22" },
 ]
-provides-extras = ["e2b", "pdf", "stirrup", "swebench-pro", "test"]
+provides-extras = ["e2b", "pdf", "stirrup", "swebench-pro", "test", "vials"]
 
 [[package]]
 name = "rpds-py"

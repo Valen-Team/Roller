@@ -251,6 +251,8 @@ def _summary_lines(entry: Mapping[str, Any]) -> list[str]:
         return lines
     if isinstance(average, (int, float)):
         lines.append(f"  average  {_bar(average)} {average:.4f}")
+    for name, value in (entry.get("metrics") or {}).items():
+        lines.append(f"  {name:<8} {_bar(value)} {value:.4f}")
     scored_average = entry.get("scored_average")
     if scored_average is not None and entry["unscored_count"]:
         lines.append(f"  average over scored samples only: {scored_average:.4f}")

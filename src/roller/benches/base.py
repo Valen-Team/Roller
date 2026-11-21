@@ -23,6 +23,8 @@ class GradeSpec:
     Benches ship their grader as Python source rather than as a host-side
     callable: the score usually depends on the container filesystem the agent
     just wrote to, which no longer exists once the harness tears it down.
+    With ``collector_files``, the grader runs in the collecting process on a
+    copy of those workspace files instead, for containers without network.
     """
 
     code: str
@@ -45,6 +47,10 @@ class GradeSpec:
     # also copy from, and a bench whose expected output ships alongside its seed
     # files is not measuring the model.
     stage: tuple[tuple[str, str], ...] = ()
+    # Workspace files copied out before teardown for a grader that runs in
+    # the collecting process; ``workspace_path`` is then that copy, staged
+    # files included, and the judge's key never enters the container.
+    collector_files: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"code": self.code}
@@ -72,6 +78,8 @@ class GradeSpec:
             payload["stage"] = [
                 {"source": source, "target": target} for source, target in self.stage
             ]
+        if self.collector_files:
+            payload["collector_files"] = list(self.collector_files)
         return payload
 
     @classmethod
@@ -136,6 +144,7 @@ class GradeSpec:
             score_key=score_key.strip(),
             grade_on_agent_failure=grade_on_agent_failure,
             stage=_stage_files(payload.get("stage"), f"{label}.stage"),
+            collector_files=tuple(payload.get("collector_files", ())),
         )
 
 
