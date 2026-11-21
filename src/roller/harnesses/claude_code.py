@@ -219,7 +219,8 @@ class ClaudeCodeConfig:
                 )
             if find_spec("pypdfium2") is None or find_spec("PIL") is None:
                 raise ValueError(
-                    "Claude PDF conversion requires the roller-agent[pdf] extra"
+                    "Claude PDF conversion requires the roller-agent[pdf] extra, "
+                    "which needs Python 3.11 or later"
                 )
         if self.wire_trace_mode != "off" and self.api_base and self.network != "host":
             raise ValueError(

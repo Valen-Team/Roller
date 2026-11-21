@@ -56,7 +56,8 @@ the same CLI version installed before the tasks started. See the
 Set `TASK_IDS_FILE`, `RUNS_PER_TASK`, and `PARALLEL` for a small trial.
 
 If your Messages gateway rejects PDF `document` blocks, install the optional PDF
-dependencies with `pip install -e '.[pdf]'` from the Roller checkout and run
+dependencies with `pip install -e '.[pdf]'` from the Roller checkout, on Python
+3.11 or later, and run
 `./collect-claude-code.sh --claude-pdf-as-images`. Roller forwards extracted
 text and a PNG for each page. The wire trace records what the endpoint receives.
 
