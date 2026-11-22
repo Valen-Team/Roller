@@ -664,7 +664,11 @@ class _ProxyHandler(BaseHTTPRequestHandler):
         # The Chat Completions request the proxy writes itself, if it does.
         bridge = proxy.chat_bridge
         request = json.loads(body) if bridged else None
-        chat = bridge.chat_request(request) if bridged else None
+        chat = (
+            bridge.chat_request(request, **proxy.chat_bridge_options)
+            if bridged
+            else None
+        )
         tokens = None
         if (
             proxy.token_log is not None
@@ -895,6 +899,7 @@ class WireTraceProxy:
         tool_id_mappings_path: Path | None = None,
         anthropic_pdf_as_images: bool = False,
         chat_bridge: ModuleType | None = None,
+        chat_bridge_options: Mapping[str, Any] | None = None,
         token_ids_path: Path | None = None,
     ) -> None:
         if mode not in ("tools", "full"):
@@ -941,6 +946,9 @@ class WireTraceProxy:
         # ``messages_bridge`` or ``responses_bridge``: serve the calls of that
         # API from the upstream's Chat Completions endpoint.
         self.chat_bridge = chat_bridge
+        # Keyword arguments for that bridge's ``chat_request``, so a bridge can
+        # offer protocol choices without this class naming each one.
+        self.chat_bridge_options = dict(chat_bridge_options or {})
         # Receives the token ids and logprobs of each Chat Completions call.
         self.token_log = TokenLog(token_ids_path) if token_ids_path else None
         # Set to repair repeated Anthropic tool-use IDs; receives one row per repair.

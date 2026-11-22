@@ -137,6 +137,64 @@ class ChatRequestTests(unittest.TestCase):
             ],
         )
 
+    def test_inline_tool_images_stay_in_the_tool_message(self):
+        request = chat_request(MESSAGES_REQUEST, tool_images_inline=True)
+
+        messages = request["messages"]
+        self.assertEqual(
+            [message for message in messages if message["role"] == "tool"],
+            [
+                {"role": "tool", "tool_call_id": "call-1", "content": "a.png"},
+                {
+                    "role": "tool",
+                    "tool_call_id": "call-2",
+                    "content": [{"type": "text", "text": "an image"}, IMAGE_PART],
+                },
+            ],
+        )
+        # The image needs no user message of its own, so the only difference
+        # from the split arrangement is where that one image part sits.
+        split = chat_request(MESSAGES_REQUEST)["messages"]
+        self.assertEqual(
+            [
+                message
+                for message in split
+                if message != {"role": "user", "content": [IMAGE_PART]}
+            ],
+            [
+                dict(message, content="an image")
+                if message.get("tool_call_id") == "call-2"
+                else message
+                for message in messages
+            ],
+        )
+
+    def test_a_tool_result_without_content_is_an_empty_inline_message(self):
+        request = chat_request(
+            {
+                "model": "glm",
+                "max_tokens": 1,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "call-1",
+                                "content": [],
+                            }
+                        ],
+                    }
+                ],
+            },
+            tool_images_inline=True,
+        )
+
+        self.assertEqual(
+            request["messages"],
+            [{"role": "tool", "tool_call_id": "call-1", "content": ""}],
+        )
+
     def test_parameters_and_client_tools_are_carried_over(self):
         request = chat_request(
             {

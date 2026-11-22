@@ -93,12 +93,22 @@ def _assistant(blocks: list[dict[str, Any]]) -> dict[str, Any]:
     return message
 
 
-def _user(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _user(
+    blocks: list[dict[str, Any]], *, tool_images_inline: bool = False
+) -> list[dict[str, Any]]:
     """A user message, its tool results first as ``tool`` messages.
 
     Chat Completions wants every tool result directly after the assistant
-    message that called it, and a tool message carries text only: the images a
-    tool returned follow it in a user message of their own.
+    message that called it. A tool message carries text only, so by default the
+    images a tool returned follow it in a user message of their own, as vLLM's
+    own Messages endpoint arranges them.
+
+    ``tool_images_inline`` keeps each image where the tool returned it, as a
+    part of the tool message itself. GLM-5.3's chat template renders an image
+    part inside a tool message in place, so a collected trace then tokenizes
+    the same way in training as the request that produced it; a served endpoint
+    that ignores images outside a user message does not see them at all, which
+    is why the split remains the default.
     """
 
     messages: list[dict[str, Any]] = []
@@ -106,6 +116,16 @@ def _user(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if block["type"] != "tool_result":
             continue
         result = _blocks(block.get("content") or "")
+        if tool_images_inline:
+            inline = _content(result)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": block["tool_use_id"],
+                    "content": "" if inline is None else inline,
+                }
+            )
+            continue
         text = "\n".join(part["text"] for part in result if part["type"] == "text")
         messages.append(
             {"role": "tool", "tool_call_id": block["tool_use_id"], "content": text}
@@ -119,7 +139,9 @@ def _user(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return messages
 
 
-def chat_request(body: dict[str, Any]) -> dict[str, Any]:
+def chat_request(
+    body: dict[str, Any], *, tool_images_inline: bool = False
+) -> dict[str, Any]:
     """The Chat Completions request for one Messages request."""
 
     messages = []
@@ -131,7 +153,7 @@ def chat_request(body: dict[str, Any]) -> dict[str, Any]:
         if message["role"] == "assistant":
             messages.append(_assistant(blocks))
         elif message["role"] == "user":
-            messages += _user(blocks)
+            messages += _user(blocks, tool_images_inline=tool_images_inline)
         elif _system(blocks):
             messages.append({"role": "system", "content": _system(blocks)})
     request = {key: body[key] for key in SHARED_PARAMETERS if key in body}

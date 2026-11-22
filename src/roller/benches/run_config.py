@@ -203,6 +203,9 @@ _HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
         "unique_tool_ids": ("--claude-unique-tool-ids", "switch"),
         "pdf_as_images": ("--claude-pdf-as-images", "switch"),
         "chat_completions": ("--claude-chat-completions", "switch"),
+        "tool_images_inline": ("--claude-tool-images-inline", "switch"),
+        "sandbox_binary": ("--claude-sandbox-binary", "value"),
+        "context_window": ("--claude-context-window", "value"),
     },
     "hermes": {
         "max_iterations": ("--hermes-max-iterations", "value"),
