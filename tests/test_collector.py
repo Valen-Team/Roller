@@ -7,11 +7,13 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from roller.actf import convert_openclaw_trace
 from roller.collector import CollectionConfig, Collector
 from roller.harnesses.base import Harness
 from roller.models import HarnessResult, RunRequest, Task, TaskBundle
+from roller.sft import SFTConversionError
 
 
 class FakeHarness(Harness):
@@ -944,6 +946,30 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(result[0]["status"], "ok")
             self.assertEqual(state["calls"][("task-0", "provider/model")], 2)
             self.assertEqual(artifact.read_text(encoding="utf-8"), "artifact")
+
+    def test_training_files_only_keeps_the_evidence_when_sft_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run"
+            state = self._state()
+            with patch(
+                "roller.collector.write_sft",
+                side_effect=SFTConversionError("no SFT for this one"),
+            ):
+                results = Collector(
+                    CollectionConfig(run_dir=run_dir, training_files_only=True),
+                    lambda slot: FakeHarness(state, slot),
+                ).collect(make_requests()[:1])
+            sample = next((run_dir / "samples").glob("*/*"))
+            kept = sorted(path.name for path in sample.iterdir())
+
+        result = results[0]
+        self.assertEqual(result["status"], "ok", result["error"])
+        self.assertEqual(result["runtime"]["trajectory_conversion"]["target"], "sft")
+        # Nothing to train on, so the sample keeps what explains the failure.
+        self.assertNotIn("training_files_only", result["runtime"])
+        self.assertNotIn("trace_SFT.json", kept)
+        self.assertIn("trace.jsonl", kept)
+        self.assertIn("trace_ACTF.json", kept)
 
     def test_resume_reruns_full_mode_sample_when_wire_trace_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -174,6 +174,15 @@ def kept_call_ids(rows: list[dict[str, Any]]) -> set[str]:
     }
 
 
+def summary_call_ids(rows: list[dict[str, Any]]) -> set[str]:
+    """The calls whose replies replaced the history."""
+    return {
+        row["id"]
+        for row in rows
+        if row.get("type") == "response" and row.get("outcome") == "summary"
+    }
+
+
 def read_stirrup_native(directory: Path) -> NativeCapture:
     native = NativeCapture(
         "stirrup",

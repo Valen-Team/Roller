@@ -35,7 +35,11 @@ from roller.sft import (
     _normalize_tool_call,
     validate_sft_record,
 )
-from roller.stirrup_actf import STIRRUP_COMPACTION_SFT_REASON, kept_call_ids
+from roller.stirrup_actf import (
+    STIRRUP_COMPACTION_SFT_REASON,
+    kept_call_ids,
+    summary_call_ids,
+)
 from roller.storage import atomic_write_json
 
 SFT_SEGMENTS_DIR = "sft_segments"
@@ -690,13 +694,15 @@ def _calls_matching_main_steps(
     calls: list[dict[str, Any]],
     boundaries: list[dict[str, Any]],
     summaries: set[str] | None = None,
+    native_summaries: frozenset[str] = frozenset(),
 ) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
     """Bind root Calls to ACTF main steps in order; only native summaries are skipped.
 
     Codex and OpenClaw send compaction requests under the main identity. A
-    Call is skipped only when it does not match the next main step and its
-    text is recorded verbatim in the following native compaction row. With
-    ``summaries``, such a Call is kept as a target and its ID added there.
+    Call is skipped only when it is named in ``native_summaries`` or it does
+    not match the next main step and its text is recorded verbatim in the
+    following native compaction row. With ``summaries``, such a Call is kept
+    as a target and its ID added there.
     """
     trajectory = json.loads(
         (sample_dir / "trace_ACTF.json").read_text(encoding="utf-8")
@@ -735,7 +741,10 @@ def _calls_matching_main_steps(
             if isinstance(reasoning, str):
                 messages[0]["reasoning_content"] = reasoning
             verified.append((call, messages))
-        elif not _is_summary_call(call, messages, boundaries):
+        elif not (
+            call["call_id"] in native_summaries
+            or _is_summary_call(call, messages, boundaries)
+        ):
             raise SFTConversionError(
                 f"root Calls do not correspond one-to-one with ACTF main steps; Call "
                 f"{call.get('call_id')} matches neither the next step nor a native summary"
@@ -1011,6 +1020,7 @@ def build_compaction_segments(
         return []
     main = _root_calls(calls, manifest)
     summaries: set[str] | None = None
+    native_summaries: frozenset[str] = frozenset()
     if mode == "stirrup":
         # Drop the calls whose replies the agent discarded: retried transport
         # faults, context overflows and summaries without text.
@@ -1020,6 +1030,15 @@ def build_compaction_segments(
             for call in main
             if (call.get("native_identity") or {}).get("run_id") in kept
         ]
+        # The journal names the reply that replaced the history. Stirrup takes
+        # the summary from its text and ignores any tool call beside it, so the
+        # text alone does not identify the Call.
+        replaced = summary_call_ids(rows)
+        native_summaries = frozenset(
+            call["call_id"]
+            for call in main
+            if (call.get("native_identity") or {}).get("run_id") in replaced
+        )
         summaries = set()
     if not boundaries:
         if not main or any(
@@ -1032,7 +1051,9 @@ def build_compaction_segments(
             return []
         if not native_reset and not _raw_context_changed(main):
             return []  # Preserve the existing linear SFT path, including images.
-    main = _calls_matching_main_steps(sample_dir, main, boundaries, summaries)
+    main = _calls_matching_main_steps(
+        sample_dir, main, boundaries, summaries, native_summaries
+    )
     return _segment_records(main, boundaries, keep_thinking, summaries or set())
 
 
