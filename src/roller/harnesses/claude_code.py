@@ -20,6 +20,7 @@ from roller.artifacts import ArtifactCollectionResult
 from roller.capture_runtime import CaptureRuntime
 from roller.claude_code_actf import convert_claude_code_trace
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
+from roller.harnesses.claude_code_sandbox import SandboxAgent
 from roller.harnesses.container import (
     CONTEXT_CONTAINER_PATH,
     INPUTS_CONTAINER_PATH,
@@ -40,6 +41,7 @@ from roller.harnesses.container import (
 from roller.harnesses.docker import DockerRuntime, remove_container
 from roller.models import HarnessResult, RunRequest
 from roller.native_images import claude_user_message
+from roller.sandbox import Sandbox, SandboxRun
 from roller.storage import safe_component
 from roller.thinking import normalize_thinking, resolve_thinking
 from roller.token_ids import TOKEN_IDS_FILE
@@ -54,6 +56,9 @@ CLAUDE_HOME_CONTAINER_PATH = "/roller/claude-home"
 TOOL_ID_MAPPINGS_NAME = "tool_id_mappings.jsonl"
 # Stream-json user message of a turn that carries images.
 CLAUDE_INPUT_CONTAINER_PATH = "/roller/claude-input.jsonl"
+# Normalized conversation a bench grader reads; see
+# ``ClaudeCodeSession.prepare_transcript_for_grading``.
+GRADING_TRANSCRIPT_CONTAINER_PATH = "/tmp/roller-claude-transcript.json"
 
 CLAUDE_PERMISSION_MODES = (
     "default",
@@ -105,6 +110,38 @@ def redact_anthropic_base_url(value: str) -> str:
     return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
+def actf_assistant_messages(
+    trajectory: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """An ACTF trajectory's visible assistant turns, as a grader transcript.
+
+    The order is the trajectory's, so the last entry is the step
+    :meth:`ClaudeCodeSession._latest_reply` returns as the run's reply. A run
+    whose turns all ended in a tool call yields an empty list, which a bench
+    grader scores by its own protocol rather than reading as an error.
+    """
+
+    steps = trajectory.get("steps")
+    if not isinstance(steps, list):
+        raise RuntimeError("Claude Code produced an invalid ACTF trajectory")
+    messages: list[dict[str, Any]] = []
+    for step in steps:
+        if not isinstance(step, Mapping):
+            continue
+        assistant = step.get("assistant_content")
+        if not isinstance(assistant, Mapping):
+            continue
+        content = assistant.get("content")
+        if isinstance(content, str) and content.strip():
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": content.strip()}],
+                }
+            )
+    return messages
+
+
 def claude_effort(value: str | None) -> str | None:
     """Translate Roller's logical thinking level to Claude Code's ``--effort``."""
 
@@ -149,6 +186,20 @@ class ClaudeCodeConfig:
     chat_completions: bool = False
     # The proxy records the token ids and logprobs of each call.
     token_ids: bool = False
+    # The CLI's tool results keep their images in the tool message itself.
+    tool_images_inline: bool = False
+    # Set for a remote sandbox provider: the CLI then runs in one of its
+    # instances instead of a local Docker container.
+    sandbox_run: SandboxRun | None = None
+    # Where that sandbox's template mounts the pinned CLI release.
+    sandbox_binary: str | None = None
+    # Served context length told to the CLI, which compacts its history before
+    # the server would refuse the request.
+    context_window: int | None = None
+
+    @property
+    def sandbox(self) -> bool:
+        return self.sandbox_run is not None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -188,7 +239,11 @@ class ClaudeCodeConfig:
             raise ValueError("Claude Code wire trace mode must be off|actf|full")
         if self.wire_trace_mode == "full" and not self.api_base:
             raise ValueError("Claude Code --wire-trace full requires --api-base")
-        if self.capture_calls and (not self.api_base or self.network != "host"):
+        # A remote sandbox reaches the proxy through the provider's relay, not
+        # through the host's network namespace.
+        if self.capture_calls and (
+            not self.api_base or (self.network != "host" and not self.sandbox)
+        ):
             raise ValueError(
                 "Claude call capture requires --claude-api-base and --network host"
             )
@@ -207,6 +262,15 @@ class ClaudeCodeConfig:
                 "Claude Chat Completions translation requires --claude-api-base "
                 "and wire tracing"
             )
+        if self.tool_images_inline and not self.chat_completions:
+            raise ValueError(
+                "Claude inline tool images apply to the Chat Completions "
+                "translation; add --claude-chat-completions"
+            )
+        if self.sandbox_binary is not None and not self.sandbox_binary.startswith("/"):
+            raise ValueError("Claude Code sandbox binary path must be absolute")
+        if self.context_window is not None and self.context_window <= 0:
+            raise ValueError("Claude Code context window must be greater than zero")
         if self.token_ids and not (self.chat_completions and self.capture_calls):
             raise ValueError(
                 "Claude Code --token-ids requires --claude-chat-completions "
@@ -222,7 +286,12 @@ class ClaudeCodeConfig:
                     "Claude PDF conversion requires the roller-agent[pdf] extra, "
                     "which needs Python 3.11 or later"
                 )
-        if self.wire_trace_mode != "off" and self.api_base and self.network != "host":
+        if (
+            self.wire_trace_mode != "off"
+            and self.api_base
+            and self.network != "host"
+            and not self.sandbox
+        ):
             raise ValueError(
                 "Claude Code wire tracing requires --network host so the container "
                 "can reach the rollout-local proxy"
@@ -245,6 +314,9 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
         worker_slot: int,
         runtime: DockerRuntime | None = None,
     ) -> None:
+        # Set when the CLI runs in a remote sandbox; the Docker runtime is then
+        # unused and every container step goes through ``SandboxAgent``.
+        self.sandbox_run = config.sandbox_run
         self.config = config
         self.worker_slot = worker_slot
         self.runtime = runtime or DockerRuntime(config.docker_binary)
@@ -295,6 +367,9 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             else None,
             anthropic_pdf_as_images=self.config.pdf_as_images,
             chat_bridge=messages_bridge if self.config.chat_completions else None,
+            chat_bridge_options={"tool_images_inline": True}
+            if self.config.tool_images_inline
+            else {},
             token_ids_path=token_ids_path if self.config.token_ids else None,
         )
         self._wire_proxy.start()
@@ -444,19 +519,20 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             "Claude Code settings copy",
         )
 
-    def _claude_command(
+    def claude_argv(
         self,
-        container: str,
         request: RunRequest,
         prompt: str,
         *,
         resume: bool,
         input_path: str | None = None,
     ) -> list[str]:
-        """Build one ``claude --print`` turn.
+        """One ``claude --print`` turn as the argv to run in the agent's container.
 
         ``input_path`` is a stream-json user message inside the container; it
-        replaces the prompt argument when the message carries images.
+        replaces the prompt argument when the message carries images. The
+        remote-sandbox backend runs this argv directly, so the turn's flags stay
+        the same whichever backend executes it.
         """
 
         command = [
@@ -482,7 +558,8 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             command.extend(["--print", prompt])
         else:
             command.extend(["--print", "--input-format=stream-json"])
-            # ``docker exec`` forwards no stdin; read the message from the file.
+            # Neither ``docker exec`` nor the sandbox API forwards stdin; read
+            # the message from the file instead.
             index = command.index("claude")
             command[index:] = [
                 "/bin/sh",
@@ -491,9 +568,22 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
                 input_path,
                 *command[index:],
             ]
+        return command
+
+    def _claude_command(
+        self,
+        container: str,
+        request: RunRequest,
+        prompt: str,
+        *,
+        resume: bool,
+        input_path: str | None = None,
+    ) -> list[str]:
+        """``claude_argv`` wrapped in the ``docker exec`` that runs it."""
+
         return self.runtime.exec_args(
             container,
-            command,
+            self.claude_argv(request, prompt, resume=resume, input_path=input_path),
             env={"CLAUDE_CONFIG_DIR": CLAUDE_HOME_CONTAINER_PATH},
             workdir=self.config.workspace_container_path,
         )
@@ -589,15 +679,75 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             for _, _, event in rows:
                 stream.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-    def _collect_trace(
-        self, container: str, output_dir: Path, attempt: int
-    ) -> Path | None:
-        rollout_dir = output_dir / "rollout"
-        rollout_dir.mkdir(parents=True, exist_ok=True)
+    def trace_staging_root(self, output_dir: Path) -> Path:
+        """An empty directory for a downloaded copy of the CLI's session files."""
+
         staging_root = output_dir / ".claude-session-copy"
         if staging_root.exists():
             shutil.rmtree(staging_root)
         staging_root.mkdir(parents=True, exist_ok=True)
+        return staging_root
+
+    def trace_from_staging(
+        self, staging_root: Path, output_dir: Path, attempt: int
+    ) -> Path | None:
+        """Combine the session files under ``staging_root`` into the run's trace.
+
+        Both backends reach this with the same directory contents, copied out of
+        a Docker container or downloaded from a remote sandbox.
+        """
+
+        rollout_dir = output_dir / "rollout"
+        rollout_dir.mkdir(parents=True, exist_ok=True)
+        primary_files = [
+            path
+            for path in staging_root.rglob("*.jsonl")
+            if "subagents" not in path.relative_to(staging_root).parts
+            and path.is_file()
+        ]
+        if not primary_files:
+            return None
+        primary = max(primary_files, key=lambda path: path.stat().st_mtime_ns)
+        sidechain_dir = primary.parent / primary.stem / "subagents"
+        files = [primary]
+        if sidechain_dir.is_dir():
+            files.extend(
+                sorted(
+                    path
+                    for path in sidechain_dir.rglob("*.jsonl")
+                    if not path.is_symlink()
+                )
+            )
+        if self.config.capture_calls and self.capture is not None:
+            from roller.storage import atomic_write_json
+
+            native_dir = self.capture.recorder.directory / "native"
+            native_dir.mkdir(parents=True, exist_ok=True)
+            sources = []
+            for index, path in enumerate(files):
+                if path.is_symlink():
+                    continue
+                name = f"source-{index:04d}.jsonl"
+                self.capture.add_native(path, name)
+                sources.append(
+                    {
+                        "path": f"native/{name}",
+                        "native_path": path.relative_to(staging_root).as_posix(),
+                    }
+                )
+            atomic_write_json(native_dir.parent / "native_index.json", sources)
+        destination = rollout_dir / f"trace.attempt-{attempt}.jsonl"
+        self._combine_session_files(files, destination)
+        if not destination.is_file() or destination.stat().st_size == 0:
+            return None
+        trace_path = rollout_dir / "trace.jsonl"
+        shutil.copyfile(destination, trace_path)
+        return trace_path
+
+    def _collect_trace(
+        self, container: str, output_dir: Path, attempt: int
+    ) -> Path | None:
+        staging_root = self.trace_staging_root(output_dir)
         try:
             copied = self.runtime.copy_out(
                 container,
@@ -607,50 +757,7 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
             )
             if copied.returncode != 0:
                 return None
-            primary_files = [
-                path
-                for path in staging_root.rglob("*.jsonl")
-                if "subagents" not in path.relative_to(staging_root).parts
-                and path.is_file()
-            ]
-            if not primary_files:
-                return None
-            primary = max(primary_files, key=lambda path: path.stat().st_mtime_ns)
-            sidechain_dir = primary.parent / primary.stem / "subagents"
-            files = [primary]
-            if sidechain_dir.is_dir():
-                files.extend(
-                    sorted(
-                        path
-                        for path in sidechain_dir.rglob("*.jsonl")
-                        if not path.is_symlink()
-                    )
-                )
-            if self.config.capture_calls:
-                from roller.storage import atomic_write_json
-
-                native_dir = self.capture.recorder.directory / "native"
-                native_dir.mkdir(parents=True, exist_ok=True)
-                sources = []
-                for index, path in enumerate(files):
-                    if path.is_symlink():
-                        continue
-                    name = f"source-{index:04d}.jsonl"
-                    self.capture.add_native(path, name)
-                    sources.append(
-                        {
-                            "path": f"native/{name}",
-                            "native_path": path.relative_to(staging_root).as_posix(),
-                        }
-                    )
-                atomic_write_json(native_dir.parent / "native_index.json", sources)
-            destination = rollout_dir / f"trace.attempt-{attempt}.jsonl"
-            self._combine_session_files(files, destination)
-            if not destination.is_file() or destination.stat().st_size == 0:
-                return None
-            trace_path = rollout_dir / "trace.jsonl"
-            shutil.copyfile(destination, trace_path)
-            return trace_path
+            return self.trace_from_staging(staging_root, output_dir, attempt)
         finally:
             shutil.rmtree(staging_root, ignore_errors=True)
 
@@ -687,13 +794,8 @@ class ClaudeCodeHarness(ContainerCommands, InteractiveHarness):
                 if remaining <= 0:
                     raise TimeoutError("Claude Code task timed out")
                 session.return_codes.append(
-                    self._run_turn(
-                        session.container,
-                        request,
-                        prompt,
-                        resume=index > 0,
-                        timeout_seconds=remaining,
-                        log_path=session.stream_path,
+                    session.run_turn(
+                        prompt, resume=index > 0, timeout_seconds=remaining
                     )
                 )
             status = "ok"
@@ -736,11 +838,106 @@ class ClaudeCodeSession(InteractiveSession):
         self.claude_version = ""
         self.started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.started_monotonic = time.monotonic()
-        self.image_digest = harness._image_digest()
+        self.image_digest = None if harness.sandbox_run else harness._image_digest()
         self.stream_path = (
             output_dir / "rollout" / f"claude-code.attempt-{attempt}.jsonl"
         )
+        self.agent: SandboxAgent | None = (
+            SandboxAgent(
+                harness, request, output_dir, self.container, harness.sandbox_run
+            )
+            if harness.sandbox_run is not None
+            else None
+        )
         self._finished: HarnessResult | None = None
+
+    def run_turn(self, prompt: str, *, resume: bool, timeout_seconds: float) -> int:
+        """One turn, run by whichever backend holds this sample's container."""
+
+        if self.agent is not None:
+            return self.agent.run_turn(
+                prompt,
+                resume=resume,
+                timeout_seconds=timeout_seconds,
+                log_path=self.stream_path,
+            )
+        return self.harness._run_turn(
+            self.container,
+            self.request,
+            prompt,
+            resume=resume,
+            timeout_seconds=timeout_seconds,
+            log_path=self.stream_path,
+        )
+
+    def collect_trace(self) -> Path | None:
+        if self.agent is not None:
+            return self.agent.collect_trace(self.output_dir, self.attempt)
+        return self.harness._collect_trace(
+            self.container, self.output_dir, self.attempt
+        )
+
+    @property
+    def sandbox(self) -> Sandbox | None:
+        """The remote sandbox this sample runs in, which bench grading reads.
+
+        ``None`` on the Docker path, where a grader reaches the agent's work
+        through ``docker exec`` instead.
+        """
+
+        return self.agent.box if self.agent is not None else None
+
+    def upload_for_grading(self, source: Path, target: str) -> None:
+        """Place one host file inside this sample's container or sandbox."""
+
+        if self.agent is not None:
+            self.agent.upload(source, target)
+            return
+        copied = self.harness.runtime.copy_in(
+            source, self.container, target, timeout=60
+        )
+        if copied.returncode != 0:
+            detail = (copied.stderr or copied.stdout or "").strip()[-300:]
+            raise RuntimeError(
+                f"could not copy {source} into {self.container}:{target}"
+                + (f": {detail}" if detail else "")
+            )
+
+    def prepare_transcript_for_grading(self) -> str | None:
+        """Place the run's assistant messages where a bench grader reads them.
+
+        The CLI names its session files after the project directory and the
+        session id, and a run's subagents write their own, so no fixed path
+        inside the container holds the conversation. Roller already combines
+        those files on this host and converts them to ACTF, so grading reads
+        that conversion's visible assistant turns: a bench then scores exactly
+        the text ``rollout/trace_ACTF.json`` records as the run's last reply,
+        sidechains left out. Both backends are served, ``docker cp`` for a
+        local container and the sandbox API's upload for a remote one.
+        """
+
+        if not self.container_started:
+            return None
+        trace = self.collect_trace()
+        if trace is None:
+            # The harness treats a missing native trace as a failed run, so
+            # grading says so too rather than scoring an empty transcript zero.
+            raise RuntimeError("Claude Code produced no native session trace to grade")
+        trajectory = convert_claude_code_trace(
+            trace,
+            self.output_dir / "rollout" / ".grading.ACTF.json",
+            user_messages=list(self.messages),
+            wire_trace=self.output_dir / "wire_trace.jsonl",
+            keep_thinking=self.harness.config.keep_thinking,
+        )
+        staging = self.output_dir / "rollout" / ".grading-transcript.json"
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        staging.write_text(
+            json.dumps(actf_assistant_messages(trajectory), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        self.upload_for_grading(staging, GRADING_TRANSCRIPT_CONTAINER_PATH)
+        return GRADING_TRANSCRIPT_CONTAINER_PATH
 
     def start(self) -> None:
         if self.started:
@@ -755,8 +952,18 @@ class ClaudeCodeSession(InteractiveSession):
             (self.output_dir / relative).unlink(missing_ok=True)
         self.harness.deadline = self.started_monotonic + self.request.timeout_seconds
         self.harness._start_wire_proxy(self.output_dir, self.attempt)
-        # Mark before run: a timed-out Docker client may already have created it.
+        # Mark before run: a timed-out client may already have created it.
         self.container_started = True
+        if self.agent is not None:
+            self.environment = self.agent.start(
+                self.harness._environment(self.request),
+                self.harness._wire_proxy.proxy_base_url
+                if self.harness._wire_proxy is not None
+                else self.harness.config.api_base,
+            )
+            self.claude_version = self.agent.version()
+            self.started = True
+            return
         self.environment = self.harness._start_container(
             self.container, self.request, self.image_digest
         )
@@ -770,9 +977,7 @@ class ClaudeCodeSession(InteractiveSession):
         self.started = True
 
     def _latest_reply(self) -> str:
-        trace = self.harness._collect_trace(
-            self.container, self.output_dir, self.attempt
-        )
+        trace = self.collect_trace()
         if trace is None:
             raise RuntimeError("Claude Code turn produced no native session trace")
         destination = (
@@ -808,13 +1013,8 @@ class ClaudeCodeSession(InteractiveSession):
         turn_started = time.monotonic()
         self._pending_message = prompt
         self.return_codes.append(
-            self.harness._run_turn(
-                self.container,
-                self.request,
-                prompt,
-                resume=bool(self.messages),
-                timeout_seconds=timeout_seconds,
-                log_path=self.stream_path,
+            self.run_turn(
+                prompt, resume=bool(self.messages), timeout_seconds=timeout_seconds
             )
         )
         reply = self._latest_reply()
@@ -851,17 +1051,19 @@ class ClaudeCodeSession(InteractiveSession):
             )
         if self.container_started:
             try:
-                trace_path = harness._collect_trace(
-                    self.container, self.output_dir, self.attempt
-                )
+                trace_path = self.collect_trace()
             except Exception as exc:
                 logger.warning(
                     "[%s] Claude Code trace collection failed: %s", task_id, exc
                 )
             if self.collect_outputs:
                 try:
-                    artifact_result, output_copy_error = harness._collect_outputs(
-                        self.container, self.request, self.output_dir
+                    artifact_result, output_copy_error = (
+                        self.agent.collect_outputs(self.output_dir)
+                        if self.agent is not None
+                        else harness._collect_outputs(
+                            self.container, self.request, self.output_dir
+                        )
                     )
                 except Exception as exc:
                     output_copy_error = str(exc)
@@ -903,7 +1105,19 @@ class ClaudeCodeSession(InteractiveSession):
         ):
             status, error = "error", "unsafe output files were rejected"
         retained_container: str | None = None
-        if self.container_started:
+        if self.container_started and self.agent is not None:
+            # A remote sandbox is the run's to release, whatever the outcome:
+            # --keep-container-on-error applies to Docker only.
+            try:
+                self.agent.close()
+            except Exception as exc:
+                logger.warning(
+                    "[%s] failed to release sandbox %s: %s",
+                    task_id,
+                    self.container,
+                    exc,
+                )
+        elif self.container_started:
             if config.keep_container_on_error and status != "ok":
                 retained_container = self.container
             else:
@@ -957,6 +1171,11 @@ class ClaudeCodeSession(InteractiveSession):
                 "raw_trace_schema": "claude-code-session-jsonl",
                 "claude_code_version": self.claude_version,
                 "container": retained_container,
+                **(
+                    harness.sandbox_run.target.provenance()
+                    if harness.sandbox_run is not None
+                    else {}
+                ),
                 "agent_return_codes": self.return_codes,
                 "turns": len(messages),
                 "reasoning_effort": reasoning_effort,
@@ -966,6 +1185,7 @@ class ClaudeCodeSession(InteractiveSession):
                 "permission_mode": config.permission_mode,
                 "wire_trace": config.wire_trace_mode,
                 **({"unique_tool_ids": True} if config.unique_tool_ids else {}),
+                **({"tool_images_inline": True} if config.tool_images_inline else {}),
                 **({"pdf_as_images": True} if config.pdf_as_images else {}),
                 "keep_thinking": config.keep_thinking,
                 "config_sha256": config.config_sha256,

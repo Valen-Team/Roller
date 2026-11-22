@@ -59,6 +59,9 @@ from roller.harnesses.claude_code import (
     claude_effort,
     redact_anthropic_base_url,
 )
+from roller.harnesses.claude_code_sandbox import (
+    DEFAULT_BINARY as CLAUDE_SANDBOX_BINARY,
+)
 from roller.harnesses.codex import (
     DEFAULT_CODEX_IMAGE,
     CodexConfig,
@@ -1132,6 +1135,32 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     claude.add_argument(
+        "--claude-tool-images-inline",
+        action="store_true",
+        help=(
+            "keep an image a tool returned in the tool message itself instead of "
+            "the user message that follows it, for endpoints and chat templates "
+            "that render it there; needs --claude-chat-completions"
+        ),
+    )
+    claude.add_argument(
+        "--claude-context-window",
+        type=int,
+        default=None,
+        help=(
+            "served context length told to Claude Code, which compacts its "
+            "history before the endpoint would refuse the request"
+        ),
+    )
+    claude.add_argument(
+        "--claude-sandbox-binary",
+        default=None,
+        help=(
+            "absolute path of the Claude Code executable inside a remote sandbox; "
+            f"defaults to {CLAUDE_SANDBOX_BINARY}"
+        ),
+    )
+    claude.add_argument(
         "--claude-pdf-as-images",
         action="store_true",
         help="render inline PDF documents as page text and images for Messages backends without document support",
@@ -1669,11 +1698,18 @@ def _collect(args: argparse.Namespace) -> int:
     if remote:
         if not args.sandbox_template:
             raise ValueError("a remote sandbox requires --sandbox-template")
-        if agent_harnesses != {"stirrup"} and (
+        if agent_harnesses not in ({"stirrup"}, {"claude-code"}) and (
             args.bench != "wildclawbench" or agent_harnesses != {"deepseek"}
         ):
             raise ValueError(
-                "remote sandboxes currently support Stirrup, and WildClawBench with DeepSeek"
+                "remote sandboxes currently support Stirrup and Claude Code, "
+                "and WildClawBench with DeepSeek"
+            )
+        if agent_harnesses == {"claude-code"} and not args.claude_api_base:
+            # The CLI reaches the model through the provider's relay, which the
+            # recording proxy sits behind; without one there is nothing to relay.
+            raise ValueError(
+                "Claude Code in a remote sandbox requires --claude-api-base"
             )
         if simulator_harnesses:
             raise ValueError(
@@ -1989,7 +2025,10 @@ def _collect(args: argparse.Namespace) -> int:
             unique_tool_ids=args.claude_unique_tool_ids,
             pdf_as_images=args.claude_pdf_as_images,
             chat_completions=args.claude_chat_completions,
+            tool_images_inline=args.claude_tool_images_inline,
             token_ids=args.token_ids,
+            sandbox_binary=args.claude_sandbox_binary,
+            context_window=args.claude_context_window,
             wire_trace_mode=args.wire_trace,
             keep_thinking=args.keep_thinking,
             keep_container_on_error=args.keep_container_on_error,
@@ -2171,6 +2210,10 @@ def _collect(args: argparse.Namespace) -> int:
         if deepseek_config is not None:
             deepseek_config = dataclasses.replace(
                 deepseek_config, sandbox_run=sandbox_run
+            )
+        if claude_code_config is not None:
+            claude_code_config = dataclasses.replace(
+                claude_code_config, sandbox_run=sandbox_run
             )
         if stirrup_config is not None:
             stirrup_config = dataclasses.replace(
