@@ -196,7 +196,14 @@ def _time(value: Any) -> datetime:
     return timestamp
 
 
-def _text_blocks(content: Any, *, kinds: set[str], separator: str = "\n") -> str:
+def _text_blocks(content: Any, *, kinds: set[str], separator: str = "") -> str:
+    """The text blocks of one message, joined the way the endpoint joins them.
+
+    A chat template emits the text parts of a message back to back, so a
+    separator here would put a character in the window that the model was never
+    served and the prompt would no longer tokenize to what it answered.
+    """
+
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
@@ -211,6 +218,72 @@ def _text_blocks(content: Any, *, kinds: set[str], separator: str = "\n") -> str
             raise SFTConversionError("model input contains non-text content")
         texts.append(block["text"])
     return separator.join(texts)
+
+
+def _image_part(block: Mapping[str, Any], field: str) -> dict[str, Any]:
+    """One Anthropic image block as the multimodal part an SFT record carries."""
+
+    return {
+        "type": "image_url",
+        "image_url": {"url": _image_data_uri(dict(block), field)},
+    }
+
+
+def _joined(parts: list[dict[str, Any]]) -> str | list[dict[str, Any]]:
+    """Text-only parts as the plain string they were; anything else as parts.
+
+    The text is concatenated, not separated: see :func:`_text_blocks`.
+    """
+
+    if all(part["type"] == "text" for part in parts):
+        return "".join(part["text"] for part in parts)
+    return list(parts)
+
+
+def _anthropic_tool_result(
+    identifier: str, content: Any, *, images_inline: bool
+) -> list[dict[str, Any]]:
+    """One Anthropic tool result as the messages the served prompt held.
+
+    An image a tool returned is a part of the tool message itself, which is
+    where a chat template that renders tool content in place expects it.
+    ``images_inline=False`` puts those images in a user message after it
+    instead, as vLLM's own Messages endpoint arranges such a turn: a window
+    rebuilt from captured Calls has to hold whichever arrangement the model was
+    served, or a trainer tokenizes a prompt that never existed.
+    """
+
+    blocks = (
+        [{"type": "text", "text": content}] if isinstance(content, str) else content
+    )
+    if not isinstance(blocks, list):
+        raise SFTConversionError("Anthropic tool result content is invalid")
+    texts: list[dict[str, Any]] = []
+    images: list[dict[str, Any]] = []
+    for block in blocks:
+        if not isinstance(block, Mapping):
+            raise SFTConversionError("Anthropic tool result block is invalid")
+        kind = block.get("type")
+        if kind == "text" and isinstance(block.get("text"), str):
+            texts.append({"type": "text", "text": block["text"]})
+        elif kind == "image":
+            images.append(_image_part(block, "Anthropic tool result image"))
+        else:
+            raise SFTConversionError(f"unsupported Anthropic tool result block: {kind}")
+    if images_inline:
+        return [
+            {
+                "role": "tool",
+                "tool_call_id": identifier,
+                "content": _joined(texts + images),
+            }
+        ]
+    messages: list[dict[str, Any]] = [
+        {"role": "tool", "tool_call_id": identifier, "content": _joined(texts)}
+    ]
+    if images:
+        messages.append({"role": "user", "content": images})
+    return messages
 
 
 def _tool_call(
@@ -236,7 +309,9 @@ def _tool_call(
     )
 
 
-def _anthropic_message(message: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _anthropic_message(
+    message: Mapping[str, Any], *, images_inline: bool = False
+) -> list[dict[str, Any]]:
     role = message.get("role")
     content = message.get("content", [])
     if isinstance(content, str):
@@ -280,34 +355,35 @@ def _anthropic_message(message: Mapping[str, Any]) -> list[dict[str, Any]]:
     if role != "user":
         raise SFTConversionError(f"unsupported Anthropic role: {role}")
     result: list[dict[str, Any]] = []
-    text: list[str] = []
+    parts: list[dict[str, Any]] = []
 
     def flush() -> None:
-        if text:
-            result.append({"role": "user", "content": "\n".join(text)})
-            text.clear()
+        if parts:
+            result.append({"role": "user", "content": _joined(parts)})
+            parts.clear()
 
     for block in content:
         if not isinstance(block, Mapping):
             raise SFTConversionError("Anthropic user block is invalid")
-        if block.get("type") == "text" and isinstance(block.get("text"), str):
-            text.append(block["text"])
-        elif block.get("type") == "tool_result":
+        kind = block.get("type")
+        if kind == "text" and isinstance(block.get("text"), str):
+            parts.append({"type": "text", "text": block["text"]})
+        elif kind == "image":
+            parts.append(_image_part(block, "Anthropic user image"))
+        elif kind == "tool_result":
             flush()
             identifier = block.get("tool_use_id")
             if not isinstance(identifier, str) or not identifier:
                 raise SFTConversionError("Anthropic tool result lacks an ID")
-            result.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": identifier,
-                    "content": _text_blocks(block.get("content", ""), kinds={"text"}),
-                }
+            result.extend(
+                _anthropic_tool_result(
+                    identifier,
+                    block.get("content", ""),
+                    images_inline=images_inline,
+                )
             )
         else:
-            raise SFTConversionError(
-                f"unsupported Anthropic user block: {block.get('type')}"
-            )
+            raise SFTConversionError(f"unsupported Anthropic user block: {kind}")
     flush()
     return result
 
@@ -456,7 +532,7 @@ def _merge_response_items(messages: list[dict[str, Any]]) -> list[dict[str, Any]
 
 
 def _prompt_from_call(
-    call: Mapping[str, Any],
+    call: Mapping[str, Any], *, images_inline: bool = False
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     context = call.get("context")
     if not isinstance(context, Mapping):
@@ -478,7 +554,7 @@ def _prompt_from_call(
         for item in items:
             if not isinstance(item, Mapping):
                 raise SFTConversionError("Anthropic request has an invalid message")
-            messages.extend(_anthropic_message(item))
+            messages.extend(_anthropic_message(item, images_inline=images_inline))
         tools = []
         for tool in tools_value:
             if not isinstance(tool, Mapping) or not isinstance(tool.get("name"), str):
@@ -890,6 +966,8 @@ def _segment_records(
     boundaries: list[dict[str, Any]],
     keep_thinking: bool,
     summaries: set[str] = frozenset(),
+    *,
+    images_inline: bool = False,
 ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     """Use one continuation rule; window_index counts emitted SFT records.
 
@@ -913,7 +991,7 @@ def _segment_records(
                 "main Call starts at an ambiguous compaction boundary"
             )
         current_native = sum(when > boundary for boundary in times) if when else 0
-        prompt, tools = _prompt_from_call(call)
+        prompt, tools = _prompt_from_call(call, images_inline=images_inline)
         if not prompt:
             raise SFTConversionError("compaction segment lacks its actual input")
         if not keep_thinking:
@@ -980,11 +1058,14 @@ def build_compaction_segments(
     manifest_relative: str,
     *,
     keep_thinking: bool = True,
+    images_inline: bool = False,
 ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
     """Build verified main-agent windows without changing the sample directory.
 
     ``keep_thinking=False`` clears reasoning from prompts as well as targets,
-    matching the linear SFT export.
+    matching the linear SFT export. ``images_inline`` says where the collection
+    put the images a tool returned, so a rebuilt window holds the arrangement
+    the model was actually served.
     """
     rows = _native_rows(sample_dir / "trace.jsonl", harness)
     mode = compaction_mode(harness)
@@ -1054,7 +1135,13 @@ def build_compaction_segments(
     main = _calls_matching_main_steps(
         sample_dir, main, boundaries, summaries, native_summaries
     )
-    return _segment_records(main, boundaries, keep_thinking, summaries or set())
+    return _segment_records(
+        main,
+        boundaries,
+        keep_thinking,
+        summaries or set(),
+        images_inline=images_inline,
+    )
 
 
 def export_compaction_segments(
@@ -1063,10 +1150,15 @@ def export_compaction_segments(
     manifest_relative: str,
     *,
     keep_thinking: bool = True,
+    images_inline: bool = False,
 ) -> list[dict[str, Any]]:
     """Write SFT windows only after every window has passed validation."""
     segments = build_compaction_segments(
-        sample_dir, harness, manifest_relative, keep_thinking=keep_thinking
+        sample_dir,
+        harness,
+        manifest_relative,
+        keep_thinking=keep_thinking,
+        images_inline=images_inline,
     )
     for metadata, record in segments:
         atomic_write_json(sample_dir / metadata["path"], record)
