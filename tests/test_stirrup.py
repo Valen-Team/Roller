@@ -249,15 +249,15 @@ COMPACTED = [
 ]
 
 
-def write_compacted_sample(directory: Path) -> str:
-    rows = journal(COMPACTED)
+def write_compacted_sample(directory: Path, calls_in: list[dict] = COMPACTED) -> str:
+    rows = journal(calls_in)
     (directory / "trace.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in rows)
     )
     actf = stirrup_events_to_actf(rows)
     (directory / "trace_ACTF.json").write_text(json.dumps(actf))
     calls = []
-    for index, call in enumerate(COMPACTED, 1):
+    for index, call in enumerate(calls_in, 1):
         reply = call.get("reply")
         output = None
         if reply:
@@ -288,7 +288,56 @@ def write_compacted_sample(directory: Path) -> str:
     return "capture/attempt-0001/manifest.json"
 
 
+# Stirrup asks again when the summarizer answers with a tool call and no text,
+# and takes the next reply's text as the summary even when a tool call comes
+# with it. That kept reply is the native summary although it is not text alone.
+TEXT_ONLY = {"role": "user", "content": text("Answer with text only")}
+SUMMARY_WITH_CALL = {**SUMMARY, "tool_calls": VIEW["tool_calls"]}
+COMPACTED_WITH_CALL = [
+    COMPACTED[0],
+    COMPACTED[1],
+    {
+        "id": "call-0003",
+        "messages": [SYSTEM, TASK, VIEW, VIEWED, IMAGE, SUMMARIZE],
+        "purpose": "summary",
+        "reply": VIEW,
+        "outcome": "discarded",
+    },
+    {
+        "id": "call-0004",
+        "messages": [SYSTEM, TASK, VIEW, VIEWED, IMAGE, SUMMARIZE, TEXT_ONLY],
+        "purpose": "summary",
+        "reply": SUMMARY_WITH_CALL,
+        "outcome": "summary",
+        "after": [{"type": "summary", "id": "summary-0001", "summary": "SUMMARY"}],
+    },
+    {**COMPACTED[3], "id": "call-0005"},
+]
+
+
 class StirrupCompactionTests(unittest.TestCase):
+    def test_summary_answered_with_a_tool_call_is_still_the_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sample = Path(tmp) / "sample"
+            sample.mkdir()
+            manifest = write_compacted_sample(sample, COMPACTED_WITH_CALL)
+            segments = build_compaction_segments(sample, "stirrup", manifest)
+        self.assertEqual(
+            [meta["boundary_source"] for meta, _ in segments],
+            ["initial", "summary_request", "native_boundary"],
+        )
+        # The discarded attempt is not a window; the kept one is its own.
+        self.assertEqual(
+            [meta["first_call_id"] for meta, _ in segments], ["c1", "c4", "c5"]
+        )
+        summary = segments[1][1]["messages"][-1]
+        self.assertEqual(summary["content"], "SUMMARY")
+        # The window keeps the reply as the model sent it, tool call included.
+        self.assertEqual(
+            [call["function"]["name"] for call in summary["tool_calls"]],
+            ["view_image"],
+        )
+
     def test_summary_request_is_a_window_of_its_own(self):
         with tempfile.TemporaryDirectory() as tmp:
             sample, run_blobs = Path(tmp) / "sample", Path(tmp) / BLOBS_DIR

@@ -578,6 +578,9 @@ class Collector:
             self.config.training_files_only
             and final.status == "ok"
             and grading_failure({"status": "ok", "runtime": metadata}) is None
+            # A sample without training files keeps the evidence instead: there
+            # is nothing to train on, and the trace explains what went missing.
+            and (sft_path.is_file() or sft_segments)
         ):
             self._keep_training_files(sample_dir, metadata, self.run_dir / BLOBS_DIR)
         else:
