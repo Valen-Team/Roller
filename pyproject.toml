@@ -26,6 +26,7 @@ dependencies = ["PyYAML>=6.0,<7", "zstandard>=0.22"]
 test = ["pytest", "jsonschema", "tomli; python_version < '3.11'"]
 swebench-pro = ["pyarrow>=14"]
 vials = ["pyarrow>=14"]
+zerobench = ["datasets>=2.14", "Pillow>=10"]
 pdf = [
     "pypdfium2>=4.30; python_version >= '3.11'",
     "Pillow>=13; python_version >= '3.11'",

@@ -232,6 +232,7 @@ Bench adapters convert benchmark tasks into Roller tasks and grade each sample i
 | [QwenClawBench](https://valen-team.github.io/roller/benches/qwenclawbench/) | `openclaw` | 100 tasks in 8 domains, with repeated runs per task |
 | [SWE-Bench Pro](https://valen-team.github.io/roller/benches/swebench-pro/) | `openclaw` | 731 software-engineering tasks in 11 repositories, scored by hidden tests in official instance images |
 | [VIALS](examples/cookbook/vials-stirrup) | `stirrup` | 161 scientific image questions answered with code execution, judged by an LLM; pass^3, avg@3 and pass@3 over three samples |
+| [ZeroBench](examples/cookbook/zerobench-claude-code) | `claude-code` | The 100 main questions or the 334 sub-questions, images as files the agent crops and views; the official strict `{final answer}` rule scores them without a judge, with avg@k and pass@k over k samples |
 
 A bench run starts with `roller collect --bench`, as in [One command per benchmark](#what-roller-does), or from a YAML file with `roller bench run --config ...`; see [Benchmark run configuration](https://valen-team.github.io/roller/benches/benchmark-standard/). Each bench guide lists the settings that must match the upstream configuration and the environment variables required by its graders. To add a bench, see [Bench integration and scoring](https://valen-team.github.io/roller/benches/bench-format/#6-adding-a-new-bench).
 
