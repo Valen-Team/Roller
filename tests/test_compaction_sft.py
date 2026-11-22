@@ -9,6 +9,7 @@ import pytest
 
 from roller.collector import CollectionConfig, Collector
 from roller.compaction_sft import (
+    _anthropic_message,
     _assistant_signature,
     _responses_item,
     _signature_matches,
@@ -2593,3 +2594,128 @@ def test_collector_exports_aggregates_and_validates_compaction_segments(
     segment.write_text(json.dumps(changed), encoding="utf-8")
     with pytest.raises(ValueError, match="does not match captured Call context"):
         validate_resumable_sample(sample, request, result)
+
+
+# A 1x1 PNG, the smallest thing Read can hand back as an image.
+PIXEL = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+IMAGE_BLOCK = {
+    "type": "image",
+    "source": {"type": "base64", "media_type": "image/png", "data": PIXEL},
+}
+DATA_URI = "data:image/png;base64," + PIXEL
+IMAGE_PART = {"type": "image_url", "image_url": {"url": DATA_URI}}
+READ_RESULT = {
+    "role": "user",
+    "content": [
+        {
+            "type": "tool_result",
+            "tool_use_id": "call-1",
+            "content": [{"type": "text", "text": "Read image.png"}, IMAGE_BLOCK],
+        }
+    ],
+}
+
+
+def test_an_images_tool_result_is_carried_inline() -> None:
+    assert _anthropic_message(READ_RESULT, images_inline=True) == [
+        {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "content": [{"type": "text", "text": "Read image.png"}, IMAGE_PART],
+        }
+    ]
+
+
+def test_a_split_collection_exports_the_image_after_the_tool_message() -> None:
+    assert _anthropic_message(READ_RESULT, images_inline=False) == [
+        {"role": "tool", "tool_call_id": "call-1", "content": "Read image.png"},
+        {"role": "user", "content": [IMAGE_PART]},
+    ]
+
+
+def test_a_text_only_tool_result_stays_a_plain_string() -> None:
+    message = {
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": "call-1", "content": "42\n"}
+        ],
+    }
+    for inline in (True, False):
+        assert _anthropic_message(message, images_inline=inline) == [
+            {"role": "tool", "tool_call_id": "call-1", "content": "42\n"}
+        ]
+
+
+def test_an_image_attached_to_a_user_turn_is_carried() -> None:
+    message = {
+        "role": "user",
+        "content": [{"type": "text", "text": "Look:"}, IMAGE_BLOCK],
+    }
+    assert _anthropic_message(message, images_inline=True) == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "Look:"}, IMAGE_PART],
+        }
+    ]
+
+
+def test_an_image_without_base64_bytes_still_fails_conversion() -> None:
+    message = {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "call-1",
+                "content": [{"type": "image", "source": {"type": "url", "url": "x"}}],
+            }
+        ],
+    }
+    with pytest.raises(SFTConversionError, match="base64"):
+        _anthropic_message(message, images_inline=True)
+
+
+def test_an_unknown_tool_result_block_is_still_refused() -> None:
+    message = {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "call-1",
+                "content": [{"type": "document", "source": {}}],
+            }
+        ],
+    }
+    with pytest.raises(SFTConversionError, match="tool result block: document"):
+        _anthropic_message(message, images_inline=True)
+
+
+def test_text_blocks_are_concatenated_as_the_endpoint_joins_them() -> None:
+    """A separator would put a character in the window the model never saw.
+
+    Each block already carries its own trailing newline, so joining with one
+    adds a byte that lands inside a token: the window keeps its length and only
+    one token id differs, which a length comparison cannot see.
+    """
+
+    message = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "<system-reminder>ctx</system-reminder>\n"},
+            {"type": "text", "text": "The image is at /task/image.jpg."},
+        ],
+    }
+    assert _anthropic_message(message, images_inline=True) == [
+        {
+            "role": "user",
+            "content": (
+                "<system-reminder>ctx</system-reminder>\n"
+                "The image is at /task/image.jpg."
+            ),
+        }
+    ]
+    assert (
+        _anthropic_message(
+            {"role": "system", "content": message["content"]}, images_inline=True
+        )[0]["content"]
+        == "<system-reminder>ctx</system-reminder>\nThe image is at /task/image.jpg."
+    )
