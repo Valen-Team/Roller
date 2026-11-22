@@ -531,6 +531,9 @@ class Collector:
                             harness_name,
                             manifest,
                             keep_thinking=keeps_thinking(metadata),
+                            # Where the collection put a tool's images, so the
+                            # window holds the prompt the model was served.
+                            images_inline=bool(metadata.get("tool_images_inline")),
                         )
                         if sft_segments:
                             sft_path.unlink(missing_ok=True)
