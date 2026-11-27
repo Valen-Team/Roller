@@ -25,7 +25,13 @@ import zstandard
 
 from roller.actf.claude_code import convert_claude_code_trace
 from roller.actf.codex import convert_codex_trace
+from roller.actf.opencode import (
+    convert_opencode_trace,
+    extract_opencode_usage,
+    read_opencode_events,
+)
 from roller.compaction_sft import has_main_compaction
+from roller.opencode_capture import native_messages
 from roller.run_outputs import write_run_dataset, write_run_info
 from roller.sft import SFTConversionError, write_sft
 from roller.storage import atomic_write_json, safe_component
@@ -33,8 +39,13 @@ from roller.usage import extract_claude_code_usage, extract_codex_usage
 
 CLAUDE_CODE = "claude-code"
 CODEX = "codex"
-HARNESSES = (CLAUDE_CODE, CODEX)
-RAW_SCHEMAS = {CLAUDE_CODE: "claude-code-session-jsonl", CODEX: "codex-session-jsonl"}
+OPENCODE = "opencode"
+HARNESSES = (CLAUDE_CODE, CODEX, OPENCODE)
+RAW_SCHEMAS = {
+    CLAUDE_CODE: "claude-code-session-jsonl",
+    CODEX: "codex-session-jsonl",
+    OPENCODE: "opencode-session-jsonl",
+}
 STAGING_DIR = ".import"
 TITLE_LENGTH = 120
 _REMINDER_START, _REMINDER_END = "<system-reminder>", "</system-reminder>"
@@ -99,9 +110,12 @@ class Summary:
 def default_roots(harness: str | None) -> list[Path]:
     claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
     codex = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    xdg_data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    opencode = Path(os.environ.get("OPENCODE_DATA_DIR") or xdg_data / "opencode")
     roots = {
         CLAUDE_CODE: [claude / "projects"],
         CODEX: [codex / "sessions", codex / "archived_sessions"],
+        OPENCODE: [opencode],
     }
     return [
         root
@@ -135,6 +149,14 @@ def _project(cwd: Any) -> str:
     return Path(cwd).name if isinstance(cwd, str) and cwd else ""
 
 
+def _opencode_iso(ms: Any) -> str:
+    if isinstance(ms, (int, float)) and not isinstance(ms, bool):
+        return datetime.fromtimestamp(ms / 1000, timezone.utc).isoformat(
+            timespec="seconds"
+        )
+    return ""
+
+
 def _probe(path: Path) -> Session | str | None:
     """Describe one session file; ``"subagent"``, or ``None`` for no session."""
 
@@ -158,6 +180,35 @@ def _probe(path: Path) -> Session | str | None:
             str(meta.get("id")),
             str(meta.get("timestamp") or first.get("timestamp") or ""),
             _project(meta.get("cwd")),
+            stat.st_size,
+            stat.st_mtime,
+        )
+    if first.get("type") in {"session_export", "event", "request"}:
+        info: dict[str, Any] = {}
+        fallback_id = ""
+        for record in (first, *records):
+            rtype = record.get("type")
+            if rtype == "session_export" and isinstance(record.get("data"), dict):
+                info = {**info, **(record["data"].get("info") or {})}
+                break
+            if rtype == "event" and isinstance(record.get("event"), dict):
+                ev = record["event"]
+                if ev.get("type") in {"session.created", "session.updated"}:
+                    candidate = (ev.get("properties") or {}).get("info")
+                    if isinstance(candidate, dict):
+                        info.update(candidate)
+                        if info.get("id") and info.get("directory"):
+                            break
+            elif rtype == "request" and not fallback_id and record.get("native_session_id"):
+                fallback_id = str(record["native_session_id"])
+        if info.get("parentID"):
+            return "subagent"
+        return Session(
+            OPENCODE,
+            path,
+            str(info.get("id") or fallback_id or path.stem),
+            _opencode_iso((info.get("time") or {}).get("created")),
+            _project(info.get("directory")),
             stat.st_size,
             stat.st_mtime,
         )
@@ -291,6 +342,42 @@ def _metadata(session: Session, trace: Path) -> dict[str, Any]:
     git: dict[str, Any] = {"branch": None, "commit": None, "remote": None}
     identity: list[str] = []
     shapes: set[str] = set()
+    if session.harness == OPENCODE:
+        events = read_opencode_events(trace)
+        info: dict[str, Any] = {}
+        for event in events:
+            if event.get("type") == "session_export":
+                info = {**info, **(event.get("data", {}).get("info") or {})}
+            elif event.get("type") == "event" and (event.get("event") or {}).get("type") in {
+                "session.created",
+                "session.updated",
+            }:
+                info = {
+                    **info,
+                    **((event["event"].get("properties") or {}).get("info") or {}),
+                }
+        for message in native_messages(events, root_only=True):
+            msg_info = message.get("info") or {}
+            if msg_info.get("role") == "assistant" and msg_info.get("modelID"):
+                models[str(msg_info["modelID"])] += 1
+            elif msg_info.get("role") == "user" and not first_text:
+                for part in message.get("parts") or []:
+                    if part.get("type") == "text" and isinstance(part.get("text"), str):
+                        title = _title_text(part["text"])
+                        if title:
+                            first_text = title
+                            break
+        return {
+            "model": models.most_common(1)[0][0] if models else "unknown",
+            "models": sorted(models),
+            "title": _title_text(info["title"]) if info.get("title") else first_text or None,
+            "cwd": info.get("directory"),
+            "cli_version": info.get("version"),
+            "git": git,
+            "parent_session_id": info.get("parentID"),
+            "identity": [],
+            "tools_source": None,
+        }
     for record in _records(trace):
         kind = record.get("type")
         payload = record.get("payload") or {}
@@ -392,8 +479,11 @@ def import_session(
             else source,
             target,
         )
-    claude = session.harness == CLAUDE_CODE
-    convert = convert_claude_code_trace if claude else convert_codex_trace
+    convert = {
+        CLAUDE_CODE: convert_claude_code_trace,
+        CODEX: convert_codex_trace,
+        OPENCODE: convert_opencode_trace,
+    }[session.harness]
     trajectory = convert(trace, staging / "trace_ACTF.json")
     if not trajectory["steps"]:
         shutil.rmtree(staging)
@@ -412,7 +502,12 @@ def import_session(
             "error": str(exc),
         }
     started, finished = _iso(trajectory["started_at"]), _iso(trajectory["finished_at"])
-    usage = (extract_claude_code_usage if claude else extract_codex_usage)(trace)
+    usage_extractor = {
+        CLAUDE_CODE: extract_claude_code_usage,
+        CODEX: extract_codex_usage,
+        OPENCODE: extract_opencode_usage,
+    }[session.harness]
+    usage = usage_extractor(trace)
     model = metadata["model"]
     result = {
         "schema_version": "roller.sample/v1",
@@ -447,7 +542,7 @@ def import_session(
             "actf_schema": "ACTF_v1.0",
             "sft": "trace_SFT.json" if sft.is_file() else None,
             "tools_source": metadata["tools_source"]
-            or trajectory["tools_capture"]["status"],
+            or (trajectory.get("tools_capture") or {}).get("status"),
             "system_prompt_source": "captured"
             if trajectory["system_prompt"]
             else "missing",

@@ -155,13 +155,13 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help=(
             "session files or directories to import (default: the session "
-            "directories of Claude Code and Codex)"
+            "directories of Claude Code, Codex, and OpenCode)"
         ),
     )
     importer.add_argument(
         "--harness",
         choices=importer_module.HARNESSES,
-        help="import only the sessions of one harness (default: both)",
+        help="import only the sessions of one harness (default: all)",
     )
     importer.add_argument(
         "--output", default="runs", help="output root directory (default: runs)"

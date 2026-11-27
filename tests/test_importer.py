@@ -467,6 +467,109 @@ class ImporterTests(unittest.TestCase):
             [("captured", "captured"), ("captured_merged", "captured")],
         )
 
+    def test_opencode_discovery_and_import_respects_xdg_data_home_and_skips_subagents(
+        self,
+    ) -> None:
+        from roller.importer import OPENCODE, default_roots
+
+        xdg = self.root / "xdg"
+        opencode_root = xdg / "opencode"
+        opencode_root.mkdir(parents=True)
+        old_xdg = os.environ.get("XDG_DATA_HOME")
+        os.environ["XDG_DATA_HOME"] = str(xdg)
+        try:
+            self.assertEqual(default_roots(OPENCODE), [opencode_root])
+        finally:
+            if old_xdg is None:
+                os.environ.pop("XDG_DATA_HOME", None)
+            else:
+                os.environ["XDG_DATA_HOME"] = old_xdg
+
+        main_session = opencode_root / "sessions" / "oc-1.jsonl"
+        _jsonl(
+            main_session,
+            [
+                {
+                    "type": "request",
+                    "native_session_id": "oc-1",
+                    "body": {
+                        "messages": [{"role": "system", "content": "You are OpenCode."}],
+                        "tools": [],
+                    },
+                },
+                {
+                    "type": "session_export",
+                    "data": {
+                        "info": {
+                            "id": "oc-1",
+                            "title": "Fix bug",
+                            "directory": CWD,
+                            "time": {"created": 1762000000000},
+                        },
+                        "messages": [
+                            {
+                                "info": {
+                                    "id": "m1",
+                                    "sessionID": "oc-1",
+                                    "role": "user",
+                                    "time": {"created": 1762000000100},
+                                },
+                                "parts": [
+                                    {"id": "p1", "messageID": "m1", "sessionID": "oc-1", "type": "text", "text": "Fix it"}
+                                ],
+                            },
+                            {
+                                "info": {
+                                    "id": "m2",
+                                    "sessionID": "oc-1",
+                                    "role": "assistant",
+                                    "modelID": "claude-sonnet-4",
+                                    "time": {"created": 1762000001000, "completed": 1762000002000},
+                                    "tokens": {"input": 10, "output": 5, "total": 15},
+                                    "cost": 0.01,
+                                },
+                                "parts": [
+                                    {"id": "p2", "messageID": "m2", "sessionID": "oc-1", "type": "text", "text": "Fixed."}
+                                ],
+                            },
+                        ],
+                    },
+                }
+            ],
+        )
+        sub_session = opencode_root / "sessions" / "oc-sub.jsonl"
+        _jsonl(
+            sub_session,
+            [
+                {
+                    "type": "session_export",
+                    "data": {
+                        "info": {
+                            "id": "oc-sub",
+                            "parentID": "oc-1",
+                            "directory": CWD,
+                            "time": {"created": 1762000000500},
+                        },
+                        "messages": [],
+                    },
+                }
+            ],
+        )
+
+        sessions, subagents = discover([opencode_root], harness=OPENCODE)
+        self.assertEqual([s.session_id for s in sessions], ["oc-1"])
+        self.assertEqual(subagents, 1)
+
+        summary = import_sessions(self.run, sessions, parallel=1)
+        self.assertEqual(summary.new, 1)
+        samples = self.samples()
+        self.assertIn("oc-1", samples)
+        _, info = samples["oc-1"]
+        self.assertEqual(info["harness"], OPENCODE)
+        self.assertEqual(info["model"], "claude-sonnet-4")
+        self.assertEqual(info["title"], "Fix bug")
+        self.assertEqual(info["trajectory"]["raw_schema"], "opencode-session-jsonl")
+
 
 if __name__ == "__main__":
     unittest.main()
