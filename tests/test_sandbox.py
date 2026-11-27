@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import tarfile
+from collections.abc import Callable
 from pathlib import Path
+from subprocess import CompletedProcess
 
 import pytest
 
@@ -148,3 +150,124 @@ def test_sandbox_wire_records_token_ids_when_asked(
         None,
         tmp_path / "token_ids.jsonl",
     ]
+
+
+class MemoryProcess:
+    """The ``SandboxProcess`` half of the documented contract."""
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+    def kill(self) -> None:
+        pass
+
+
+class MemoryBox:
+    """The minimal ``Sandbox`` from CONTRIBUTING.md, backed by a dict of files."""
+
+    version = "memory-1"
+
+    def __init__(self) -> None:
+        self.files: dict[str, bytes] = {}
+        self.closed = False
+
+    def run(
+        self,
+        argv: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        timeout: float,
+    ) -> CompletedProcess[str]:
+        return CompletedProcess(argv, 0, " ".join(argv), "")
+
+    def spawn(
+        self,
+        argv: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        log_path: Path,
+    ) -> MemoryProcess:
+        Path(log_path).write_text(" ".join(argv), encoding="utf-8")
+        return MemoryProcess()
+
+    def upload(
+        self,
+        source: Path,
+        target: str,
+        *,
+        contents: bool = False,
+        timeout: float,
+    ) -> None:
+        self.files[target] = Path(source).read_bytes()
+
+    def download(
+        self,
+        source: str,
+        target: Path,
+        *,
+        contents: bool = False,
+        timeout: float,
+    ) -> None:
+        Path(target).write_bytes(self.files[source])
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class MemoryProvider:
+    """The minimal ``SandboxProvider`` from CONTRIBUTING.md."""
+
+    def __init__(self) -> None:
+        self.removed: list[str] = []
+
+    def resolve(self, template: str) -> str:
+        return "memory-1"
+
+    def create(
+        self,
+        template: str,
+        version: str,
+        *,
+        name: str,
+        lifetime: float,
+        timeout: float,
+        allocated: Callable[[str], None],
+    ) -> MemoryBox:
+        assert version == self.resolve(template)
+        allocated(f"{template}/{name}")
+        return MemoryBox()
+
+    def remove(self, instance_id: str) -> None:
+        self.removed.append(instance_id)
+
+
+def test_documented_provider_contract_runs_without_docker(tmp_path: Path):
+    provider = MemoryProvider()
+    template = "bench-runtime"
+    target = SandboxTarget("memory", template, provider.resolve(template))
+    run = SandboxRun(tmp_path, target, provider)
+
+    box = run.create("attempt-1", 60, 10)
+    assert box.run(["true"], timeout=5).returncode == 0
+    assert box.spawn(["sleep", "1"], log_path=tmp_path / "spawn.log").wait() == 0
+
+    upload = tmp_path / "input.txt"
+    upload.write_text("payload", encoding="utf-8")
+    box.upload(upload, "/roller/input.txt", timeout=5)
+    copied = tmp_path / "copy.txt"
+    box.download("/roller/input.txt", copied, timeout=5)
+    assert copied.read_text(encoding="utf-8") == "payload"
+
+    receipt = tmp_path / ".sandbox-resources" / "attempt-1.json"
+    assert json.loads(receipt.read_text(encoding="utf-8"))["instance_id"] == (
+        "bench-runtime/attempt-1"
+    )
+    run.close("attempt-1", box)
+    assert box.closed
+    assert not receipt.exists()
+
+    run.create("attempt-2", 60, 10)
+    run.cleanup()
+    assert provider.removed == ["bench-runtime/attempt-2"]

@@ -60,6 +60,111 @@ Modules under `src/roller/` follow a strict seven-layer dependency order (each l
 6. **Traces, exports, import & Viewer**: `actf/*`, `sft*`, `compaction_*`, `xtuner_dataset`, `atif`, `hf_dataset`, `hf_redaction`, `integrity`, `importer`, `run_outputs`, `token_dataset`, `viewer/*`
 7. **Orchestration & CLI**: `collector`, `sample_lifecycle`, `conversation`, `cli/*`, `roller/__init__`
 
+## Adding a Bench adapter
+
+An adapter translates: it reads a checked-out benchmark under `--bench-root` and returns ordinary `roller.task/v1` rows, each carrying its scorer in a `bench` block. The collect path is unchanged, and the adapter never starts a container.
+
+1. Subclass `BenchAdapter` from `src/roller/benches/base.py` in a module under `src/roller/benches/`.
+2. Add an instance to the tuple that builds `BENCHES` in `src/roller/benches/__init__.py`, and export the class from `__all__` there.
+3. Test `load` against a small synthetic root, as the existing adapters do, so the suite needs neither Docker nor network access.
+
+| Member | Needed | Role |
+| --- | --- | --- |
+| `name` | yes | The `--bench` value, and the `bench.name` of every row; `BENCHES` is keyed by it |
+| `description` | no | The one line `roller bench list` prints |
+| `variants`, `default_variant` | no | The `--bench-variant` values `roller bench list` prints; `load` rejects a variant it does not offer |
+| `cli_options` | no | `OptionSpec`s the bench adds to `roller collect` and to bench run configs |
+| `load(root, *, categories, task_ids, variant, timeout_multiplier)` | yes | Return the selected rows; the selection is the adapter's to apply |
+| `categories(root)` | no | Defaults to the `bench.category` values of the loaded rows |
+| `required_env(binding)` | no | Groups of alternative variable names, one of which must be set before any container starts; defaults to `bench.grade.env` |
+| `aggregate(samples)` | no | The report summary; defaults to the mean score over every sample |
+
+The smallest complete adapter:
+
+```python
+import json
+import math
+
+from roller.benches.base import BenchAdapter, BenchBinding, BenchFormatError, GradeSpec
+
+# Runs inside the task's container after the agent exits, and returns a dict.
+GRADER = """\
+import os
+
+
+def grade(transcript, workspace_path):
+    answer = os.path.join(workspace_path, "answer.txt")
+    return {"overall_score": 1.0 if os.path.exists(answer) else 0.0}
+"""
+
+
+class MyBenchAdapter(BenchAdapter):
+    name = "mybench"
+    description = "One JSON task per file under tasks/"
+
+    def load(
+        self,
+        root,
+        *,
+        categories=None,
+        task_ids=None,
+        variant=None,
+        timeout_multiplier=1.0,
+    ):
+        if variant is not None:
+            raise BenchFormatError(f"{self.name}: this bench has no variants")
+        rows = []
+        for path in sorted(root.glob("tasks/*.json")):
+            task = json.loads(path.read_text(encoding="utf-8"))
+            if task_ids and task["id"] not in task_ids:
+                continue
+            if categories and task.get("category") not in categories:
+                continue
+            binding = BenchBinding(
+                name=self.name,
+                category=task.get("category"),
+                grade=GradeSpec(code=GRADER, env_names=("MYBENCH_JUDGE_KEY",)),
+            )
+            rows.append(
+                {
+                    "schema_version": "roller.task/v1",
+                    "id": task["id"],
+                    "prompt": task["prompt"],
+                    "timeout_seconds": max(
+                        1, math.ceil(task["timeout_seconds"] * timeout_multiplier)
+                    ),
+                    "bench": binding.as_dict(),
+                }
+            )
+        return rows
+```
+
+The grader runs before teardown, so it can read the workspace the agent just wrote. A grader that must run on the collector instead copies its inputs out with `GradeSpec.collector_files`, and an answer key is staged from the host with `GradeSpec.stage` rather than shipped in the task's own seed files.
+
+## Adding a sandbox provider
+
+A sandbox provider runs a Harness in a remote environment instead of a local Docker container. `e2b` ships in `src/roller/sandbox_e2b.py` behind the `e2b` extra; any other provider is a separate package that implements the protocols in `src/roller/sandbox.py` and registers a factory under the `roller.sandbox_providers` entry point, so Roller itself needs no change.
+
+```toml
+[project.entry-points."roller.sandbox_providers"]
+myprovider = "my_provider:MyProvider"
+```
+
+Roller loads that entry point and calls it with no arguments. `--sandbox-provider myprovider --sandbox-template NAME` select the provider and the template it runs in, `roller doctor` lists the providers installed next to Roller, and the template installs the same Roller version because `roller.sandbox_wire` runs inside it.
+
+| Interface | Member | Contract |
+| --- | --- | --- |
+| `SandboxProvider` | `resolve(template)` | The template's stable version. Roller records it as provenance and hands it back to `create` |
+| | `create(template, version, *, name, lifetime, timeout, allocated)` | Report the instance ID through `allocated` before waiting for readiness, so a run that is cancelled or crashes can still release it, then return the box. `e2b` resolves the template again before and after starting it, so a rebuilt template cannot serve a run that preflighted the old one |
+| | `remove(instance_id)` | Release a recorded instance and tolerate one that is already gone; a resumed run releases its leftovers through it, and so does one that is stopped |
+| `Sandbox` | `version` | The version the box was created from; a box that reports another one makes the Harness refuse it |
+| | `run(argv, *, cwd, env, timeout)` | Run a command to completion and return a `subprocess.CompletedProcess` |
+| | `spawn(argv, *, cwd, env, log_path)` | Start a background process and return an object with `wait(timeout)` and `kill()` |
+| | `upload(source, target, *, contents, timeout)` | Copy a host file or directory in; `contents` copies a directory's contents rather than the directory itself |
+| | `download(source, target, *, contents, timeout)` | Copy a sandbox file or directory out to the collector |
+| | `close()` | Stop the box and everything it started |
+| | `route_http(base, key, timeout)` | Optional. Return the `(base, key)` pair a sandbox without egress uses to reach the recording proxy on the collector; without it, the collector's own values are used as they are |
+
 ## Pull requests
 
 - Keep a pull request to one change. Describe the problem, the change and how you verified it.
