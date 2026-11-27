@@ -6,6 +6,7 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ### Added
 
+- `roller doctor` reports Python, `roller-agent`, Docker availability, optional extras, and sandbox providers.
 - `roller bench report --json` and `--format json` print the benchmark report JSON directly to stdout without summary formatting.
 
 ## 0.7.0 - 2026-11-27

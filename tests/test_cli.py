@@ -902,12 +902,15 @@ class RetryBackoffCliTests(unittest.TestCase):
 
 
 class DoctorTests(unittest.TestCase):
-    def test_doctor_succeeds_without_docker_and_reports_versions_and_extras(self) -> None:
+    def test_doctor_succeeds_without_docker_and_reports_versions_and_extras(
+        self,
+    ) -> None:
         from roller.cli import main
 
         buf = io.StringIO()
         with (
             patch("roller.cli.doctor.shutil.which", return_value=None),
+            patch("roller.cli.doctor._dist_version", return_value=None),
             patch("roller.cli.doctor.importlib.metadata.entry_points", return_value=[]),
             contextlib.redirect_stdout(buf),
             self.assertRaises(SystemExit) as ctx,
@@ -920,7 +923,7 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("roller-agent:", out)
         self.assertIn("Docker: not found", out)
         self.assertIn("Optional extras:", out)
-        self.assertIn("swebench-pro:", out)
+        self.assertIn("swebench-pro: not installed", out)
         self.assertIn("stirrup:", out)
         self.assertIn("Sandbox providers: none discovered", out)
 
@@ -928,8 +931,8 @@ class DoctorTests(unittest.TestCase):
         from roller.cli import main
 
         ep = MagicMock()
-        ep.name = "e2b"
-        ep.value = "roller_e2b:E2BSandbox"
+        ep.name = "custom"
+        ep.value = "custom_pkg:CustomSandbox"
         fake_runtime = MagicMock()
         fake_runtime.version.return_value = subprocess.CompletedProcess(
             args=["docker", "version"],
@@ -937,11 +940,22 @@ class DoctorTests(unittest.TestCase):
             stdout="27.0.3\n",
             stderr="",
         )
+        versions = {"e2b": "2.66.0"}
         buf = io.StringIO()
         with (
-            patch("roller.cli.doctor.shutil.which", return_value="/usr/local/bin/docker"),
+            patch(
+                "roller.cli.doctor.shutil.which", return_value="/usr/local/bin/docker"
+            ),
             patch("roller.cli.doctor.DockerRuntime", return_value=fake_runtime),
-            patch("roller.cli.doctor.importlib.metadata.entry_points", return_value=[ep]),
+            patch(
+                "roller.cli.doctor._dist_version",
+                side_effect=lambda name: versions.get(name),
+            ),
+            patch("roller.cli.doctor.sys.version_info", (3, 12, 0)),
+            patch("roller.cli.doctor.sys.platform", "darwin"),
+            patch(
+                "roller.cli.doctor.importlib.metadata.entry_points", return_value=[ep]
+            ),
             contextlib.redirect_stdout(buf),
             self.assertRaises(SystemExit) as ctx,
         ):
@@ -950,7 +964,69 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
         out = buf.getvalue()
         self.assertIn("Docker: available (27.0.3)", out)
-        self.assertIn("e2b (roller_e2b:E2BSandbox)", out)
+        self.assertIn("macOS host networking: check Docker Desktop", out)
+        self.assertIn("custom (custom_pkg:CustomSandbox)", out)
+        self.assertIn("e2b (roller.sandbox_e2b:E2BProvider, built-in)", out)
+
+    def test_doctor_validates_extra_versions_python_markers_and_docker_errors(
+        self,
+    ) -> None:
+        from roller.cli import main
+
+        fake_runtime = MagicMock()
+        fake_runtime.version.return_value = subprocess.CompletedProcess(
+            args=["docker", "version"],
+            returncode=1,
+            stdout="",
+            stderr="Cannot connect to the Docker daemon",
+        )
+        versions = {
+            "pypdfium2": "4.30.0",
+            "Pillow": "11.0.0",
+            "stirrup": "0.2.2",
+        }
+        buf = io.StringIO()
+        with (
+            patch(
+                "roller.cli.doctor.shutil.which", return_value="/usr/local/bin/docker"
+            ),
+            patch("roller.cli.doctor.DockerRuntime", return_value=fake_runtime),
+            patch(
+                "roller.cli.doctor._dist_version",
+                side_effect=lambda name: versions.get(name),
+            ),
+            patch("roller.cli.doctor.sys.version_info", (3, 12, 0)),
+            patch("roller.cli.doctor.sys.platform", "linux"),
+            patch("roller.cli.doctor.importlib.metadata.entry_points", return_value=[]),
+            contextlib.redirect_stdout(buf),
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            main(["doctor"])
+
+        self.assertEqual(ctx.exception.code, 0)
+        out = buf.getvalue()
+        self.assertIn("Docker: daemon unavailable", out)
+        self.assertNotIn("macOS host networking:", out)
+        self.assertIn("pdf: incompatible (Pillow 11.0.0 (requires >=13))", out)
+        self.assertIn("stirrup: installed (stirrup 0.2.2)", out)
+        self.assertNotIn("conflicting Pillow requirements", out)
+
+        buf = io.StringIO()
+        with (
+            patch("roller.cli.doctor.shutil.which", return_value=None),
+            patch("roller.cli.doctor._dist_version", return_value=None),
+            patch("roller.cli.doctor.sys.version_info", (3, 10, 14)),
+            patch("roller.cli.doctor.importlib.metadata.entry_points", return_value=[]),
+            contextlib.redirect_stdout(buf),
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            main(["doctor"])
+
+        self.assertEqual(ctx.exception.code, 0)
+        out = buf.getvalue()
+        self.assertIn("pdf: unsupported (requires Python >= 3.11)", out)
+        self.assertIn("e2b: unsupported (requires Python >= 3.11)", out)
+        self.assertIn("stirrup: unsupported (requires Python >= 3.12)", out)
 
 
 if __name__ == "__main__":
