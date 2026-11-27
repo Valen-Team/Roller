@@ -6,11 +6,11 @@
 </p>
 <h1 align="center">Roller</h1>
 <p align="center"><strong>Collect, grade and publish agent trajectories</strong></p>
-<p align="center">Roller runs Claude Code, Codex, OpenClaw and four other Harnesses on your tasks or on a benchmark, grades each sample where it ran, and imports the sessions already on your machine. Every run exports to SFT training data, ATIF and a Hugging Face dataset.</p>
+<p align="center">Roller runs Claude Code, Codex, OpenClaw and five other Harnesses on your tasks or on a benchmark, grades each sample, and imports the sessions already on your machine. Every run exports to SFT training data, XTuner, ATIF and a Hugging Face dataset.</p>
 
 <p align="center">
-  <a href="#harnesses"><img src="https://img.shields.io/badge/Harnesses-7-00866F?style=flat&amp;labelColor=4B5563" alt="7 Harnesses"></a>
-  <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-6-00866F?style=flat&amp;labelColor=4B5563" alt="6 benchmark adapters"></a>
+  <a href="#harnesses"><img src="https://img.shields.io/badge/Harnesses-8-00866F?style=flat&amp;labelColor=4B5563" alt="8 Harnesses"></a>
+  <a href="#benchmarks"><img src="https://img.shields.io/badge/Benchmarks-7-00866F?style=flat&amp;labelColor=4B5563" alt="7 benchmark adapters"></a>
   <a href="https://pypi.org/project/roller-agent/"><img src="https://img.shields.io/pypi/v/roller-agent?style=flat&amp;labelColor=4B5563&amp;color=00866F" alt="PyPI version"></a>
   <a href="https://huggingface.co/datasets/Valen-Team/Roller-WildClawBench-Trajectories"><img src="https://img.shields.io/badge/Dataset-WildClawBench_trajectories-00866F?style=flat&amp;logo=huggingface&amp;labelColor=4B5563" alt="Roller-WildClawBench-Trajectories on Hugging Face"></a>
   <a href="https://github.com/Valen-Team/Roller/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/Valen-Team/Roller/tests.yml?branch=main&amp;style=flat&amp;labelColor=4B5563&amp;label=tests" alt="Test status"></a>
@@ -30,7 +30,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/diagrams/hero-en-dark.svg">
-    <img src="assets/diagrams/hero-en-light.svg" alt="Four uses of Roller. Training data: roller export --format sft writes SFT records that keep reasoning, images and compacted-context segments. Benchmarks: roller collect --bench runs seven Harnesses on five benchmarks and grades each sample in its container. Local sessions: roller import turns the Claude Code and Codex sessions on this machine into a run. Datasets: roller export --format hf writes a redacted Hugging Face dataset folder. Every path writes the same run directory, which roller view opens." width="100%">
+    <img src="assets/diagrams/hero-en-light.svg" alt="Four uses of Roller. Training data: roller export --format sft writes SFT records that keep reasoning, images and compacted-context segments. Benchmarks: roller collect --bench runs eight Harnesses on seven benchmarks and grades each sample. Local sessions: roller import turns the Claude Code and Codex sessions on this machine into a run. Datasets: roller export --format hf writes a redacted Hugging Face dataset folder. Every path writes the same run directory, which roller view opens." width="100%">
   </picture>
 </p>
 
@@ -50,7 +50,7 @@ uv tool install roller-agent    # or: python -m pip install roller-agent
 
 ### 1. Agent runs in, training data out
 
-Each successful rollout becomes a `messages` + `tools` record in `sft.jsonl`. The record keeps the visible reasoning of the model, and messages containing images use standard OpenAI multimodal content lists (`text` and `image_url` blocks). When the agent compacts its context, each verified context window is exported as its own record under `sft_segments/`. On a graded run, keep the samples above a score, or export directly to XTuner multimodal JSONL (on `main`, follows in the next release):
+Each successful rollout becomes a `messages` + `tools` record in `sft.jsonl`. The record keeps the visible reasoning of the model, and messages containing images use standard OpenAI multimodal content lists (`text` and `image_url` blocks). When the agent compacts its context, each verified context window is exported as its own record under `sft_segments/`. On a graded run, keep the samples above a score, or export directly to XTuner multimodal JSONL:
 
 ```bash
 roller export runs/wildclaw --format sft --min-score 0.5 --output training
@@ -61,7 +61,7 @@ roller export runs/wildclaw --format xtuner --min-score 0.5 --output training-xt
 
 ### 2. One command per benchmark
 
-`roller collect --bench` converts the benchmark tasks, runs them on any of the eight Harnesses, executes each grader in the container where the task ran, and writes `bench-report.json`. Adapters cover WildClawBench, SkillsBench, PinchBench, QwenClawBench, SWE-Bench Pro and VIALS.
+`roller collect --bench` converts the benchmark tasks, runs them on a compatible Harness (VIALS generates tasks for Stirrup; the other six run on container-based Harnesses), executes each grader in the sample's container or sandbox (or in the Roller process for offline VIALS containers), and writes `bench-report.json`. Adapters cover WildClawBench, SkillsBench, PinchBench, QwenClawBench, SWE-Bench Pro, VIALS and ZeroBench.
 
 ```bash
 roller collect --bench wildclawbench --bench-root ~/WildClawBench \
@@ -116,6 +116,8 @@ Read the report, add `--redact-rules FILE` for what remains, and scan the folder
 
 ## News
 
+- **2026-11-27**: Roller 0.7.0. Adds the [Stirrup Harness](https://valen-team.github.io/roller/harnesses/stirrup-configuration/), remote sandbox execution for Claude Code (`--sandbox-provider`, optional `route_http`), the [VIALS](https://valen-team.github.io/roller/benches/vials/) and [ZeroBench](https://valen-team.github.io/roller/benches/zerobench/) bench adapters, OpenAI multimodal SFT records and `roller export --format xtuner`, `--training-files-only` compact runs, upgraded pinned versions across all eight Harnesses, and a decoupled layered module architecture.
+- **2026-11-20**: Roller 0.6.0. Adds [token-in, token-out collection](https://valen-team.github.io/roller/traces/token-ids/) (`--token-ids` with `--capture-calls`, plus `roller export --format tokens`) across all Harnesses, proxy translation for Claude Code and Codex (`--claude-chat-completions`, `--codex-chat-completions`), and an OpenCode WildClawBench cookbook recipe.
 - **2026-11-19**: Roller 0.5.0. `roller import` is on PyPI. DeepSeek Harness can collect WildClawBench in an [E2B sandbox](https://valen-team.github.io/roller/harnesses/deepseek-configuration/#e2b-for-wildclawbench) with `--sandbox-provider e2b`, for collectors without a Docker daemon. Collection checks credentials up front and logs progress and ETA, `roller clean` removes the containers of dead collectors, and `roller export --format sft --min-score` filters training data by score.
 - **2026-11-18**: [Session import](https://valen-team.github.io/roller/traces/import/). `roller import` turns the Claude Code and Codex sessions on this machine into a Roller run that the Viewer and every export read like a collected one.
 - **2026-11-17**: [WildClawBench with OpenClaw and Codex](https://valen-team.github.io/roller/cookbook/wildclawbench-open-models/): four self-hosted models, browsable trajectories and scores, public task images and runnable collection examples.
@@ -146,7 +148,7 @@ Requirements: Python 3.10 or later and a running Docker daemon. With Docker Desk
 
 ```bash
 uv tool install roller-agent    # or: python -m pip install roller-agent
-docker pull ghcr.io/openclaw/openclaw:2026.7.1-2
+docker pull ghcr.io/openclaw/openclaw:2026.11.10
 mkdir roller-quickstart && cd roller-quickstart
 roller init                     # writes the example tasks and configuration templates
 ```
@@ -208,15 +210,28 @@ A Harness is the agent runtime inside the container. It starts the agent, provid
 | OpenCode | OpenAI Chat Completions | OpenCode CLI sessions with text and file tools |
 | DeepSeek Harness | DeepSeek Chat Completions | Official SDK with a single persistent Bash tool |
 | Pi Agent | OpenAI Chat Completions | Pi SDK with seven tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls` |
-| Stirrup | OpenAI Chat Completions | Stirrup 0.2.1 with `code_exec`, `view_image` and `finish`; the agent runs in the Roller process and the container executes its code |
+| Stirrup | OpenAI Chat Completions | Stirrup 0.2.2 with `code_exec`, `view_image` and `finish`; the agent runs in the Roller process and the container executes its code |
+
+### Capability matrix
+
+| Harness | Docker | Remote sandbox | User Simulator | `--capture-calls` & `--token-ids` | `roller import` | Prebuilt image |
+| --- | --- | --- | --- | --- | --- | --- |
+| OpenClaw | Yes | — | Yes | Yes | — | Upstream (`ghcr.io/openclaw/openclaw:2026.11.10`) |
+| Codex | Yes | — | Yes | Yes (`--codex-chat-completions` for `--token-ids`) | Yes (`~/.codex`) | `ghcr.io/valen-team/roller-codex:0.172.0` |
+| Claude Code | Yes | Yes (`--sandbox-provider`) | Yes | Yes (`--claude-chat-completions` for `--token-ids`) | Yes (`~/.claude`) | Build locally (`docker/claude-code`) |
+| Hermes | Yes | — | Yes | Yes | — | `ghcr.io/valen-team/roller-hermes:8fc037444731` |
+| OpenCode | Yes | — | Yes | Yes | — | `ghcr.io/valen-team/roller-opencode:1.19.6` |
+| DeepSeek Harness | Yes | WildClawBench only (`e2b` / `roller.sandbox_providers`) | Yes | Yes | — | `ghcr.io/valen-team/roller-deepseek:0.2.2rc2` |
+| Pi Agent | Yes | — | Yes | Yes | — | `ghcr.io/valen-team/roller-pi:1.6.1` |
+| Stirrup | Yes | Yes (`roller.sandbox_providers`) | — | Yes | — | Base image (`python:3.13-slim`) |
 
 OpenClaw reads model definitions from `--model-config`. The other seven Harnesses use `--api-base` and `--api-key-env`; in runs that combine several Harnesses, each takes its own prefixed pair, for example `--hermes-api-base` and `--hermes-api-key-env`. Every Harness except Stirrup can serve as the Task Agent or as the [User Simulator](https://valen-team.github.io/roller/tasks/user-simulator/), a second model that plays the user and writes the next turn.
 
-Stirrup runs one prompt per task. It needs Python 3.12 or later and the `stirrup` extra, which is on `main` and follows in the next release: `pip install 'roller-agent[stirrup] @ git+https://github.com/Valen-Team/Roller.git'`. The extra cannot be installed together with the `pdf` extra. Its options set the request: `--stirrup-max-steps`, `--stirrup-context-length` (history is summarized at 70% of it), `--stirrup-output-tokens` (`max_tokens`), `--stirrup-command-timeout`, `--stirrup-temperature`, `--stirrup-top-p`, `--stirrup-seed` (each sample's seed is derived from it, the task ID and the sample index) and `--stirrup-request-set KEY=JSON` for further request fields; `--thinking` goes to `chat_template_kwargs.reasoning_effort`. The image only needs bash, GNU coreutils and the task's software; the default is `python:3.13-slim`.
+Stirrup runs one prompt per task. It needs Python 3.12 or later and the `stirrup` extra (`pip install 'roller-agent[stirrup]'`). The extra cannot be installed together with the `pdf` extra. Its options set the request: `--stirrup-max-steps`, `--stirrup-context-length` (history is summarized at 70% of it), `--stirrup-output-tokens` (`max_tokens`), `--stirrup-command-timeout`, `--stirrup-temperature`, `--stirrup-top-p`, `--stirrup-seed` (each sample's seed is derived from it, the task ID and the sample index) and `--stirrup-request-set KEY=JSON` for further request fields; `--thinking` goes to `chat_template_kwargs.reasoning_effort`. The image only needs bash, GNU coreutils and the task's software; the default is `python:3.13-slim`.
 
 Rollouts run in Docker containers. DeepSeek Harness can also run WildClawBench in an E2B sandbox: install `roller-agent[e2b]` and pass `--sandbox-provider e2b --sandbox-template NAME`, as the [DeepSeek guide](https://valen-team.github.io/roller/harnesses/deepseek-configuration/#e2b-for-wildclawbench) describes. Stirrup can run in a remote sandbox too: a provider package registers under the `roller.sandbox_providers` entry point, `--sandbox-provider NAME --sandbox-template NAME` select it and its environment, and the agent stays in the Roller process while the sandbox executes its commands. Claude Code runs in one as the CLI itself, started from the release the template mounts (`--claude-sandbox-binary` for another path). A sandbox created without egress cannot reach the request recording proxy, so the provider's optional `route_http` carries the CLI's requests out through the sandbox API; the proxy itself stays on the collecting host, and `--wire-trace full`, `--capture-calls` and `--token-ids` write what they write under Docker.
 
-Harness guides: [OpenClaw](https://valen-team.github.io/roller/harnesses/openclaw-configuration/) · [Codex](https://valen-team.github.io/roller/harnesses/codex-configuration/) · [Claude Code](https://valen-team.github.io/roller/harnesses/claude-code-configuration/) · [Hermes](https://valen-team.github.io/roller/harnesses/hermes-configuration/) · [OpenCode](https://valen-team.github.io/roller/harnesses/opencode-configuration/) · [DeepSeek](https://valen-team.github.io/roller/harnesses/deepseek-configuration/) · [Pi Agent](https://valen-team.github.io/roller/harnesses/pi-configuration/).
+Harness guides: [OpenClaw](https://valen-team.github.io/roller/harnesses/openclaw-configuration/) · [Codex](https://valen-team.github.io/roller/harnesses/codex-configuration/) · [Claude Code](https://valen-team.github.io/roller/harnesses/claude-code-configuration/) · [Hermes](https://valen-team.github.io/roller/harnesses/hermes-configuration/) · [OpenCode](https://valen-team.github.io/roller/harnesses/opencode-configuration/) · [DeepSeek](https://valen-team.github.io/roller/harnesses/deepseek-configuration/) · [Pi Agent](https://valen-team.github.io/roller/harnesses/pi-configuration/) · [Stirrup](https://valen-team.github.io/roller/harnesses/stirrup-configuration/).
 
 <a id="benchmarks"></a>
 
@@ -231,8 +246,8 @@ Bench adapters convert benchmark tasks into Roller tasks and grade each sample i
 | [PinchBench](https://valen-team.github.io/roller/benches/pinchbench/) | `openclaw` | Automated, LLM-judge, hybrid and multi-session tasks |
 | [QwenClawBench](https://valen-team.github.io/roller/benches/qwenclawbench/) | `openclaw` | 100 tasks in 8 domains, with repeated runs per task |
 | [SWE-Bench Pro](https://valen-team.github.io/roller/benches/swebench-pro/) | `openclaw` | 731 software-engineering tasks in 11 repositories, scored by hidden tests in official instance images |
-| [VIALS](examples/cookbook/vials-stirrup) | `stirrup` | 161 scientific image questions answered with code execution, judged by an LLM; pass^3, avg@3 and pass@3 over three samples |
-| [ZeroBench](examples/cookbook/zerobench-claude-code) | `claude-code` | The 100 main questions or the 334 sub-questions, images as files the agent crops and views; the official strict `{final answer}` rule scores them without a judge, with avg@k and pass@k over k samples |
+| [VIALS](https://valen-team.github.io/roller/benches/vials/) ([cookbook](examples/cookbook/vials-stirrup)) | `stirrup` | 161 scientific image questions answered with code execution, judged by an LLM; pass^3, avg@3 and pass@3 over three samples |
+| [ZeroBench](https://valen-team.github.io/roller/benches/zerobench/) ([cookbook](examples/cookbook/zerobench-claude-code)) | `claude-code` | The 100 main questions or the 334 sub-questions, images as files the agent crops and views; the official strict `{final answer}` rule scores them without a judge, with avg@k and pass@k over k samples |
 
 A bench run starts with `roller collect --bench`, as in [One command per benchmark](#what-roller-does), or from a YAML file with `roller bench run --config ...`; see [Benchmark run configuration](https://valen-team.github.io/roller/benches/benchmark-standard/). Each bench guide lists the settings that must match the upstream configuration and the environment variables required by its graders. To add a bench, see [Bench integration and scoring](https://valen-team.github.io/roller/benches/bench-format/#6-adding-a-new-bench).
 
@@ -285,7 +300,7 @@ Three files are written only under specific conditions:
 - `wire_trace.jsonl`: written with `--wire-trace full`. It contains every request body that Roller's proxy forwarded to the model API. Each image is stored once in the sample's `blobs/` directory and referenced from the request bodies, here and in the captured Calls of `--capture-calls`; Roller restores the original data URIs when it reads them.
 - `conversation.json`: written for User Simulator tasks. It contains the dialogue visible to both participants.
 
-`--training-files-only` (on `main`, follows in the next release) keeps only what training needs once a sample has finished and been graded: `trace_SFT.json` or `sft_segments/`, `token_ids.jsonl`, `info.json` and `score.json`, with each image of the SFT records stored once for the whole run, in the run directory's `blobs/`. It also removes the files that `--wire-trace full` and `--capture-calls` keep, after the context windows have been cut from the Calls. The run-level `sft.jsonl` is not written; `roller export --format sft`, `--format xtuner` and `--format tokens` give the same output as for the run collected without the option. Such a run cannot be opened in the Viewer, exported to Hugging Face or ATIF, or have its SFT rebuilt. Samples that failed, or whose grading failed, keep all their files for `--resume`.
+`--training-files-only` keeps only what training needs once a sample has finished and been graded: `trace_SFT.json` or `sft_segments/`, `token_ids.jsonl`, `info.json` and `score.json`, with each image of the SFT records stored once for the whole run, in the run directory's `blobs/`. It also removes the files that `--wire-trace full` and `--capture-calls` keep, after the context windows have been cut from the Calls. The run-level `sft.jsonl` is not written; `roller export --format sft`, `--format xtuner` and `--format tokens` give the same output as for the run collected without the option. Such a run cannot be opened in the Viewer, exported to Hugging Face or ATIF, or have its SFT rebuilt. Samples that failed, or whose grading failed, keep all their files for `--resume`.
 
 `--keep-thinking` is on by default and stores the visible reasoning that the model service returns; `--thinking` sets the requested reasoning level. The [trajectory output guide](https://valen-team.github.io/roller/traces/trajectory-outputs/) specifies when each file is written, and the [SFT format](https://valen-team.github.io/roller/traces/sft-format/) describes the training records.
 
@@ -358,10 +373,12 @@ Report defects through [Issues](https://github.com/Valen-Team/Roller/issues). Ne
 
 | Area | Location |
 | --- | --- |
-| Harness adapters | `src/roller/harnesses/`, with trace converters in `src/roller/*_actf.py` |
+| Command line & option specs | `src/roller/cli/`, `src/roller/option_specs.py` |
+| Execution backends | `src/roller/docker_runtime.py`, `src/roller/execution.py`, `src/roller/sandbox*.py` |
+| Harness adapters | `src/roller/harnesses/`, with trace converters in `src/roller/actf/` |
 | Bench adapters | `src/roller/benches/` |
-| SFT export | `src/roller/sft.py`, `src/roller/compaction_sft.py` |
-| ATIF export | `src/roller/atif.py` |
+| SFT & XTuner export | `src/roller/sft.py`, `src/roller/compaction_sft.py`, `src/roller/xtuner_dataset.py` |
+| ATIF & Hugging Face export | `src/roller/atif.py`, `src/roller/hf_dataset.py`, `src/roller/hf_redaction.py` |
 | Viewer | `src/roller/viewer/` |
 
 Run the checks before submitting a pull request:
@@ -426,7 +443,7 @@ Roller is one of the open-source projects of [Valen Team](https://github.com/Val
 
 Roller is licensed under the [Apache License 2.0](LICENSE).
 
-Roller invokes the following third-party agent runtimes and benchmarks: OpenClaw, Codex, Claude Code, Hermes Agent, OpenCode, DeepSeek Harness, Pi Agent, Stirrup, WildClawBench, SkillsBench, PinchBench, QwenClawBench, SWE-Bench Pro and VIALS. Their images, code and data are subject to their respective licenses. We thank the authors of these projects.
+Roller invokes the following third-party agent runtimes and benchmarks: OpenClaw, Codex, Claude Code, Hermes Agent, OpenCode, DeepSeek Harness, Pi Agent, Stirrup, WildClawBench, SkillsBench, PinchBench, QwenClawBench, SWE-Bench Pro, VIALS and ZeroBench. Their images, code and data are subject to their respective licenses. We thank the authors of these projects.
 
 <a id="citation"></a>
 

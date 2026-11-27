@@ -34,22 +34,39 @@ To check a change against a real Harness, build its image as described in the Ha
 
 | Area | Location |
 | --- | --- |
-| Command line | `src/roller/cli.py` |
-| Harness adapters | `src/roller/harnesses/`, with trace converters in `src/roller/*_actf.py` |
+| Command line & option specs | `src/roller/cli/` (`parser.py`, `collect.py`, `bench.py`, `harness_setup.py`, `preflight.py`, `commands.py`) and `src/roller/option_specs.py` |
+| Execution backends | `src/roller/docker_runtime.py`, `src/roller/execution.py`, `src/roller/sandbox.py`, `src/roller/sandbox_e2b.py` |
+| Wire proxy & capture | `src/roller/wire_trace.py`, `src/roller/wire_transforms.py`, `src/roller/capture.py`, `src/roller/messages_bridge.py`, `src/roller/responses_bridge.py` |
+| Harness adapters | `src/roller/harnesses/` |
 | Code that runs inside the containers | `src/roller/assets/` |
 | Bench adapters | `src/roller/benches/` |
+| ACTF trace converters | `src/roller/actf/` |
 | Session import | `src/roller/importer.py` |
-| SFT export | `src/roller/sft.py`, `src/roller/compaction_sft.py`, `src/roller/sft_dataset.py` |
+| SFT & XTuner export | `src/roller/sft.py`, `src/roller/compaction_sft.py`, `src/roller/compaction_parsers.py`, `src/roller/sft_dataset.py`, `src/roller/xtuner_dataset.py` |
+| Hugging Face export & redaction | `src/roller/hf_dataset.py`, `src/roller/hf_redaction.py`, `src/roller/redaction.py` |
 | Viewer | `src/roller/viewer/` |
 | Documentation | `roller/` and its Chinese counterpart in the [website repository](https://github.com/Valen-Team/valen-team.github.io) |
 | Machine-readable schemas | `schemas/` |
 
+## Architecture layering
+
+Modules under `src/roller/` follow a strict seven-layer dependency order (each layer may import only from itself and earlier layers):
+
+1. **Data, lock, storage & registries**: `models`, `tasks`, `bundles`, `storage`, `artifacts`, `run_lock`, `redaction`, `option_specs`, `sample_metadata`, `thinking`, `harness_registry`, `usage`, `version`
+2. **Execution backends**: `docker_runtime`, `execution`, `cleanup`, `image_build`, `sandbox`, `sandbox_e2b`, `sandbox_files`
+3. **Wire proxy & protocol capture**: `wire_trace`, `wire_transforms`, `sandbox_wire`, `capture*`, `*_capture`, `messages_bridge`, `responses_bridge`, `token_ids`, `blobs`, `model_protocols`
+4. **Harnesses**: `harnesses/*`, `stirrup_agent` (declaring their own `CLI_OPTIONS`, invoking ACTF/usage converters through `harness_registry`)
+5. **Benches**: `benches/*` (translating YAML configs directly into structured `OptionSpec` namespaces)
+6. **Traces, exports, import & Viewer**: `actf/*`, `sft*`, `compaction_*`, `xtuner_dataset`, `atif`, `hf_dataset`, `hf_redaction`, `integrity`, `importer`, `run_outputs`, `token_dataset`, `viewer/*`
+7. **Orchestration & CLI**: `collector`, `sample_lifecycle`, `conversation`, `cli/*`, `roller/__init__`
+
 ## Pull requests
 
 - Keep a pull request to one change. Describe the problem, the change and how you verified it.
+- Keep module imports flowing downward through the seven architecture layers above.
 - Add or update tests for behaviour you change.
 - When behaviour changes, update the handbook in the [website repository](https://github.com/Valen-Team/valen-team.github.io), in `roller/` and `i18n/zh-Hans/docusaurus-plugin-content-docs-roller/current/`, and the two READMEs when they are affected. The English and Chinese pages mirror each other section by section.
-- A new `roller collect` option also needs an entry in `src/roller/benches/run_config.py`, either mapped to a YAML key or listed as collect-only. A test fails otherwise.
+- A new `roller collect` option is declared as an `OptionSpec` (in `src/roller/option_specs.py`, the Harness module's `CLI_OPTIONS`, or the Bench adapter's `cli_options`) and mapped to a YAML key or listed in `COLLECT_ONLY_FLAGS`. A test fails otherwise.
 - A setting that changes what a sample contains belongs in the run lock, so that `--resume` refuses to mix samples collected with different settings. A new option must leave the lock of existing runs unchanged when it is not used.
 - A run resumes under every patch release of the minor series that created it, so one run can hold samples collected by several patch releases. A change to the SFT projection fits a patch release, because Resume rewrites `trace_SFT.json` from the trace. A change after which new samples no longer belong with those an earlier release of the series collected waits for the next minor release.
 - Commit subjects follow the `type(scope): summary` form used in the history, for example `fix(openclaw): turn off heartbeat polls during a rollout`.
@@ -59,15 +76,24 @@ To check a change against a real Harness, build its image as described in the Ha
 
 The handbook is published at [valen-team.github.io/roller](https://valen-team.github.io/roller/) and is built with the website. Its source is in the [website repository](https://github.com/Valen-Team/valen-team.github.io).
 
-## Harness images
+## Upgrading pinned Harness images
 
-`scripts/prebuilt_images.py` lists the Harness images published to `ghcr.io/valen-team`. The Images workflow builds them on every release tag and can be started by hand. Changing a pinned Harness version means changing the default image name in `src/roller/harnesses/` and the `ARG` in the Dockerfile together; a test compares the two.
+`scripts/prebuilt_images.py` lists the Harness images published to `ghcr.io/valen-team`. The Images workflow builds them on every release tag and can be started by hand. When upgrading a pinned Harness version:
+
+1. Check upstream CLI/SDK compatibility against the adapter in `src/roller/harnesses/` and any container-side bridge in `src/roller/assets/`.
+2. Update the `ARG` or package pin in `docker/<harness>/Dockerfile`, the default image constant in `src/roller/harnesses/`, the pinned version in `src/roller/assets/` (if the Harness uses a bridge), matching scripts (`scripts/prepare-*.sh`), benchmark templates (`examples/benchmarks/*.yaml`), `pyproject.toml`/`uv.lock` (for Python SDK extras), and unit tests. `tests/test_prebuilt_images.py` checks that the Dockerfile pin matches the default image tag.
+3. Build each changed non-GHCR Dockerfile on `linux/amd64` and run the version check from `scripts/prebuilt_images.py` plus the container-side bridge `--check` probe (where applicable).
 
 ## Releasing
 
-1. Set the version in `src/roller/version.py`.
-2. In `CHANGELOG.md`, rename the Unreleased section to `## <version> - <date>` and start a new empty Unreleased section. A test fails while the changelog has no section for the package version.
-3. Merge, then push the tag `v<version>`. The release workflow builds the package, publishes it to PyPI and creates the GitHub release from that changelog section.
+1. Smoke-test both non-conflicting optional extra sets in clean virtual environments:
+   - `.[test,swebench-pro,vials,zerobench,pdf,e2b]`
+   - `.[test,stirrup]` (Python 3.12+)
+2. In the release PR, sync `README.md`, `README_zh-CN.md`, and cookbook READMEs (Harness/Benchmark counts, pinned image tags, capability matrix, and removal of any pre-release `git+https://` install notes; PyPI renders `README.md` from the release tag). Prepare the matching English/Chinese handbook updates in `valen-team.github.io` locally and verify with `npm run build`, but hold off on pushing the website until the release tag has finished publishing.
+3. Set the version in `src/roller/version.py` and refresh `uv.lock` with `uv lock`.
+4. In `CHANGELOG.md`, rename the Unreleased section to `## <version> - <date>` and start a new empty Unreleased section. A test fails while the changelog has no section for the package version.
+5. Run `pytest`, `ruff check`, and `ruff format --check`, merge the release PR, then push the tag `v<version>`. The release workflow builds the package, publishes it to PyPI, creates the GitHub release from that changelog section, and runs the Images workflow to publish the updated `ghcr.io/valen-team/roller-*` images.
+6. Once the PyPI release and GHCR images are live, push the prepared handbook updates to `valen-team.github.io` so every install and `docker pull` command in the live documentation works immediately.
 
 ## Code of conduct
 

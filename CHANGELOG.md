@@ -4,10 +4,18 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ## Unreleased
 
+## 0.7.0 - 2026-11-27
+
+Roller 0.7.0 adds the Stirrup Harness, Claude Code remote sandbox execution, the VIALS and ZeroBench bench adapters, OpenAI multimodal SFT records with XTuner export, `--training-files-only` compact runs, upgraded pinned Harness versions, and a decoupled layered module architecture.
+
+```bash
+uv tool install roller-agent    # or: python -m pip install roller-agent
+```
+
 ### Added
 
 - `roller export --format xtuner` exports a run as a single merged `xtuner.jsonl` (combining unsegmented rollouts and compaction segments, with a line-for-line `xtuner_index.jsonl`, supporting `--min-score`). Images are extracted to `<output>/media/` with EXIF-oriented `image_wh` metadata (`--inline-images` keeps base64 data URIs inline), `tool_calls[].function.arguments` JSON strings are parsed into objects, and `target_start_index` is translated into per-message `"loss": false` on earlier assistant turns.
-- Stirrup Harness (`--harness stirrup`, the `stirrup` extra, Python 3.12 or later). Stirrup 0.2.1's agent loop runs in the Roller process with `code_exec`, `view_image` and `finish`; the sample's Docker container or remote sandbox executes the commands and holds the files, and gets no model key. Model requests go from Roller through the local request recording proxy, so `--wire-trace full`, `--capture-calls` and `--token-ids` work in Docker and remote sandboxes alike. The request fields are set by `--stirrup-*` options and `--thinking`, in a fixed order. A history summary splits SFT into windows from captured Calls, and the summary request is a window of its own.
+- Stirrup Harness (`--harness stirrup`, the `stirrup` extra, Python 3.12 or later). Stirrup 0.2.2's agent loop runs in the Roller process with `code_exec`, `view_image` and `finish`; the sample's Docker container or remote sandbox executes the commands and holds the files, and gets no model key. Model requests go from Roller through the local request recording proxy, so `--wire-trace full`, `--capture-calls` and `--token-ids` work in Docker and remote sandboxes alike. The request fields are set by `--stirrup-*` options and `--thinking`, in a fixed order. A history summary splits SFT into windows from captured Calls, and the summary request is a window of its own.
 - SFT windows built from captured Chat Completions Calls keep the images of user and tool messages, as the linear export does.
 - Claude Code Harness in a remote sandbox (`--harness claude-code --sandbox-provider NAME --sandbox-template NAME`). The CLI itself runs in the sandbox, started from the release the template mounts (`--claude-sandbox-binary` for a path other than `/opt/claude-code/bin/claude`), and the sandbox holds the task's files. A sandbox created without egress cannot reach the request recording proxy, so the provider's optional `route_http` carries the CLI's requests out through the sandbox API while the proxy stays on the collecting host: `--wire-trace full`, `--capture-calls` and `--token-ids` write the same wire trace, Calls, blobs and token ids as under Docker, and the native session trace, its ACTF conversion, usage and output collection are read from the sandbox the same way. `--network` and `--keep-container-on-error` apply to Docker only.
 - `--claude-tool-images-inline` keeps an image a tool returned in the tool message itself instead of the user message that follows it, for endpoints and chat templates that render it there. Off by default, which is how vLLM's own Messages endpoint arranges such a turn.
@@ -22,6 +30,8 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ### Changed
 
+- Upgraded all eight pinned Harness versions, Dockerfiles, and optional SDK extras: OpenClaw `2026.11.10`, Claude Code `2.1.332`, Codex `0.172.0`, DeepSeek Harness `0.2.2rc2`, Hermes `8fc037444731` (`v0.23.4`, `python:3.14-slim-bookworm`, `uv==0.13.10`), OpenCode `1.19.6`, Pi Agent `1.6.1`, `stirrup==0.2.2`, and `e2b==2.66.0` (#167).
+- Decoupled Roller's internal architecture into a strictly layered dependency graph and split oversized modules (`cli/`, `actf/`, `execution.py`, `docker_runtime.py`, `option_specs.py`, `run_outputs.py`, `sample_lifecycle.py`, `sample_metadata.py`, `hf_redaction.py`, `wire_transforms.py`, `compaction_parsers.py`, and per-Harness config/session modules) while preserving the CLI, YAML run configs, on-disk run/lock formats, public package exports, and `roller.sandbox_providers` entry point (#166).
 - Task prompts reach the model as written; Roller no longer strips leading and trailing whitespace from `prompt`, `question` and `messages[].content`. A blank prompt is still rejected. Tasks whose prompt had such whitespace get a new bundle digest.
 - Stirrup passes no proxy variables into the container, since its model requests start in the Roller process.
 - Multimodal SFT records (`trace_SFT.json`, `sft.jsonl`, `sft_segments.jsonl`) now use standard OpenAI content lists (`{"type": "text", "text": ...}` and `{"type": "image_url", "image_url": {"url": "data:<mime>;base64,..."}}`) instead of flattening blocks with `<image>` placeholders and a top-level `images` list. Text-only messages keep plain string `content`, literal `<image>` in source text no longer blocks SFT export, and no extra newline is inserted before images. `roller export --format sft` and `--format xtuner` still upgrade legacy `<image>` + `images` runs on disk.
