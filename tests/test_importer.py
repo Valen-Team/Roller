@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -466,6 +467,451 @@ class ImporterTests(unittest.TestCase):
             sorted((row["tools_source"], row["system_prompt_source"]) for row in index),
             [("captured", "captured"), ("captured_merged", "captured")],
         )
+
+    def test_opencode_discovery_and_import_respects_xdg_data_home_and_skips_subagents(
+        self,
+    ) -> None:
+        from roller.importer import OPENCODE, default_roots
+
+        xdg = self.root / "xdg"
+        opencode_root = xdg / "opencode"
+        opencode_root.mkdir(parents=True)
+        old_xdg = os.environ.get("XDG_DATA_HOME")
+        os.environ["XDG_DATA_HOME"] = str(xdg)
+        try:
+            self.assertEqual(default_roots(OPENCODE), [opencode_root])
+        finally:
+            if old_xdg is None:
+                os.environ.pop("XDG_DATA_HOME", None)
+            else:
+                os.environ["XDG_DATA_HOME"] = old_xdg
+
+        main_session = opencode_root / "sessions" / "oc-1.jsonl"
+        _jsonl(
+            main_session,
+            [
+                {
+                    "type": "request",
+                    "native_session_id": "oc-1",
+                    "body": {
+                        "messages": [
+                            {"role": "system", "content": "You are OpenCode."}
+                        ],
+                        "tools": [],
+                    },
+                },
+                {
+                    "type": "session_export",
+                    "data": {
+                        "info": {
+                            "id": "oc-1",
+                            "title": "Fix bug",
+                            "directory": CWD,
+                            "time": {"created": 1762000000000},
+                        },
+                        "messages": [
+                            {
+                                "info": {
+                                    "id": "m1",
+                                    "sessionID": "oc-1",
+                                    "role": "user",
+                                    "time": {"created": 1762000000100},
+                                },
+                                "parts": [
+                                    {
+                                        "id": "p1",
+                                        "messageID": "m1",
+                                        "sessionID": "oc-1",
+                                        "type": "text",
+                                        "text": "Fix it",
+                                    }
+                                ],
+                            },
+                            {
+                                "info": {
+                                    "id": "m2",
+                                    "sessionID": "oc-1",
+                                    "role": "assistant",
+                                    "modelID": "claude-sonnet-4",
+                                    "time": {
+                                        "created": 1762000001000,
+                                        "completed": 1762000002000,
+                                    },
+                                    "tokens": {"input": 10, "output": 5, "total": 15},
+                                    "cost": 0.01,
+                                },
+                                "parts": [
+                                    {
+                                        "id": "p2",
+                                        "messageID": "m2",
+                                        "sessionID": "oc-1",
+                                        "type": "text",
+                                        "text": "Fixed.",
+                                    }
+                                ],
+                            },
+                        ],
+                    },
+                },
+            ],
+        )
+        sub_session = opencode_root / "sessions" / "oc-sub.jsonl"
+        _jsonl(
+            sub_session,
+            [
+                {
+                    "type": "session_export",
+                    "data": {
+                        "info": {
+                            "id": "oc-sub",
+                            "parentID": "oc-1",
+                            "directory": CWD,
+                            "time": {"created": 1762000000500},
+                        },
+                        "messages": [],
+                    },
+                }
+            ],
+        )
+
+        sessions, subagents = discover([opencode_root], harness=OPENCODE)
+        self.assertEqual([s.session_id for s in sessions], ["oc-1"])
+        self.assertEqual(subagents, 1)
+
+        summary = import_sessions(self.run, sessions, parallel=1)
+        self.assertEqual(summary.new, 1)
+        samples = self.samples()
+        self.assertIn("oc-1", samples)
+        _, info = samples["oc-1"]
+        self.assertEqual(info["harness"], OPENCODE)
+        self.assertEqual(info["model"], "claude-sonnet-4")
+        self.assertEqual(info["title"], "Fix bug")
+        self.assertEqual(info["trajectory"]["raw_schema"], "opencode-session-jsonl")
+
+    def test_opencode_sqlite_db_discovery_import_and_incremental_update(self) -> None:
+        from roller.importer import OPENCODE
+
+        opencode_root = self.sources / "opencode"
+        opencode_root.mkdir(parents=True)
+        db_path = opencode_root / "opencode.db"
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT);
+                CREATE TABLE session (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT,
+                    parent_id TEXT,
+                    directory TEXT,
+                    title TEXT,
+                    version TEXT,
+                    time_created INTEGER,
+                    time_updated INTEGER
+                );
+                CREATE TABLE message (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT,
+                    time_created INTEGER,
+                    time_updated INTEGER,
+                    data TEXT
+                );
+                CREATE TABLE part (
+                    id TEXT PRIMARY KEY,
+                    message_id TEXT,
+                    session_id TEXT,
+                    time_created INTEGER,
+                    time_updated INTEGER,
+                    data TEXT
+                );
+                """
+            )
+            conn.execute(
+                "INSERT INTO project (id, worktree) VALUES (?, ?)", ("proj-1", CWD)
+            )
+            conn.execute(
+                "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "db-1",
+                    "proj-1",
+                    None,
+                    CWD,
+                    "SQLite session",
+                    "1.0.0",
+                    1762000000000,
+                    1762000005000,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "db-2",
+                    "proj-1",
+                    None,
+                    CWD,
+                    "Second session",
+                    "1.0.0",
+                    1762000010000,
+                    1762000015000,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "db-sub",
+                    "proj-1",
+                    "db-1",
+                    CWD,
+                    "Subagent",
+                    "1.0.0",
+                    1762000002000,
+                    1762000003000,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
+                (
+                    "m1",
+                    "db-1",
+                    1762000000100,
+                    1762000000100,
+                    json.dumps({"role": "user", "time": {"created": 1762000000100}}),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
+                (
+                    "m2",
+                    "db-1",
+                    1762000001000,
+                    1762000002000,
+                    json.dumps(
+                        {
+                            "role": "assistant",
+                            "modelID": "claude-sonnet-4",
+                            "time": {
+                                "created": 1762000001000,
+                                "completed": 1762000002000,
+                            },
+                            "tokens": {"input": 20, "output": 10, "total": 30},
+                            "cost": 0.02,
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    "p1",
+                    "m1",
+                    "db-1",
+                    1762000000100,
+                    1762000000100,
+                    json.dumps({"type": "text", "text": "Read README.md"}),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    "p2",
+                    "m2",
+                    "db-1",
+                    1762000001100,
+                    1762000001500,
+                    json.dumps(
+                        {
+                            "type": "tool",
+                            "callID": "call-1",
+                            "tool": "read",
+                            "state": {
+                                "status": "completed",
+                                "input": {"filePath": "README.md"},
+                                "output": "# Demo",
+                                "time": {"end": 1762000001500},
+                            },
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    "p3",
+                    "m2",
+                    "db-1",
+                    1762000001600,
+                    1762000002000,
+                    json.dumps({"type": "text", "text": "Done."}),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
+                (
+                    "m3",
+                    "db-2",
+                    1762000010100,
+                    1762000010100,
+                    json.dumps({"role": "user", "time": {"created": 1762000010100}}),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
+                (
+                    "m4",
+                    "db-2",
+                    1762000011000,
+                    1762000012000,
+                    json.dumps(
+                        {
+                            "role": "assistant",
+                            "modelID": "claude-sonnet-4",
+                            "time": {
+                                "created": 1762000011000,
+                                "completed": 1762000012000,
+                            },
+                            "tokens": {"input": 5, "output": 3, "total": 8},
+                        }
+                    ),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    "p4",
+                    "m3",
+                    "db-2",
+                    1762000010100,
+                    1762000010100,
+                    json.dumps({"type": "text", "text": "Hi"}),
+                ),
+            )
+            conn.execute(
+                "INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    "p5",
+                    "m4",
+                    "db-2",
+                    1762000011100,
+                    1762000012000,
+                    json.dumps({"type": "text", "text": "Hello"}),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        sessions, subagents = discover([opencode_root], harness=OPENCODE)
+        self.assertEqual([s.session_id for s in sessions], ["db-1", "db-2"])
+        self.assertEqual(subagents, 1)
+
+        summary = import_sessions(self.run, sessions, parallel=1)
+        self.assertEqual(summary.new, 2)
+        samples = self.samples()
+        _, info1 = samples["db-1"]
+        self.assertEqual(info1["trajectory"]["system_prompt_source"], "missing")
+        self.assertEqual(info1["trajectory"]["tools_source"], "inferred")
+        self.assertEqual(samples["db-2"][1]["trajectory"]["tools_source"], "missing")
+
+        # Update only db-1 in opencode.db; db-2 must remain unchanged.
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                "UPDATE part SET data = ?, time_updated = ? WHERE id = ?",
+                (
+                    json.dumps({"type": "text", "text": "Updated answer."}),
+                    1762000020000,
+                    "p3",
+                ),
+            )
+            conn.execute(
+                "UPDATE session SET time_updated = ? WHERE id = ?",
+                (1762000020000, "db-1"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        sessions2, _ = discover([opencode_root], harness=OPENCODE)
+        summary2 = import_sessions(self.run, sessions2, parallel=1)
+        self.assertEqual(summary2.updated, 1)
+        self.assertEqual(summary2.unchanged, 1)
+
+    def test_opencode_legacy_storage_json_import(self) -> None:
+        from roller.importer import OPENCODE
+
+        storage = self.sources / "opencode" / "storage"
+        (storage / "session" / "proj-1").mkdir(parents=True)
+        (storage / "message" / "st-1").mkdir(parents=True)
+        (storage / "part" / "m1").mkdir(parents=True)
+        (storage / "part" / "m2").mkdir(parents=True)
+
+        (storage / "session" / "proj-1" / "st-1.json").write_text(
+            json.dumps(
+                {
+                    "id": "st-1",
+                    "directory": CWD,
+                    "title": "Legacy JSON",
+                    "time": {"created": 1762000000000, "updated": 1762000002000},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (storage / "message" / "st-1" / "m1.json").write_text(
+            json.dumps(
+                {
+                    "id": "m1",
+                    "sessionID": "st-1",
+                    "role": "user",
+                    "time": {"created": 1762000000100},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (storage / "message" / "st-1" / "m2.json").write_text(
+            json.dumps(
+                {
+                    "id": "m2",
+                    "sessionID": "st-1",
+                    "role": "assistant",
+                    "modelID": "claude-sonnet-4",
+                    "time": {"created": 1762000001000, "completed": 1762000002000},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (storage / "part" / "m1" / "p1.json").write_text(
+            json.dumps(
+                {
+                    "id": "p1",
+                    "messageID": "m1",
+                    "sessionID": "st-1",
+                    "type": "text",
+                    "text": "Ping",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (storage / "part" / "m2" / "p2.json").write_text(
+            json.dumps(
+                {
+                    "id": "p2",
+                    "messageID": "m2",
+                    "sessionID": "st-1",
+                    "type": "text",
+                    "text": "Pong",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        sessions, subagents = discover([self.sources / "opencode"], harness=OPENCODE)
+        self.assertEqual([s.session_id for s in sessions], ["st-1"])
+        self.assertEqual(subagents, 0)
+        summary = import_sessions(self.run, sessions, parallel=1)
+        self.assertEqual(summary.new, 1)
+        _, info = self.samples()["st-1"]
+        self.assertEqual(info["title"], "Legacy JSON")
+        self.assertEqual(info["trajectory"]["system_prompt_source"], "missing")
 
 
 if __name__ == "__main__":
