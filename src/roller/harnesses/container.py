@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from roller.artifacts import ArtifactCollectionResult, collect_output_directory
-from roller.harnesses.docker import DockerRuntime, warn_if_image_changed
+from roller.docker_runtime import DockerRuntime, warn_if_image_changed
 from roller.models import RunRequest, Task
 from roller.version import __version__
 

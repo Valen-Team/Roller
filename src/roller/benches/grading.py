@@ -20,10 +20,11 @@ from urllib.parse import urlsplit
 
 from roller.benches.base import BenchBinding, GradeSpec
 from roller.benches.report import brief_reason
+from roller.execution import WorkspaceBackend, workspace_backend
 from roller.harnesses.base import Harness, InteractiveHarness, InteractiveSession
-from roller.harnesses.container import PROXY_ENV_NAMES
 from roller.models import HarnessResult, RunRequest
-from roller.sandbox import Sandbox, route_judge_environment
+from roller.option_specs import GRADER_RETRY_MAX_SECONDS
+from roller.sandbox import Sandbox
 from roller.storage import atomic_write_json
 
 logger = logging.getLogger(__name__)
@@ -34,10 +35,6 @@ RUNNER_CONTAINER_PATH = f"{GRADER_CONTAINER_DIR}/_grade_runner.py"
 TRANSCRIPT_CONTAINER_PATH = f"{GRADER_CONTAINER_DIR}/transcript.jsonl"
 # Wait before the first grader retry; doubles before each further one.
 GRADER_RETRY_BACKOFF_SECONDS = 5.0
-# A grader that failed only after running this long is not run again: a judge
-# request error or a crash shows up early, and repeating a grader that used up
-# a long time limit would hold its container and grader slot that long again.
-GRADER_RETRY_MAX_SECONDS = 600.0
 
 # The grader is a plain function in the bench's own source. It is invoked with
 # the transcript and workspace the agent actually produced, which is why it has
@@ -174,35 +171,6 @@ def parse_grader_stdout(stdout: str) -> dict[str, Any] | None:
     return None
 
 
-class _GraderExecution:
-    def __init__(self, runtime: Any, container: str, sandbox: Sandbox | None):
-        self.runtime, self.container, self.sandbox = runtime, container, sandbox
-
-    def run(self, command, *, timeout, cwd=None, options=()):
-        if self.sandbox is None:
-            return self.runtime.exec(
-                self.container, command, workdir=cwd, options=options, timeout=timeout
-            )
-        env = {name: os.environ[name] for name in PROXY_ENV_NAMES if name in os.environ}
-        for option in options[1::2]:
-            name, sep, value = option.partition("=")
-            env[name] = value if sep else os.environ[name]
-        route_judge_environment(self.sandbox, env, timeout)
-        return self.sandbox.run(command, cwd=cwd, env=env, timeout=timeout)
-
-    def upload(self, source: Path, target: str, *, timeout, contents=False):
-        if self.sandbox is None:
-            argument = f"{source}/." if contents else str(source)
-            return self.runtime.copy_in(
-                argument, self.container, target, timeout=timeout
-            )
-        try:
-            self.sandbox.upload(source, target, contents=contents, timeout=timeout)
-        except Exception as exc:
-            return subprocess.CompletedProcess([], 1, "", str(exc))
-        return subprocess.CompletedProcess([], 0, "", "")
-
-
 class ContainerGrader:
     """Run a bench's grader inside a live sample container."""
 
@@ -266,7 +234,7 @@ class ContainerGrader:
     ) -> GradeOutcome:
         started = time.monotonic()
         workspace = self.spec.workspace_path or workspace_path
-        execution = _GraderExecution(runtime, container, sandbox)
+        execution = workspace_backend(runtime, container, sandbox)
         if self.spec.collector_files:
             return self._grade_in_collector(execution, workspace, started)
         prepare = execution.run(["mkdir", "-p", GRADER_CONTAINER_DIR], timeout=30)
@@ -326,7 +294,7 @@ class ContainerGrader:
         return self._outcome(result, time.monotonic() - started)
 
     def _grade_in_collector(
-        self, execution: _GraderExecution, workspace: str, started: float
+        self, execution: WorkspaceBackend, workspace: str, started: float
     ) -> GradeOutcome:
         """Copy ``collector_files`` out, then run the grader here on the copy."""
 
@@ -396,7 +364,7 @@ class ContainerGrader:
         return GradeOutcome(scores, elapsed)
 
     def _stage_files(
-        self, execution: _GraderExecution, workspace: str, task_id: str
+        self, execution: WorkspaceBackend, workspace: str, task_id: str
     ) -> str | None:
         """Copy the spec's ``stage`` sources into the container's workspace.
 
@@ -431,7 +399,7 @@ class ContainerGrader:
 
     @staticmethod
     def _stage_transcript(
-        execution: _GraderExecution,
+        execution: WorkspaceBackend,
         transcript_container_path: str | None,
         task_id: str,
     ) -> None:
@@ -526,7 +494,7 @@ def prepare_benchmark_workspace(
         f"echo 'benchmark workspace alias target already exists' >&2; exit 1; "
         f"else ln -s {shlex.quote(actual)} {shlex.quote(expected)}; fi"
     )
-    execution = _GraderExecution(runtime, container, getattr(session, "sandbox", None))
+    execution = workspace_backend(runtime, container, getattr(session, "sandbox", None))
     result = execution.run(["/bin/sh", "-c", script], timeout=30)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()[-500:]

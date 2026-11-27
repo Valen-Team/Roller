@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from roller import export_audit
-from roller.hf_dataset import Rules, _copy_file
+from roller.hf_redaction import Rules, _copy_file
 
 
 def test_tokens_are_redacted_without_current_environment(tmp_path: Path):

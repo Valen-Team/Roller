@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from roller.harness_registry import convert_native_trace, extract_native_usage
 from roller.harnesses.bridge import (
     BridgeHarness,
     BridgeSession,
@@ -13,7 +14,6 @@ from roller.harnesses.bridge import (
 from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
 from roller.models import RunRequest
 from roller.native_images import attached_images
-from roller.opencode_actf import convert_opencode_trace, extract_opencode_usage
 from roller.thinking import normalize_thinking, resolve_thinking
 
 OPENCODE_VERSION = "1.18.30"
@@ -222,12 +222,15 @@ class OpenCodeSession(BridgeSession):
         self.command(["rm", "-f", STATE + "/session.json"], "OpenCode session reset")
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:
-        return convert_opencode_trace(
-            trace, destination, keep_thinking=self.harness.config.keep_thinking
+        return convert_native_trace(
+            "opencode",
+            trace,
+            destination,
+            keep_thinking=self.harness.config.keep_thinking,
         )
 
     def extract_usage(self, trace: Path) -> dict[str, int | float]:
-        return extract_opencode_usage(trace)
+        return extract_native_usage("opencode", trace)
 
     def version_fields(self) -> dict[str, Any]:
         return {"opencode_version": self.version}
@@ -271,3 +274,63 @@ class OpenCodeHarness(BridgeHarness):
 
     name = "opencode"
     session_class = OpenCodeSession
+
+
+def _opencode_cli_options():
+    import argparse
+
+    from roller.option_specs import OptionSpec
+
+    return (
+        OptionSpec(
+            "--opencode-native-tools",
+            yaml_key="native_tools",
+            yaml_kind="switch",
+            action="store_true",
+            help="permit every tool of the native OpenCode registry instead of the fixed tool list",
+        ),
+        OptionSpec(
+            "--opencode-deny-tool",
+            yaml_key="deny_tools",
+            yaml_kind="repeat",
+            action="append",
+            default=(),
+            metavar="NAME",
+            help="deny a native OpenCode tool or permission under --opencode-native-tools; repeat as needed",
+        ),
+        OptionSpec(
+            "--opencode-max-steps",
+            yaml_key="max_steps",
+            type=int,
+            default=None,
+            help="maximum model steps per OpenCode user turn (default: 100 for SkillsBench, 12 otherwise)",
+        ),
+        OptionSpec(
+            "--opencode-context-length",
+            yaml_key="context_length",
+            type=int,
+            default=128000,
+            help="OpenCode model context window (default: 128000 tokens)",
+        ),
+        OptionSpec(
+            "--opencode-output-tokens",
+            yaml_key="output_tokens",
+            type=int,
+            default=None,
+            help=(
+                "OpenCode maximum output tokens "
+                "(default: 32768 for SkillsBench, 8192 otherwise)"
+            ),
+        ),
+        OptionSpec(
+            "--opencode-vision",
+            yaml_key="vision",
+            yaml_kind="bool",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="declare image input support to OpenCode (default: enabled)",
+        ),
+    )
+
+
+CLI_OPTIONS = _opencode_cli_options()

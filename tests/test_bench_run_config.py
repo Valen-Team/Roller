@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import contextlib
 import io
 import json
 import os
-import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +12,7 @@ from unittest.mock import patch
 
 import yaml
 
-from roller.benches import run_config
+from roller.benches import list_benches
 from roller.benches.run_config import (
     BENCH_RUN_SCHEMA,
     COLLECT_ONLY_FLAGS,
@@ -22,6 +20,8 @@ from roller.benches.run_config import (
     temporary_environment,
 )
 from roller.cli import _bench, _build_parser
+from roller.harnesses import HARNESS_CLI_OPTIONS
+from roller.option_specs import BENCH_STRUCTURED_FLAGS, EXECUTION_OPTIONS
 
 
 class BenchRunConfigTests(unittest.TestCase):
@@ -59,19 +59,14 @@ class BenchRunConfigTests(unittest.TestCase):
             for action in subparsers.choices["collect"]._actions
             if action.option_strings
         } - {"-h"} | {"--help"}
-        module = ast.parse(Path(run_config.__file__).read_text(encoding="utf-8"))
-        mapped = {
-            node.value
-            for statement in module.body
-            if not (
-                isinstance(statement, ast.Assign)
-                and statement.targets[0].id == "COLLECT_ONLY_FLAGS"
+        mapped = set(BENCH_STRUCTURED_FLAGS)
+        mapped.update(opt.flag for opt in EXECUTION_OPTIONS)
+        for options in HARNESS_CLI_OPTIONS.values():
+            mapped.update(opt.flag for opt in options if opt.yaml_key is not None)
+        for adapter in list_benches():
+            mapped.update(
+                opt.flag for opt in adapter.cli_options if opt.yaml_key is not None
             )
-            for node in ast.walk(statement)
-            if isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-            and re.fullmatch(r"--[a-z][a-z0-9-]*[a-z0-9]", node.value)
-        }
 
         self.assertEqual(collect - mapped - COLLECT_ONLY_FLAGS, set())
         self.assertEqual(mapped & COLLECT_ONLY_FLAGS, set())
@@ -81,40 +76,36 @@ class BenchRunConfigTests(unittest.TestCase):
         cases = {
             "openclaw": (
                 {"config_set": ["diagnostics.stuckSessionAbortMs=2700000", "a.b=1"]},
-                [
-                    "--openclaw-config-set",
-                    "diagnostics.stuckSessionAbortMs=2700000",
-                    "--openclaw-config-set",
-                    "a.b=1",
-                ],
+                {
+                    "openclaw_config_set": [
+                        ("diagnostics.stuckSessionAbortMs", "2700000"),
+                        ("a.b", "1"),
+                    ]
+                },
             ),
             "codex": (
                 {"config_set": ['model_verbosity="low"'], "image_detail": "high"},
-                [
-                    "--codex-config-set",
-                    'model_verbosity="low"',
-                    "--codex-image-detail",
-                    "high",
-                ],
+                {
+                    "codex_config_set": [("model_verbosity", '"low"')],
+                    "codex_image_detail": "high",
+                },
             ),
             "claude-code": (
                 {"capture_calls": True, "unique_tool_ids": True},
-                ["--claude-capture-calls", "--claude-unique-tool-ids"],
+                {"claude_capture_calls": True, "claude_unique_tool_ids": True},
             ),
-            "pi": ({"input_modalities": "text"}, ["--pi-input-modalities", "text"]),
-            "hermes": ({"toolsets": ["native"]}, ["--hermes-toolset", "native"]),
+            "pi": ({"input_modalities": "text"}, {"pi_input_modalities": "text"}),
+            "hermes": ({"toolsets": ["native"]}, {"hermes_toolset": ["native"]}),
             "opencode": (
                 {"native_tools": True, "deny_tools": ["webfetch"]},
-                ["--opencode-native-tools", "--opencode-deny-tool", "webfetch"],
+                {"opencode_native_tools": True, "opencode_deny_tool": ["webfetch"]},
             ),
             "deepseek": (
                 {"profile": "sdk", "permission_mode": "workspace-write"},
-                [
-                    "--deepseek-profile",
-                    "sdk",
-                    "--deepseek-permission-mode",
-                    "workspace-write",
-                ],
+                {
+                    "deepseek_profile": "sdk",
+                    "deepseek_permission_mode": "workspace-write",
+                },
             ),
         }
         for harness, (extra, expected) in cases.items():
@@ -142,18 +133,15 @@ class BenchRunConfigTests(unittest.TestCase):
                     },
                     temporary_root=root,
                 )
-                argv = list(plan.collect_argv)
-                joined = " ".join(argv)
-                self.assertIn(" ".join(expected), joined)
-                self.assertIn("--launch-interval 2.5", joined)
-                self.assertIn("--retries 2 --retry-backoff 30", joined)
-                self.assertIn("--capture-debug full", joined)
-                self.assertIn("--thinking-capabilities capabilities.json", joined)
-                self.assertIn("--capture-calls", argv)
-                parsed = _build_parser().parse_args(argv)
-                self.assertEqual(parsed.launch_interval, 2.5)
-                self.assertEqual(parsed.retry_backoff, 30.0)
-                self.assertTrue(parsed.capture_calls)
+                args = plan.collect_args
+                for attr, value in expected.items():
+                    self.assertEqual(getattr(args, attr), value)
+                self.assertEqual(args.launch_interval, 2.5)
+                self.assertEqual(args.retries, 2)
+                self.assertEqual(args.retry_backoff, 30.0)
+                self.assertEqual(args.capture_debug, "full")
+                self.assertEqual(args.thinking_capabilities, "capabilities.json")
+                self.assertTrue(args.capture_calls)
 
     def test_layers_config_and_maps_common_model_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -182,16 +170,14 @@ class BenchRunConfigTests(unittest.TestCase):
                 temporary_root=root,
             )
 
-        argv = list(plan.collect_argv)
-        self.assertEqual(argv[argv.index("--parallel") + 1], "8")
-        self.assertEqual(argv[argv.index("--grader-parallel") + 1], "2")
-        self.assertEqual(argv[argv.index("--api-base") + 1], "https://model.example/v1")
-        self.assertEqual(argv[argv.index("--api-key-env") + 1], "MODEL_API_KEY")
-        self.assertEqual(argv[argv.index("--thinking") + 1], "high")
-        self.assertEqual(
-            argv[argv.index("--bench-category") + 1], "03_Social_Interaction"
-        )
-        self.assertNotIn("secret-value", " ".join(argv))
+        args = plan.collect_args
+        self.assertEqual(args.parallel, 8)
+        self.assertEqual(args.grader_parallel, 2)
+        self.assertEqual(args.api_base, "https://model.example/v1")
+        self.assertEqual(args.api_key_env, "MODEL_API_KEY")
+        self.assertEqual(args.thinking, "high")
+        self.assertEqual(args.bench_category, ["03_Social_Interaction"])
+        self.assertNotIn("secret-value", repr(vars(args)))
         self.assertEqual(len(plan.provenance["sources"]), 2)
         effective = plan.provenance["effective"]
         self.assertEqual(effective["model"]["thinking"], "high")
@@ -222,8 +208,8 @@ class BenchRunConfigTests(unittest.TestCase):
                 },
                 temporary_root=root,
             )
-            argv = list(plan.collect_argv)
-            model_config = Path(argv[argv.index("--model-config") + 1])
+            args = plan.collect_args
+            model_config = Path(args.model_config)
             payload = json.loads(model_config.read_text(encoding="utf-8"))
 
             provider = payload["providers"]["example"]
@@ -231,7 +217,7 @@ class BenchRunConfigTests(unittest.TestCase):
             self.assertEqual(provider["apiKey"], "${MODEL_API_KEY}")
             self.assertEqual(provider["models"][0]["id"], "model")
             self.assertEqual(provider["models"][0]["maxTokens"], 32768)
-            self.assertIn("--no-cache-trace", argv)
+            self.assertFalse(args.cache_trace)
             self.assertNotIn("secret-value", model_config.read_text(encoding="utf-8"))
 
     def test_openclaw_provider_keeps_upstream_model_id_unchanged(self) -> None:
@@ -251,13 +237,11 @@ class BenchRunConfigTests(unittest.TestCase):
                 },
                 temporary_root=root,
             )
-            argv = list(plan.collect_argv)
-            model_config = Path(argv[argv.index("--model-config") + 1])
+            args = plan.collect_args
+            model_config = Path(args.model_config)
             payload = json.loads(model_config.read_text(encoding="utf-8"))
 
-            self.assertEqual(
-                argv[argv.index("--model") + 1], "roller/organization/model"
-            )
+            self.assertEqual(args.model, ["roller/organization/model"])
             self.assertEqual(
                 payload["providers"]["roller"]["models"][0]["id"],
                 "organization/model",
@@ -282,11 +266,11 @@ class BenchRunConfigTests(unittest.TestCase):
                 },
                 temporary_root=root,
             )
-            argv = list(plan.collect_argv)
-            model_config = Path(argv[argv.index("--model-config") + 1])
+            args = plan.collect_args
+            model_config = Path(args.model_config)
             payload = json.loads(model_config.read_text(encoding="utf-8"))
 
-            self.assertEqual(argv[argv.index("--model") + 1], "roller/plain-model")
+            self.assertEqual(args.model, ["roller/plain-model"])
             self.assertEqual(
                 payload["providers"]["roller"]["models"][0]["id"], "plain-model"
             )
@@ -308,10 +292,9 @@ class BenchRunConfigTests(unittest.TestCase):
                 },
                 temporary_root=root,
             )
-            argv = list(plan.collect_argv)
+            args = plan.collect_args
 
-            self.assertEqual(argv[argv.index("--model") + 1], "organization/model")
-            self.assertNotIn("roller/organization/model", argv)
+            self.assertEqual(args.model, ["organization/model"])
 
     def test_qwenclawbench_maps_benchmark_specific_runs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -333,8 +316,7 @@ class BenchRunConfigTests(unittest.TestCase):
                 temporary_root=root,
             )
 
-        argv = list(plan.collect_argv)
-        self.assertEqual(argv[argv.index("--bench-runs-per-task") + 1], "3")
+        self.assertEqual(plan.collect_args.bench_runs_per_task, 3)
         self.assertEqual(
             plan.provenance["effective"]["benchmark"]["extra"],
             {"runs_per_task": 3},
@@ -391,10 +373,10 @@ class BenchRunConfigTests(unittest.TestCase):
                 temporary_root=root,
             )
 
-        argv = list(plan.collect_argv)
-        self.assertEqual(argv[argv.index("--model-config") + 1], str(model_config))
-        self.assertNotIn("--api-base", argv)
-        self.assertNotIn("--api-key-env", argv)
+        args = plan.collect_args
+        self.assertEqual(args.model_config, str(model_config))
+        self.assertIsNone(args.api_base)
+        self.assertIsNone(args.api_key_env)
 
     def test_inline_extra_config_replaces_lists(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -433,11 +415,11 @@ class BenchRunConfigTests(unittest.TestCase):
                 temporary_root=root,
             )
 
-        argv = list(plan.collect_argv)
-        self.assertEqual(argv.count("--bench-task-id"), 1)
-        self.assertEqual(argv[argv.index("--bench-task-id") + 1], "only")
-        self.assertIn("--no-opencode-vision", argv)
-        self.assertEqual(argv[argv.index("--opencode-max-steps") + 1], "100")
+        args = plan.collect_args
+        self.assertEqual(args.bench_task_id, ["only"])
+        self.assertFalse(args.opencode_vision)
+        self.assertEqual(args.opencode_max_steps, 100)
+        self.assertEqual(args.opencode_output_tokens, 32768)
 
     def test_null_clears_harness_specific_settings_when_switching_harness(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -471,13 +453,10 @@ class BenchRunConfigTests(unittest.TestCase):
                 temporary_root=root,
             )
 
-        argv = list(plan.collect_argv)
-        self.assertEqual(argv[argv.index("--harness") + 1], "codex")
-        self.assertEqual(
-            argv[argv.index("--docker-image") + 1],
-            "wildclawbench-codex:latest",
-        )
-        self.assertNotIn("--openclaw-max-tokens", argv)
+        args = plan.collect_args
+        self.assertEqual(args.harness, "codex")
+        self.assertEqual(args.docker_image, "wildclawbench-codex:latest")
+        self.assertIsNone(args.openclaw_max_tokens)
         self.assertEqual(
             plan.provenance["effective"]["model"]["api_protocol"],
             "openai-responses",
@@ -499,8 +478,7 @@ class BenchRunConfigTests(unittest.TestCase):
                 temporary_root=root,
             )
 
-        argv = list(plan.collect_argv)
-        self.assertEqual(argv[argv.index("--thinking") + 1], "off")
+        self.assertEqual(plan.collect_args.thinking, "off")
         self.assertEqual(plan.provenance["effective"]["model"]["thinking"], "off")
 
     def test_environment_references_are_strict(self) -> None:
@@ -597,15 +575,10 @@ class BenchRunConfigTests(unittest.TestCase):
                         temporary_root=root,
                     )
 
-                    argv = list(plan.collect_argv)
-                    self.assertEqual(argv[argv.index("--harness") + 1], harness)
-                    self.assertEqual(
-                        argv[argv.index("--api-base") + 1],
-                        "https://model.example/v1",
-                    )
-                    self.assertEqual(
-                        argv[argv.index("--api-key-env") + 1], "MODEL_API_KEY"
-                    )
+                    args = plan.collect_args
+                    self.assertEqual(args.harness, harness)
+                    self.assertEqual(args.api_base, "https://model.example/v1")
+                    self.assertEqual(args.api_key_env, "MODEL_API_KEY")
                     self.assertEqual(
                         plan.provenance["effective"]["model"]["api_protocol"],
                         protocol,

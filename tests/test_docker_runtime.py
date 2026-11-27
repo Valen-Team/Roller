@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from roller.harnesses.docker import (
+from roller.docker_runtime import (
     DockerRuntime,
     remove_container,
     warn_if_image_changed,

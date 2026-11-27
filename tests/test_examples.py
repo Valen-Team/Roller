@@ -17,7 +17,7 @@ from roller.benches import BENCHES
 from roller.benches.run_config import load_bench_run_plan
 from roller.bundles import TaskBundleStore
 from roller.harness_registry import HARNESS_NAMES
-from roller.harnesses.openclaw import load_model_config
+from roller.harnesses.openclaw_config import load_model_config
 from roller.tasks import load_tasks
 
 
@@ -189,15 +189,13 @@ class ExampleFilesTests(unittest.TestCase):
                         environ=environment,
                         temporary_root=Path(temporary),
                     )
-                    argv = list(plan.collect_argv)
-                    self.assertEqual(argv[argv.index("--bench") + 1], benchmark)
-                    self.assertEqual(argv[argv.index("--harness") + 1], harness)
+                    args = plan.collect_args
+                    self.assertEqual(args.bench, benchmark)
+                    self.assertEqual(args.harness, harness)
                     if benchmark == "qwenclawbench":
-                        self.assertEqual(
-                            argv[argv.index("--bench-runs-per-task") + 1], "3"
-                        )
-                        self.assertEqual(argv[argv.index("--samples") + 1], "1")
-                    self.assertNotIn("model-secret", " ".join(argv))
+                        self.assertEqual(args.bench_runs_per_task, 3)
+                        self.assertEqual(args.samples, 1)
+                    self.assertNotIn("model-secret", repr(vars(args)))
                     self.assertNotIn("judge-secret", json.dumps(plan.provenance))
                     self.assertNotIn("search-secret", json.dumps(plan.provenance))
 

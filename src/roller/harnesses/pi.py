@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from roller.harness_registry import convert_native_trace, extract_native_usage
 from roller.harnesses.bridge import (
     BridgeHarness,
     BridgeSession,
@@ -13,7 +14,6 @@ from roller.harnesses.bridge import (
 )
 from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
 from roller.native_images import attached_images
-from roller.pi_actf import convert_pi_trace, extract_pi_usage
 from roller.thinking import normalize_thinking, resolve_thinking
 
 logger = logging.getLogger(__name__)
@@ -120,12 +120,15 @@ class PiSession(BridgeSession):
         }
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:
-        return convert_pi_trace(
-            trace, destination, keep_thinking=self.harness.config.keep_thinking
+        return convert_native_trace(
+            "pi",
+            trace,
+            destination,
+            keep_thinking=self.harness.config.keep_thinking,
         )
 
     def extract_usage(self, trace: Path) -> dict[str, int | float]:
-        return extract_pi_usage(trace)
+        return extract_native_usage("pi", trace)
 
     def version_fields(self) -> dict[str, Any]:
         return {"pi_version": self.version, "api_mode": "openai-completions"}
@@ -159,3 +162,41 @@ class PiHarness(BridgeHarness):
 
     name = "pi"
     session_class = PiSession
+
+
+def _pi_cli_options():
+    from roller.option_specs import OptionSpec
+
+    return (
+        OptionSpec(
+            "--pi-max-steps",
+            yaml_key="max_steps",
+            type=int,
+            default=12,
+            help="maximum model steps per Pi user turn (default: 12)",
+        ),
+        OptionSpec(
+            "--pi-input-modalities",
+            yaml_key="input_modalities",
+            choices=("text", "text,image"),
+            default="text,image",
+            help="Pi model input capabilities (default: text,image)",
+        ),
+        OptionSpec(
+            "--pi-context-length",
+            yaml_key="context_length",
+            type=int,
+            default=128000,
+            help="Pi model context window (default: 128000 tokens)",
+        ),
+        OptionSpec(
+            "--pi-output-tokens",
+            yaml_key="output_tokens",
+            type=int,
+            default=8192,
+            help="Pi maximum output tokens (default: 8192)",
+        ),
+    )
+
+
+CLI_OPTIONS = _pi_cli_options()

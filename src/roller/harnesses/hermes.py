@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from roller.harness_registry import convert_native_trace, extract_native_usage
 from roller.harnesses.bridge import (
     BridgeHarness,
     BridgeSession,
@@ -11,7 +12,6 @@ from roller.harnesses.bridge import (
     validate_bridge_config,
 )
 from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
-from roller.hermes_actf import convert_hermes_trace, extract_hermes_usage
 from roller.thinking import normalize_thinking, resolve_thinking
 from roller.usage import ZERO_USAGE
 
@@ -147,12 +147,15 @@ class HermesSession(BridgeSession):
         }
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:
-        return convert_hermes_trace(
-            trace, destination, keep_thinking=self.harness.config.keep_thinking
+        return convert_native_trace(
+            "hermes",
+            trace,
+            destination,
+            keep_thinking=self.harness.config.keep_thinking,
         )
 
     def extract_usage(self, trace: Path) -> dict[str, int | float]:
-        return extract_hermes_usage(trace)
+        return extract_native_usage("hermes", trace)
 
     def version_fields(self) -> dict[str, Any]:
         return {"hermes_revision": HERMES_REVISION, "hermes_version": self.version}
@@ -188,7 +191,7 @@ class HermesSession(BridgeSession):
             # Count child model responses once, independently of the root
             # ACTF, before compact capture removes raw logs.
             try:
-                child_usage = extract_hermes_usage(child_trace)
+                child_usage = extract_native_usage("hermes", child_trace)
             except Exception as exc:
                 self.capture.errors.append(
                     "Hermes child usage extraction failed: " + self.redact(str(exc))
@@ -204,3 +207,44 @@ class HermesHarness(BridgeHarness):
 
     name = "hermes"
     session_class = HermesSession
+
+
+def _hermes_cli_options():
+    import argparse
+
+    from roller.option_specs import OptionSpec
+
+    return (
+        OptionSpec(
+            "--hermes-toolset",
+            yaml_key="toolsets",
+            yaml_kind="repeat",
+            action="append",
+            metavar="NAME",
+            help="Hermes toolset to enable instead of terminal/file/vision; repeat to select several, or pass 'native' for native discovery",
+        ),
+        OptionSpec(
+            "--hermes-max-iterations",
+            yaml_key="max_iterations",
+            type=int,
+            default=12,
+            help="maximum model iterations per Hermes user turn (default: 12)",
+        ),
+        OptionSpec(
+            "--hermes-context-length",
+            yaml_key="context_length",
+            type=int,
+            help="override Hermes model context window (at least 64000 tokens)",
+        ),
+        OptionSpec(
+            "--hermes-vision",
+            yaml_key="vision",
+            yaml_kind="bool",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="enable Hermes vision_analyze and declare native image support (default: enabled)",
+        ),
+    )
+
+
+CLI_OPTIONS = _hermes_cli_options()

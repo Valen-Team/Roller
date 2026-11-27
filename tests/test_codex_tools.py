@@ -8,8 +8,8 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from roller.actf.codex import codex_events_to_actf, convert_codex_trace
 from roller.blobs import BLOBS_DIR, load_blobs
-from roller.codex_actf import codex_events_to_actf, convert_codex_trace
 from roller.codex_tools import read_tool_capture, tool_snapshot
 from roller.collector import Collector
 from roller.harnesses.codex import CodexConfig, CodexHarness

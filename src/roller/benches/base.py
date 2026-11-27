@@ -273,6 +273,7 @@ class BenchAdapter(ABC):
     description: str = ""
     variants: tuple[str, ...] = ()
     default_variant: str | None = None
+    cli_options: tuple[Any, ...] = ()
 
     @abstractmethod
     def load(

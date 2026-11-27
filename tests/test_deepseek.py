@@ -11,14 +11,14 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from roller.cli import _build_parser, _collect
-from roller.deepseek_actf import (
+from roller.actf.deepseek import (
     convert_deepseek_trace,
     deepseek_events_to_actf,
     extract_deepseek_usage,
 )
+from roller.cli import _build_parser, _collect
+from roller.docker_runtime import DockerRuntime
 from roller.harnesses.deepseek import RUNNER_PATH, DeepSeekConfig, DeepSeekHarness
-from roller.harnesses.docker import DockerRuntime
 from roller.models import RunRequest, Task
 from roller.sft import actf_to_sft
 
@@ -149,8 +149,8 @@ def locked_configuration(*flags):
         ]
         with (
             patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}),
-            patch("roller.cli._docker_preflight", return_value="sha256:test"),
-            patch("roller.cli.Collector") as collector,
+            patch("roller.cli.collect._docker_preflight", return_value="sha256:test"),
+            patch("roller.cli.collect.Collector") as collector,
             contextlib.redirect_stdout(io.StringIO()),
         ):
             collector.return_value.collect.return_value = []
@@ -672,7 +672,7 @@ class DeepSeekHarnessTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as tmp,
             patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}),
             patch(
-                "roller.harnesses.deepseek.convert_deepseek_trace",
+                "roller.actf.deepseek.convert_deepseek_trace",
                 side_effect=ValueError("invalid journal"),
             ),
         ):

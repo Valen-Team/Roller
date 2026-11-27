@@ -25,7 +25,7 @@ from roller.benches.swebench_pro import (
     ensure_harness_image,
 )
 from roller.cli import main
-from roller.harnesses.docker import DockerRuntime
+from roller.docker_runtime import DockerRuntime
 from roller.harnesses.hermes import HermesConfig, HermesHarness
 from roller.harnesses.openclaw import OpenClawConfig, OpenClawHarness
 from roller.models import HarnessResult, RunRequest, Task

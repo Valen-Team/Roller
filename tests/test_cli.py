@@ -12,14 +12,9 @@ from unittest.mock import MagicMock, patch
 from test_gateway_ports import isolate_gateway_ports
 
 from roller.bundles import TaskBundleStore
-from roller.cli import (
-    _build_parser,
-    _collect,
-    _docker_preflight,
-    _init,
-    _jsonl_equivalent,
-    _validate_thinking_requests,
-)
+from roller.cli import _build_parser, _collect, _init
+from roller.cli.collect import _jsonl_equivalent
+from roller.cli.preflight import _docker_preflight, _validate_thinking_requests
 from roller.harnesses.codex import codex_effort
 from roller.models import RunRequest, Task, UserSimulatorSpec
 from roller.tasks import load_tasks
@@ -436,7 +431,7 @@ def grade(transcript, workspace_path):
             with (
                 contextlib.redirect_stdout(output),
                 patch(
-                    "roller.cli.tempfile.TemporaryDirectory",
+                    "roller.cli.collect.tempfile.TemporaryDirectory",
                     side_effect=AssertionError("dry-run must not copy inputs"),
                 ),
             ):
@@ -738,8 +733,8 @@ def grade(transcript, workspace_path):
         self.assertEqual(payload["harness"], "codex")
         self.assertEqual(payload["plan"][0]["harness"], "codex")
 
-    @patch("roller.cli.subprocess.run")
-    @patch("roller.cli.shutil.which", return_value="/usr/bin/docker")
+    @patch("roller.cli.preflight.subprocess.run")
+    @patch("roller.cli.preflight.shutil.which", return_value="/usr/bin/docker")
     def test_docker_preflight_returns_resolved_image_id(self, _which, run) -> None:
         run.side_effect = [
             subprocess.CompletedProcess([], 0, "27.5.1\n", ""),
@@ -750,8 +745,8 @@ def grade(transcript, workspace_path):
 
         self.assertEqual(digest, "sha256:image-id")
 
-    @patch("roller.cli.subprocess.run")
-    @patch("roller.cli.shutil.which", return_value="/usr/bin/docker")
+    @patch("roller.cli.preflight.subprocess.run")
+    @patch("roller.cli.preflight.shutil.which", return_value="/usr/bin/docker")
     def test_docker_preflight_requires_a_local_image(self, _which, run) -> None:
         run.side_effect = [
             subprocess.CompletedProcess([], 0, "27.5.1\n", ""),
@@ -774,10 +769,10 @@ class LaunchIntervalCliTests(unittest.TestCase):
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
         patches.enter_context(
-            patch("roller.cli._docker_preflight", return_value="image-id")
+            patch("roller.cli.collect._docker_preflight", return_value="image-id")
         )
         patches.enter_context(
-            patch("roller.cli.Collector", side_effect=self._collector)
+            patch("roller.cli.collect.Collector", side_effect=self._collector)
         )
 
     def _collector(self, config, harness_factory):
@@ -854,10 +849,10 @@ class RetryBackoffCliTests(unittest.TestCase):
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
         patches.enter_context(
-            patch("roller.cli._docker_preflight", return_value="image-id")
+            patch("roller.cli.collect._docker_preflight", return_value="image-id")
         )
         patches.enter_context(
-            patch("roller.cli.Collector", side_effect=self._collector)
+            patch("roller.cli.collect.Collector", side_effect=self._collector)
         )
 
     def _collector(self, config, harness_factory):

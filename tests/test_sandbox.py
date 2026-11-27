@@ -76,9 +76,9 @@ def test_remote_collect_is_docker_free_and_records_environment_version(
     def unexpected(*args, **kwargs):
         pytest.fail(f"unexpected preflight: {args}, {kwargs}")
 
-    monkeypatch.setattr("roller.cli._docker_preflight", unexpected)
-    monkeypatch.setattr("roller.cli.prepare_task_images", unexpected)
-    monkeypatch.setattr("roller.cli.load_sandbox_provider", unexpected)
+    monkeypatch.setattr("roller.cli.collect._docker_preflight", unexpected)
+    monkeypatch.setattr("roller.cli.collect.prepare_task_images", unexpected)
+    monkeypatch.setattr("roller.cli.collect.load_sandbox_provider", unexpected)
     parser = _build_parser()
     assert _collect(parser.parse_args([*argv, "--dry-run"])) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -87,7 +87,9 @@ def test_remote_collect_is_docker_free_and_records_environment_version(
     assert payload["docker_image"] is None
 
     provider = FailingProvider()
-    monkeypatch.setattr("roller.cli.load_sandbox_provider", lambda name: provider)
+    monkeypatch.setattr(
+        "roller.cli.collect.load_sandbox_provider", lambda name: provider
+    )
     assert _collect(parser.parse_args(argv)) == 1
     assert provider.removed == ["owned-instance"]
     configuration = json.loads((output / "remote" / "info.json").read_text())[

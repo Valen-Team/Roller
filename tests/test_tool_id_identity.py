@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.request import ProxyHandler, Request, build_opener
 
-from roller.claude_code_actf import claude_code_events_to_actf
+from roller.actf.claude_code import claude_code_events_to_actf
 from roller.collector import Collector
 from roller.harnesses.claude_code import (
     TOOL_ID_MAPPINGS_NAME,

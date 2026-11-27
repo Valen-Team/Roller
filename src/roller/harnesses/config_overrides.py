@@ -8,10 +8,11 @@ would edit them, both behind the matching Roller flag's back.
 
 from __future__ import annotations
 
+import argparse
 import re
 from collections.abc import Iterable, Mapping
 
-from roller.wire_trace import redact_sensitive_values
+from roller.redaction import redact_sensitive_values
 
 ConfigAssignment = tuple[str, str]
 
@@ -28,6 +29,13 @@ def parse_config_assignment(text: str) -> ConfigAssignment:
         raise ValueError(f"expected KEY=VALUE, got {text!r}")
     config_path(key)
     return key, value
+
+
+def parse_config_assignment_arg(text: str) -> ConfigAssignment:
+    try:
+        return parse_config_assignment(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def config_path(key: str) -> tuple[str, ...]:

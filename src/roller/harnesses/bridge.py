@@ -23,9 +23,19 @@ from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
-from roller.artifacts import collect_output_directory
 from roller.blobs import BLOBS_DIR
 from roller.capture_runtime import CaptureRuntime
+from roller.docker_runtime import (
+    DockerRuntime,
+    remove_container,
+    warn_if_image_changed,
+)
+from roller.execution import (
+    DockerWorkspace,
+    SandboxWorkspace,
+    WorkspaceBackend,
+    stage_sandbox_inputs,
+)
 from roller.harnesses.base import InteractiveHarness, InteractiveSession, TurnResult
 from roller.harnesses.container import (
     CONTEXT_CONTAINER_PATH,
@@ -40,25 +50,14 @@ from roller.harnesses.container import (
     host_environment,
     output_collection_metadata,
 )
-from roller.harnesses.docker import (
-    DockerRuntime,
-    remove_container,
-    warn_if_image_changed,
-)
 from roller.models import HarnessResult, RunRequest
-from roller.redaction import REDACTED, redact_file_literals
-from roller.sandbox import (
-    Sandbox,
-    SandboxProcess,
-    SandboxRun,
-    route_judge_environment,
-    route_sandbox_http,
-)
+from roller.redaction import REDACTED, redact_file_literals, redact_jsonl_file
+from roller.sandbox import Sandbox, SandboxProcess, SandboxRun
 from roller.storage import atomic_write_json
 from roller.thinking import resolve_thinking
 from roller.token_ids import TOKEN_IDS_FILE
 from roller.usage import ZERO_USAGE
-from roller.wire_trace import WireTraceProxy, redact_jsonl_file
+from roller.wire_trace import WireTraceProxy
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +192,7 @@ class BridgeSession(InteractiveSession):
             harness.config, "sandbox_run", None
         )
         self.sandbox: Sandbox | None = None
+        self.backend: WorkspaceBackend | None = None
         self.remote_proxy: SandboxProcess | None = None
         self.remote_native: SandboxProcess | None = None
         self.remote_wire_dir = f"{self.state_dir}/wire"
@@ -318,7 +318,8 @@ class BridgeSession(InteractiveSession):
                 description,
                 timeout=timeout,
             )
-        result = self.sandbox.run(
+        assert self.backend is not None
+        result = self.backend.run(
             argv, cwd=cwd, env=self.environment, timeout=min(timeout, self.remaining())
         )
         if result.returncode:
@@ -341,39 +342,30 @@ class BridgeSession(InteractiveSession):
             self.container, self.request.timeout_seconds + 900, self.remaining()
         )
         self.sandbox = box
+        self.backend = SandboxWorkspace(
+            box, name=self.container, sandbox_run=self.sandbox_run
+        )
         self.container_started = True
         if box.version != self.sandbox_run.target.version:
             raise RuntimeError("sandbox environment version changed since preflight")
         timeout = self.request.timeout_seconds
-        route_judge_environment(box, self.environment, timeout)
+        self.backend.route_judge_env(self.environment, timeout)
         if self.agent_in_container:
             model_key = self.environment[self.api_key_name]
-            api_base, self.environment[self.api_key_name] = route_sandbox_http(
-                box, api_base, model_key, timeout
+            api_base, self.environment[self.api_key_name] = self.backend.route_http(
+                api_base, model_key, timeout
             )
         self.command(
             ["mkdir", "-p", workspace, self.state_dir, self.home, "/roller/task"],
             "sandbox workspace setup",
         )
-        task, bundle = self.request.task, self.request.bundle
-        if bundle:
-            if bundle.legacy_workspace or task.input_mode == "copy":
-                box.upload(
-                    bundle.inputs_root,
-                    workspace,
-                    contents=True,
-                    timeout=self.remaining(),
-                )
-                self.command(
-                    ["chmod", "-R", "u+w", workspace], "sandbox workspace permissions"
-                )
-            box.upload(
-                bundle.context_root, workspace, contents=True, timeout=self.remaining()
-            )
-        elif task.workspace:
-            box.upload(
-                task.workspace, workspace, contents=True, timeout=self.remaining()
-            )
+        stage_sandbox_inputs(
+            box,
+            self.request,
+            workspace,
+            upload_timeout=self.remaining(),
+            run_checked=self.command,
+        )
         if not self.agent_in_container or (
             self.harness.config.wire_trace_mode != "full" and self.capture is None
         ):
@@ -477,6 +469,7 @@ class BridgeSession(InteractiveSession):
             ]
             # A timed-out Docker client may already have created the container.
             self.container_started = True
+            self.backend = DockerWorkspace(self.harness.runtime, self.container)
             self.checked(args, f"{self.label} container startup")
         workspace = shlex.quote(config.workspace_container_path)
         output = shlex.quote(f"{config.workspace_container_path}/{task.output_dir}")
@@ -546,30 +539,22 @@ class BridgeSession(InteractiveSession):
             remote_config = self.state_dir + "/turn.json"
             self.upload(config_path, remote_config, f"{self.label} turn configuration")
             argv = [self.python, self.runner, "--config", remote_config]
-            if self.sandbox is None:
-                process = self.harness.runtime.exec_logged(
-                    self.container,
-                    argv,
-                    log_path,
-                    workdir=config.workspace_container_path,
-                    append=True,
-                )
-            else:
+            assert self.backend is not None
+            if self.sandbox is not None:
                 self._start_remote_native(remote_config)
-                process = self.sandbox.spawn(
-                    argv,
-                    cwd=config.workspace_container_path,
-                    env=self.environment,
-                    log_path=log_path,
-                )
+            process = self.backend.spawn(
+                argv,
+                cwd=config.workspace_container_path,
+                env=self.environment,
+                log_path=log_path,
+                append=True,
+            )
             try:
                 return_code = process.wait(
                     timeout=max(0.001, timeout - (time.monotonic() - started))
                 )
             except subprocess.TimeoutExpired:
                 process.kill()
-                if self.sandbox is None:
-                    process.wait(timeout=10)
                 self._stop_turn()
                 raise TimeoutError(f"{self.label} turn timed out") from None
             response = self.command(
@@ -599,8 +584,8 @@ class BridgeSession(InteractiveSession):
             )
         finally:
             config_path.unlink(missing_ok=True)
-            if self.sandbox is None:
-                self.harness.runtime.close_log(process)
+            if process is not None:
+                process.close_log()
             if log_path.exists():
                 self.redact_file(log_path, errors="replace")
 
@@ -718,17 +703,14 @@ class BridgeSession(InteractiveSession):
             box.download(source, self.output_dir / TOKEN_IDS_FILE, timeout=120)
 
     def _collect_remote_outputs(self):
-        assert self.sandbox is not None
+        assert self.backend is not None
         workspace = self.harness.config.workspace_container_path
-        with tempfile.TemporaryDirectory(dir=self.output_dir) as temporary:
-            stage = Path(temporary)
-            self.sandbox.download(
-                f"{workspace}/{self.request.task.output_dir}",
-                stage,
-                contents=True,
-                timeout=120,
-            )
-            return collect_output_directory(stage, self.output_dir), None
+        return self.backend.collect_outputs(
+            f"{workspace}/{self.request.task.output_dir}",
+            self.output_dir,
+            timeout=120,
+            catch_errors=False,
+        )
 
     def finish(self, status: str, error: str | None = None) -> HarnessResult:
         if self._result is not None:

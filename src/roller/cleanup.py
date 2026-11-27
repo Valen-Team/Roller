@@ -10,7 +10,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from roller.harnesses.docker import (
+from roller.docker_runtime import (
     HOST,
     HOST_LABEL,
     PID_LABEL,

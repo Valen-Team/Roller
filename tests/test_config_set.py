@@ -18,7 +18,7 @@ from roller.harnesses.config_overrides import (
     validate_config_assignments,
 )
 from roller.models import HarnessResult
-from roller.wire_trace import REDACTED_VALUE
+from roller.redaction import REDACTED_VALUE
 
 
 class ConfigAssignmentTests(unittest.TestCase):
@@ -112,12 +112,12 @@ class CliConfigSetTests(unittest.TestCase):
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
         patches.enter_context(
-            patch("roller.cli._docker_preflight", return_value="test-image-id")
+            patch("roller.cli.collect._docker_preflight", return_value="test-image-id")
         )
         for constructor in ("OpenClawHarness", "CodexHarness", "ClaudeCodeHarness"):
             patches.enter_context(
                 patch(
-                    f"roller.cli.{constructor}",
+                    f"roller.cli.collect.{constructor}",
                     side_effect=lambda config, slot: self._harness(config, slot),
                 )
             )

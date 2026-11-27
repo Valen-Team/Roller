@@ -9,7 +9,7 @@ from typing import Any
 
 from roller.openclaw_delivery import OpenClawDeliveryTracker
 from roller.openclaw_usage import OpenClawUsage
-from roller.wire_trace import extract_wire_image_requests, wire_text_digest
+from roller.wire_transforms import extract_wire_image_requests, wire_text_digest
 
 OPENCLAW_ANNOUNCEMENT_SFT_REASON = "OpenClaw announcement input lacks native response binding; use captured per-call contexts"
 

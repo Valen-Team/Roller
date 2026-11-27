@@ -10,7 +10,7 @@ from collections.abc import Iterable, Mapping
 from functools import cache
 from pathlib import Path
 
-from roller.harnesses.docker import DockerRuntime
+from roller.docker_runtime import DockerRuntime
 from roller.models import ContainerImageBuild, RunRequest
 
 _OPENCODE_OVERLAY = """\

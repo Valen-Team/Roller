@@ -13,8 +13,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from roller.harness_registry import HARNESS_NAMES
 from roller.models import RunRequest
+from roller.redaction import redact_sensitive_values
 from roller.storage import atomic_write_json
-from roller.wire_trace import redact_sensitive_values
 
 logger = logging.getLogger(__name__)
 RUN_LOCK_SCHEMA = "roller.run-lock/v1"

@@ -186,10 +186,10 @@ class CliGatewayPortTests(unittest.TestCase):
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
         patches.enter_context(
-            patch("roller.cli._docker_preflight", return_value="image-id")
+            patch("roller.cli.collect._docker_preflight", return_value="image-id")
         )
         patches.enter_context(
-            patch("roller.cli.OpenClawHarness", side_effect=self._harness)
+            patch("roller.cli.collect.OpenClawHarness", side_effect=self._harness)
         )
 
     def _harness(self, config, slot):
@@ -255,7 +255,7 @@ class CliGatewayPortTests(unittest.TestCase):
             + "\n"
         )
         with patch(
-            "roller.cli.reserve_gateway_ports", wraps=reserve_gateway_ports
+            "roller.cli.collect.reserve_gateway_ports", wraps=reserve_gateway_ports
         ) as reserve:
             self.invoke("--parallel", "2")
         # Slots 0-1 for the agents, 2-3 for their OpenClaw simulators.

@@ -31,7 +31,7 @@ from roller.benches.qwenclaw import (
 )
 from roller.benches.transcripts import grader_messages
 from roller.cli import _bench, _bench_report, _build_parser
-from roller.harnesses.docker import DockerRuntime
+from roller.docker_runtime import DockerRuntime
 from roller.harnesses.hermes import HermesConfig, HermesHarness
 
 

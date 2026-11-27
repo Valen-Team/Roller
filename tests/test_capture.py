@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from roller.actf.claude_code import claude_code_events_to_actf
 from roller.capture import (
     CallRecorder,
     apply_capture_retention,
@@ -16,7 +17,6 @@ from roller.capture import (
     validate_capture,
 )
 from roller.claude_capture import finalize_claude_capture
-from roller.claude_code_actf import claude_code_events_to_actf
 from roller.collector import CollectionConfig, Collector
 from roller.harnesses.base import Harness
 from roller.model_protocols import anthropic_response

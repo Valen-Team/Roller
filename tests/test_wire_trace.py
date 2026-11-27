@@ -15,17 +15,18 @@ from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
 from roller.capture import CallRecorder, read_jsonl
-from roller.wire_trace import (
-    ERROR_INSPECTION_LIMIT,
+from roller.redaction import (
     REDACTED_VALUE,
-    WireTraceProxy,
-    _ProxyHandler,
+    redact_jsonl_file,
+    redact_sensitive_values,
+)
+from roller.wire_trace import WireTraceProxy, _ProxyHandler
+from roller.wire_transforms import (
+    ERROR_INSPECTION_LIMIT,
     _rewrite_event,
     extract_wire_image_requests,
     extract_wire_tools,
     normalize_chat_completion_reasoning_response,
-    redact_jsonl_file,
-    redact_sensitive_values,
     strip_thinking_from_body,
 )
 
