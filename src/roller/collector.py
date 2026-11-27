@@ -6,47 +6,55 @@ import json
 import logging
 import math
 import queue
-import re
 import shutil
 import signal
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from roller.benches.report import brief_reason, grading_failure
 from roller.blobs import BLOBS_DIR, store_blobs
-from roller.capture import (
-    read_jsonl,
-    recover_capture_retention,
-    validate_capture,
-)
 from roller.cleanup import remove_own_containers
 from roller.compaction_sft import (
     SFT_SEGMENTS_DIR,
     export_compaction_segments,
     has_main_compaction,
 )
+from roller.docker_runtime import begin_collection
 from roller.harness_registry import allows_raw_only_actf
 from roller.harnesses.base import Harness
-from roller.harnesses.docker import begin_collection
-from roller.integrity import (
-    has_legacy_claude_sidechain,
+from roller.integrity import validate_resumable_sample
+from roller.models import HarnessResult, RunRequest
+from roller.run_outputs import (
+    sample_dir_from_result,
+    usage_summary,
+    write_run_dataset,
+    write_run_info,
+)
+from roller.sample_lifecycle import (
+    TRAINING_FILES,
+    _clear_sft_segments,
+    _duration,
+    _now,
+    _remove_path,
+    _sample_directory,
+    check_retired_cot_samples,
+    error_line,
+    failure_groups,
+)
+from roller.sample_metadata import (
     keeps_thinking,
     trajectory_conversion_unavailable,
-    validate_resumable_sample,
 )
-from roller.models import HarnessResult, RunRequest
 from roller.sandbox import SandboxRun
 from roller.sft import SFTConversionError, write_sft
-from roller.sft_dataset import write_sft_dataset
-from roller.storage import atomic_write_json, safe_component, write_jsonl
+from roller.storage import atomic_write_json
 from roller.token_dataset import capture_participants
-from roller.trajectory_audit import record_training_audits, training_summary
+from roller.trajectory_audit import record_training_audits
 
 logger = logging.getLogger(__name__)
 # New factories may inspect the request to select a task-level harness.  The
@@ -56,139 +64,6 @@ RUN_CHECKPOINT_RESULT_INTERVAL = 25
 RUN_CHECKPOINT_TIME_INTERVAL_SECONDS = 30.0
 # Silence after which a run reports the rollouts it is still waiting for.
 HEARTBEAT_SECONDS = 60.0
-
-
-# What --training-files-only keeps of a finished sample. The images of its SFT
-# records go to the run's ``blobs/``, shared by every sample of the run.
-TRAINING_FILES = {
-    "info.json",
-    "score.json",
-    "trace_SFT.json",
-    SFT_SEGMENTS_DIR,
-    "token_ids.jsonl",
-}
-
-
-def _clear_sft_segments(sample_dir: Path) -> None:
-    path = sample_dir / SFT_SEGMENTS_DIR
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path)
-    else:
-        path.unlink(missing_ok=True)
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def error_line(error: object, limit: int = 300) -> str:
-    """The first line of an error, short enough for one log line."""
-
-    text = str(error or "").strip()
-    line = text.splitlines()[0].strip() if text else "no error message"
-    return line if len(line) <= limit else line[: limit - 3] + "..."
-
-
-def failure_groups(
-    results: list[dict[str, Any]], limit: int = 5
-) -> list[tuple[int, str, str]]:
-    """Failed results by reason, most frequent first: (count, reason, example task)."""
-
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for result in results:
-        if result.get("status") in {"error", "timeout"}:
-            # Ids, ports and counts differ between rollouts that fail alike.
-            key = re.sub(r"[0-9a-f]{8,}|\d+", "#", error_line(result.get("error")))
-            groups.setdefault(key, []).append(result)
-    return [
-        (len(group), error_line(group[0].get("error")), str(group[0].get("task_id")))
-        for group in sorted(groups.values(), key=len, reverse=True)[:limit]
-    ]
-
-
-def _duration(seconds: float) -> str:
-    minutes, seconds = divmod(int(seconds), 60)
-    if not minutes:
-        return f"{seconds}s"
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}h{minutes:02d}m" if hours else f"{minutes}m{seconds:02d}s"
-
-
-def _remove_path(path: Path) -> None:
-    # Never follow a symlink out of the sample directory.
-    if path.is_dir() and not path.is_symlink():
-        shutil.rmtree(path)
-    else:
-        path.unlink(missing_ok=True)
-
-
-def _sample_directory(run_dir: Path, request: RunRequest) -> Path:
-    model_dir = safe_component(request.display_model)
-    task_dir = f"{request.task.source_index:08d}_{safe_component(request.task.id)}"
-    if request.sample_count > 1:
-        task_dir += f"__sample_{request.sample_index + 1:03d}"
-    return run_dir / "samples" / model_dir / task_dir
-
-
-def check_retired_cot_samples(run_dir: Path, requests: list[RunRequest]) -> None:
-    """Recover capture publications and reject incompatible old samples before collection."""
-
-    for request in requests:
-        sample_dir = _sample_directory(run_dir, request)
-        for base in (sample_dir, sample_dir / "user_simulator"):
-            info_path = base / "info.json"
-            capture_root = base / "capture"
-            if capture_root.is_dir():
-                interrupted = {
-                    match.group(1)
-                    for entry in capture_root.iterdir()
-                    if (
-                        match := re.fullmatch(
-                            r"\.(attempt-\d+)\.retention-(?:stage|backup)", entry.name
-                        )
-                    )
-                    is not None
-                }
-                for attempt in interrupted:
-                    recover_capture_retention(
-                        capture_root / attempt, prefer_raw=not info_path.is_file()
-                    )
-                if interrupted and not info_path.is_file():
-                    raise ValueError(
-                        f"{base}: capture retention was interrupted; a valid capture attempt was recovered, "
-                        "but the sample has no finalized info.json. Resume stopped before rerunning the model."
-                    )
-            try:
-                info = json.loads(info_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            if (
-                isinstance(info, dict)
-                and info.get("harness") == "claude-code"
-                and info.get("status") == "ok"
-            ):
-                actf_path = base / "trace_ACTF.json"
-                try:
-                    actf = json.loads(actf_path.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    actf = None
-                if isinstance(actf, dict) and has_legacy_claude_sidechain(actf):
-                    raise ValueError(
-                        f"{actf_path}: legacy Claude Code sidechain steps are mixed into root ACTF/SFT; "
-                        "resume stopped before changing the run or calling the model. "
-                        "Reproject the existing raw trace offline or use a new run directory."
-                    )
-            runtime = info.get("runtime") if isinstance(info, dict) else None
-            if not isinstance(runtime, dict):
-                continue
-            for key in ("external_thinking", "signature_recovery"):
-                value = runtime.get(key)
-                mode = value.get("mode") if isinstance(value, dict) else value
-                if mode in ("external", "external_always", "fill", "prefer"):
-                    raise ValueError(
-                        f"{info_path}: {key}={mode} is retired; use a new run "
-                        "directory. Existing trajectory files were not changed."
-                    )
 
 
 @dataclass(frozen=True)
@@ -756,38 +631,10 @@ class Collector:
 
     @staticmethod
     def _usage_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
-        totals: dict[str, Any] = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cache_read_tokens": 0,
-            "cache_write_tokens": 0,
-            "total_tokens": 0,
-            "cost_usd": 0.0,
-            "request_count": 0,
-        }
-        for result in results:
-            usage = result.get("usage")
-            if not isinstance(usage, dict):
-                continue
-            for key in totals:
-                value = usage.get(key, 0)
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    totals[key] += value
-        totals["cost_usd"] = round(float(totals["cost_usd"]), 6)
-        return totals
+        return usage_summary(results)
 
     def _sample_dir_from_result(self, result: dict[str, Any]) -> Path:
-        model = safe_component(
-            str(result.get("model_label", result.get("model", "unknown")))
-        )
-        source_index = int(result.get("source_index", result.get("request_index", 0)))
-        task = safe_component(str(result.get("task_id", "unknown")))
-        task_dir = f"{source_index:08d}_{task}"
-        sample_count = int(result.get("sample_count", 1))
-        if sample_count > 1:
-            sample_index = int(result.get("sample_index", 0))
-            task_dir += f"__sample_{sample_index + 1:03d}"
-        return self.run_dir / "samples" / model / task_dir
+        return sample_dir_from_result(self.run_dir, result)
 
     def _write_run_info(
         self,
@@ -796,92 +643,19 @@ class Collector:
         total_requests: int,
         state: str,
     ) -> None:
-        info_path = self.run_dir / "info.json"
-        try:
-            info = json.loads(info_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            info = {"schema_version": "roller.run/v1"}
-        summary = {
-            "total": total_requests,
-            "processed": len(results),
-            "pending": max(0, total_requests - len(results)),
-            "ok": sum(result.get("status") == "ok" for result in results),
-            "error": sum(result.get("status") == "error" for result in results),
-            "timeout": sum(result.get("status") == "timeout" for result in results),
-            "skipped": sum(result.get("status") == "skipped" for result in results),
-            "usage": self._usage_summary(results),
-            "training": training_summary(results),
-        }
-        summary["completed"] = summary["ok"] + summary["skipped"]
-        summary["failed"] = summary["error"] + summary["timeout"]
-        info.update(
-            {
-                "state": state,
-                "summary": summary,
-                "samples": [
-                    {
-                        "request_index": result.get("request_index"),
-                        "sample_index": result.get("sample_index", 0),
-                        "sample_count": result.get("sample_count", 1),
-                        "task_id": result.get("task_id"),
-                        "model": result.get("model"),
-                        "model_label": result.get("model_label", result.get("model")),
-                        "status": result.get("status"),
-                        "error": result.get("error"),
-                        "path": self._sample_dir_from_result(result)
-                        .relative_to(self.run_dir)
-                        .as_posix(),
-                        "usage": result.get("usage", {}),
-                    }
-                    for result in results
-                ],
-                "updated_at": _now(),
-            }
+        write_run_info(
+            self.run_dir,
+            results,
+            total_requests=total_requests,
+            state=state,
         )
-        if state == "finished":
-            info["finished_at"] = info["updated_at"]
-        else:
-            info.pop("finished_at", None)
-        atomic_write_json(info_path, info)
 
     def _write_sft_dataset(self, results: list[dict[str, Any]]) -> None:
-        # With --training-files-only, roller export --format sft writes them.
-        if not self.config.training_files_only:
-            write_sft_dataset(
-                self.run_dir,
-                self.run_dir,
-                [(self._sample_dir_from_result(result), result) for result in results],
-            )
-
-        def calls() -> Iterator[dict[str, Any]]:
-            for result in results:
-                capture = result.get("runtime", {}).get("capture")
-                if not isinstance(capture, dict) or not capture.get("manifest"):
-                    continue
-                sample = self._sample_dir_from_result(result)
-                validate_capture(sample, capture)
-                manifest_path = sample / capture["manifest"]
-                for call in read_jsonl(manifest_path.parent / "calls.jsonl"):
-                    if call.get("export_status") == "available":
-                        # The request and response stay in the sample's capture.
-                        call.pop("context")
-                        call.pop("output")
-                        yield {
-                            **call,
-                            "schema_version": "roller.call-index/v1",
-                            "sample": sample.relative_to(self.run_dir).as_posix(),
-                            "sample_status": result["status"],
-                            "sample_capture_status": capture.get("capture_status"),
-                            "capture_manifest": capture["manifest"],
-                            "task_id": result["task_id"],
-                            "model_label": result.get("model_label"),
-                            "sample_index": result.get("sample_index", 0),
-                        }
-
-        # A failed conversation can still contain valid individual HTTP calls.
-        # SFT eligibility is decided separately for the whole conversation.
-        if any(isinstance(r.get("runtime", {}).get("capture"), dict) for r in results):
-            write_jsonl(self.run_dir / "calls.jsonl", calls())
+        write_run_dataset(
+            self.run_dir,
+            results,
+            training_files_only=self.config.training_files_only,
+        )
 
     def collect(self, requests: list[RunRequest]) -> list[dict[str, Any]]:
         check_retired_cot_samples(self.run_dir, requests)

@@ -8,10 +8,9 @@ from pathlib import Path
 import pytest
 
 from roller.collector import CollectionConfig, Collector
+from roller.compaction_parsers import _anthropic_message, _responses_item
 from roller.compaction_sft import (
-    _anthropic_message,
     _assistant_signature,
-    _responses_item,
     _signature_matches,
     build_compaction_segments,
     export_compaction_segments,
@@ -1998,7 +1997,7 @@ def test_collector_respects_explicit_sft_unavailability(tmp_path: Path) -> None:
 
 
 def test_missing_function_arguments_follow_linear_normalization() -> None:
-    from roller.compaction_sft import _chat_message
+    from roller.compaction_parsers import _chat_message
 
     message = {
         "role": "assistant",
@@ -2448,7 +2447,7 @@ def test_collector_uses_chat_call_rewrite_instead_of_linear_actf(
     assert result["trajectory"]["sft"] is None
     assert len(result["trajectory"]["sft_segments"]) == 2
     assert not (sample / "trace_SFT.json").exists()
-    monkeypatch.setattr("roller.collector.validate_capture", lambda *_: None)
+    monkeypatch.setattr("roller.run_outputs.validate_capture", lambda *_: None)
     monkeypatch.setattr("roller.integrity.validate_capture", lambda *_: None)
     validate_resumable_sample(sample, request, result)
     collector._write_sft_dataset([result])
@@ -2575,7 +2574,7 @@ def test_collector_exports_aggregates_and_validates_compaction_segments(
     assert "trajectory_conversion" not in result["runtime"]
     # Capture schema validation is tested separately; this fixture contains
     # only the Calls and root attribution needed for compaction export.
-    monkeypatch.setattr("roller.collector.validate_capture", lambda *_: None)
+    monkeypatch.setattr("roller.run_outputs.validate_capture", lambda *_: None)
     monkeypatch.setattr("roller.integrity.validate_capture", lambda *_: None)
     collector._write_sft_dataset([result])
     assert (tmp_path / "sft.jsonl").read_text() == ""

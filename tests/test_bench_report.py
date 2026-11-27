@@ -536,7 +536,7 @@ class BenchReportCommandTests(unittest.TestCase):
         self._sample("t1", score=1.0)
         self._sample("t2", status="error", error="gateway did not start")
 
-        with self.assertLogs("roller.cli", level="WARNING") as logs:
+        with self.assertLogs("roller.benches.run_report", level="WARNING") as logs:
             report, _ = self._report()
 
         self.assertEqual(report["task_count"], 1)

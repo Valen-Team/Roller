@@ -467,7 +467,7 @@ class PiDockerTests(unittest.TestCase):
                     {t["function"]["name"] for t in request["tools"]},
                     {name for name, _ in operations},
                 )
-            from roller.pi_actf import read_pi_events
+            from roller.actf.pi import read_pi_events
             from roller.sft import actf_to_sft
 
             events = read_pi_events(root / result.trace_path)

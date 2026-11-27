@@ -27,6 +27,7 @@ from roller.benches.zerobench import (
     task_files,
     task_prompt,
 )
+from roller.docker_runtime import DockerRuntime
 from roller.harnesses.claude_code import (
     GRADING_TRANSCRIPT_CONTAINER_PATH,
     ClaudeCodeConfig,
@@ -34,7 +35,6 @@ from roller.harnesses.claude_code import (
     ClaudeCodeSession,
 )
 from roller.harnesses.claude_code_sandbox import CLAUDE_HOME, SandboxAgent
-from roller.harnesses.docker import DockerRuntime
 from roller.models import RunRequest, Task
 
 PNG = bytes.fromhex("89504e470d0a1a0a") + b"png-body"

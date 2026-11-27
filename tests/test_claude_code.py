@@ -9,16 +9,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from roller.docker_runtime import DockerRuntime
 from roller.harnesses.claude_code import (
     CLAUDE_INPUT_CONTAINER_PATH,
     ClaudeCodeConfig,
     ClaudeCodeHarness,
     claude_effort,
-    normalize_anthropic_base_url,
-    redact_anthropic_base_url,
 )
-from roller.harnesses.docker import DockerRuntime
 from roller.models import InputFile, RunRequest, Task
+from roller.redaction import normalize_anthropic_base_url, redact_anthropic_base_url
 
 
 class ClaudeCodeHarnessTests(unittest.TestCase):

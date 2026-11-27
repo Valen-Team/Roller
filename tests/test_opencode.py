@@ -12,9 +12,15 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from roller.actf.opencode import (
+    convert_opencode_trace,
+    extract_opencode_usage,
+    native_messages,
+    opencode_events_to_actf,
+)
 from roller.cli import _build_parser, _collect
+from roller.docker_runtime import DockerRuntime
 from roller.harnesses.container import PROXY_ENV_NAMES
-from roller.harnesses.docker import DockerRuntime
 from roller.harnesses.opencode import (
     RUNNER_PATH,
     OpenCodeConfig,
@@ -23,12 +29,6 @@ from roller.harnesses.opencode import (
     _system_prompt,
 )
 from roller.models import RunRequest, Task
-from roller.opencode_actf import (
-    convert_opencode_trace,
-    extract_opencode_usage,
-    native_messages,
-    opencode_events_to_actf,
-)
 from roller.sft import SFTConversionError, actf_to_sft
 
 TOOL = {
@@ -845,8 +845,10 @@ class OpenCodeHarnessTests(unittest.TestCase):
             ]
             with (
                 patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}),
-                patch("roller.cli._docker_preflight", return_value="sha256:test"),
-                patch("roller.cli.Collector") as collector,
+                patch(
+                    "roller.cli.collect._docker_preflight", return_value="sha256:test"
+                ),
+                patch("roller.cli.collect.Collector") as collector,
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 collector.return_value.collect.return_value = []
@@ -1163,7 +1165,7 @@ class OpenCodeHarnessTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as tmp,
             patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}),
             patch(
-                "roller.harnesses.opencode.convert_opencode_trace",
+                "roller.actf.opencode.convert_opencode_trace",
                 side_effect=ValueError("invalid journal"),
             ),
         ):

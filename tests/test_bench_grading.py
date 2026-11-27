@@ -232,8 +232,8 @@ class GraderEnvironmentCliTests(unittest.TestCase):
 
     def test_a_real_run_stops_before_docker_is_touched(self) -> None:
         with (
-            mock.patch("roller.cli._docker_preflight") as docker,
-            mock.patch("roller.cli.Collector") as collector,
+            mock.patch("roller.cli.collect._docker_preflight") as docker,
+            mock.patch("roller.cli.collect.Collector") as collector,
             self.assertRaisesRegex(ValueError, "OPENROUTER_API_KEY"),
         ):
             _collect(
@@ -586,10 +586,10 @@ class GradingFailureCliTests(unittest.TestCase):
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
         patches.enter_context(
-            mock.patch("roller.cli._docker_preflight", return_value="image-id")
+            mock.patch("roller.cli.collect._docker_preflight", return_value="image-id")
         )
         patches.enter_context(
-            mock.patch("roller.cli.Collector", side_effect=self._collector)
+            mock.patch("roller.cli.collect.Collector", side_effect=self._collector)
         )
 
     def _collector(self, config, harness_factory):
@@ -781,7 +781,7 @@ class GradingFailureCliTests(unittest.TestCase):
         plan = load_bench_run_plan(
             config, environ={"MODEL_API_KEY": "key"}, temporary_root=self.root
         )
-        args = _build_parser().parse_args(list(plan.collect_argv))
+        args = plan.collect_args
 
         self.assertEqual((args.grader_retries, args.resume_unscored), (0, True))
 

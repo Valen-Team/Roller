@@ -110,7 +110,7 @@ class CliResumeCompatibilityTests(unittest.TestCase):
         patches = contextlib.ExitStack()
         self.addCleanup(patches.close)
         patches.enter_context(
-            patch("roller.cli._docker_preflight", return_value="test-image-id")
+            patch("roller.cli.collect._docker_preflight", return_value="test-image-id")
         )
         constructors = {
             "openclaw": "OpenClawHarness",
@@ -122,11 +122,13 @@ class CliResumeCompatibilityTests(unittest.TestCase):
             "pi": "PiHarness",
             "stirrup": "StirrupHarness",
         }
-        patches.enter_context(patch("roller.cli._stirrup_installed", return_value=True))
+        patches.enter_context(
+            patch("roller.cli.preflight._stirrup_installed", return_value=True)
+        )
         for name, constructor in constructors.items():
             patches.enter_context(
                 patch(
-                    f"roller.cli.{constructor}",
+                    f"roller.cli.collect.{constructor}",
                     side_effect=lambda config, slot, name=name: RecordingHarness(
                         name, self.calls
                     ),
@@ -300,7 +302,7 @@ class CliResumeCompatibilityTests(unittest.TestCase):
     def test_resume_grows_a_run_whose_tasks_have_their_own_images(self):
         args, run = self.grow("task-images", runtime={"image": "task-env:1"})
         with patch(
-            "roller.cli.prepare_task_images",
+            "roller.cli.collect.prepare_task_images",
             side_effect=lambda binary, requests, images, **options: {
                 request.task.id: f"sha256:{request.task.id}" for request in requests
             },
@@ -366,7 +368,7 @@ class CliResumeCompatibilityTests(unittest.TestCase):
         patch_release = f"{major}.{minor}.99"
 
         with (
-            patch("roller.cli.__version__", patch_release),
+            patch("roller.cli.collect.__version__", patch_release),
             self.assertLogs("roller.run_lock", "INFO") as logs,
         ):
             self.assertEqual(self.invoke(args, resume=True), 0)
@@ -385,7 +387,7 @@ class CliResumeCompatibilityTests(unittest.TestCase):
         self.assertEqual((lock.read_bytes(), lock.stat().st_mtime_ns), before)
 
         with (
-            patch("roller.cli.__version__", f"{major}.{minor + 1}.0"),
+            patch("roller.cli.collect.__version__", f"{major}.{minor + 1}.0"),
             self.assertRaisesRegex(
                 FileExistsError,
                 f"created by Roller {created} and this is Roller {major}.{minor + 1}.0; "
@@ -580,7 +582,7 @@ class CliResumeCompatibilityTests(unittest.TestCase):
             "claude-settings",
         ]
         with patch(
-            "roller.cli.hashlib.blake2b",
+            "roller.cli.collect.hashlib.blake2b",
             side_effect=AssertionError("new runs must use only SHA-256"),
         ):
             self.assertEqual(self.invoke(args), 0)

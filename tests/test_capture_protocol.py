@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from roller.actf.opencode import opencode_events_to_actf
 from roller.capture import CallRecorder, read_jsonl, validate_capture
 from roller.model_protocols import chat_response, response_finished
-from roller.opencode_actf import opencode_events_to_actf
 from roller.opencode_capture import finalize_opencode_capture
 from roller.sft import actf_to_sft
 from roller.storage import write_jsonl

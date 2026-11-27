@@ -22,10 +22,11 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from roller.artifacts import ArtifactCollectionResult, collect_output_directory
+from roller.artifacts import ArtifactCollectionResult
+from roller.execution import SandboxWorkspace, stage_sandbox_inputs
 from roller.harnesses.container import host_api_key
 from roller.models import RunRequest
-from roller.sandbox import Sandbox, SandboxRun, route_sandbox_http
+from roller.sandbox import Sandbox, SandboxRun
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime only
     from roller.harnesses.claude_code import ClaudeCodeHarness
@@ -111,6 +112,7 @@ class SandboxAgent:
         self.name = name
         self.sandbox_run = sandbox_run
         self.box: Sandbox | None = None
+        self.backend: SandboxWorkspace | None = None
         self.environment: dict[str, str] = {}
 
     @property
@@ -155,6 +157,9 @@ class SandboxAgent:
             # reaching the collector is reported as.
             raise RuntimeError(f"sandbox did not start: {exc}") from None
         self.box = box
+        self.backend = SandboxWorkspace(
+            box, name=self.name, sandbox_run=self.sandbox_run
+        )
         if box.version != self.sandbox_run.target.version:
             raise RuntimeError("sandbox environment version changed since preflight")
         workspace = self.harness.config.workspace_container_path
@@ -173,8 +178,8 @@ class SandboxAgent:
             key = environment.get(key_name) or host_api_key("Claude Code", key_name)
             # The provider hands back a token for the relay; the real key stays
             # on this host, where the relay's forwarder adds it again.
-            api_base, environment[key_name] = route_sandbox_http(
-                box, api_base, key, timeout
+            api_base, environment[key_name] = self.backend.route_http(
+                api_base, key, timeout
             )
             environment["ANTHROPIC_BASE_URL"] = api_base
             environment["ANTHROPIC_AUTH_TOKEN"] = environment[key_name]
@@ -192,29 +197,18 @@ class SandboxAgent:
         return environment
 
     def _place_task(self, box: Sandbox, workspace: str) -> None:
-        """Copy the task's files in, as ``bridge`` does for a sandboxed agent."""
+        """Copy the task's files in via the shared sandbox staging helper."""
 
-        task, bundle = self.request.task, self.request.bundle
         timeout = min(self.request.timeout_seconds, DOWNLOAD_TIMEOUT)
-        if bundle is not None:
-            if bundle.legacy_workspace or task.input_mode == "copy":
-                box.upload(
-                    bundle.inputs_root, workspace, contents=True, timeout=timeout
-                )
-                self._checked(
-                    ["chmod", "-R", "u+w", workspace],
-                    "sandbox workspace permissions",
-                    SETUP_TIMEOUT,
-                )
-            box.upload(bundle.context_root, workspace, contents=True, timeout=timeout)
-        elif task.workspace is not None:
-            box.upload(task.workspace, workspace, contents=True, timeout=timeout)
-            self._checked(
-                ["chmod", "-R", "u+w", workspace],
-                "sandbox workspace permissions",
-                SETUP_TIMEOUT,
-            )
-        for command in task.setup_commands:
+        stage_sandbox_inputs(
+            box,
+            self.request,
+            workspace,
+            upload_timeout=timeout,
+            run_checked=lambda argv, desc: self._checked(argv, desc, SETUP_TIMEOUT),
+            chmod_legacy_workspace=True,
+        )
+        for command in self.request.task.setup_commands:
             self._checked(
                 ["/bin/bash", "-lc", command],
                 f"task setup command {command!r}",
@@ -316,30 +310,17 @@ class SandboxAgent:
     def collect_outputs(
         self, output_dir: Path
     ) -> tuple[ArtifactCollectionResult, str | None]:
-        """Download the task's output directory and vet it as the Docker path does."""
+        """Download the task's output directory and vet it via the unified backend."""
 
-        assert self.box is not None
+        assert self.backend is not None
         workspace = self.harness.config.workspace_container_path
         source = f"{workspace}/{self.request.task.output_dir}"
-        staging_root = output_dir / ".runtime-outputs"
-        if staging_root.exists():
-            shutil.rmtree(staging_root)
-        staging_root.mkdir(parents=True, exist_ok=True)
-        try:
-            copy_error: str | None = None
-            try:
-                self.box.download(
-                    source, staging_root, contents=True, timeout=DOWNLOAD_TIMEOUT
-                )
-            except Exception as exc:
-                copy_error = f"{type(exc).__name__}: {exc}"
-            collected = collect_output_directory(staging_root, output_dir)
-        finally:
-            shutil.rmtree(staging_root, ignore_errors=True)
-        return collected, copy_error
+        return self.backend.collect_outputs(
+            source, output_dir, timeout=DOWNLOAD_TIMEOUT, catch_errors=True
+        )
 
     def close(self) -> None:
-        if self.box is None:
+        if self.backend is None:
             return
-        box, self.box = self.box, None
-        self.sandbox_run.close(self.name, box)
+        backend, self.backend, self.box = self.backend, None, None
+        backend.close()

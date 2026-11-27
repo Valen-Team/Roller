@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from roller.integrity import keeps_thinking, trajectory_conversion_unavailable
+from roller.sample_metadata import keeps_thinking, trajectory_conversion_unavailable
 from roller.thinking import THINKING_LEVELS
 
 SEGMENTED_SFT_REASON = "segmented_sft_requires_target_mask"

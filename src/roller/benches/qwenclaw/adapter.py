@@ -27,6 +27,7 @@ from roller.benches.qwenclaw.grader_runtime import (
 from roller.benches.qwenclaw.report import aggregate_samples
 from roller.benches.qwenclaw.task_parser import parse_task_markdown
 from roller.benches.qwenclaw.workspace import materialize_workspace
+from roller.option_specs import BENCH_RUNS_PER_TASK_OPTION
 
 TASK_SCHEMA = "roller.task/v1"
 DATASET_DIR_NAME = "qwenclawbench-v1.1-100"
@@ -35,6 +36,7 @@ DATASET_DIR_NAME = "qwenclawbench-v1.1-100"
 class QwenClawBenchAdapter(BenchAdapter):
     name = "qwenclawbench"
     description = "QwenClawBench — 100 real-user OpenClaw tasks across 8 domains"
+    cli_options = (BENCH_RUNS_PER_TASK_OPTION,)
 
     def __init__(self, cache_root: Path | None = None) -> None:
         self.cache_root = cache_root

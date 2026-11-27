@@ -23,10 +23,10 @@ from typing import Any
 
 import zstandard
 
-from roller.claude_code_actf import convert_claude_code_trace
-from roller.codex_actf import convert_codex_trace
-from roller.collector import CollectionConfig, Collector
+from roller.actf.claude_code import convert_claude_code_trace
+from roller.actf.codex import convert_codex_trace
 from roller.compaction_sft import has_main_compaction
+from roller.run_outputs import write_run_dataset, write_run_info
 from roller.sft import SFTConversionError, write_sft
 from roller.storage import atomic_write_json, safe_component
 from roller.usage import extract_claude_code_usage, extract_codex_usage
@@ -559,9 +559,8 @@ def import_sessions(
         (info for _, info in _existing(run_dir).values()),
         key=lambda info: info["request_index"],
     )
-    collector = Collector(CollectionConfig(run_dir=run_dir), lambda slot: None)
-    collector._write_run_info(results, total_requests=len(results), state="finished")
-    collector._write_sft_dataset(results)
+    write_run_info(run_dir, results, total_requests=len(results), state="finished")
+    write_run_dataset(run_dir, results)
     summary.sft = sum(bool(info["trajectory"].get("sft")) for info in results)
     return summary
 

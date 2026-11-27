@@ -14,15 +14,15 @@ from unittest.mock import Mock, patch
 
 from test_gateway_ports import isolate_gateway_ports
 
-from roller.cli import _build_parser, _collect
-from roller.collector import CollectionConfig, Collector
-from roller.harnesses.docker import DockerRuntime
-from roller.harnesses.hermes import RUNNER_PATH, HermesConfig, HermesHarness
-from roller.hermes_actf import (
+from roller.actf.hermes import (
     convert_hermes_trace,
     extract_hermes_usage,
     hermes_events_to_actf,
 )
+from roller.cli import _build_parser, _collect
+from roller.collector import CollectionConfig, Collector
+from roller.docker_runtime import DockerRuntime
+from roller.harnesses.hermes import RUNNER_PATH, HermesConfig, HermesHarness
 from roller.models import HarnessResult, RunRequest, Task
 from roller.sft import actf_to_sft
 from roller.trajectory_audit import sft_exclusion_reason
@@ -783,7 +783,7 @@ class HermesSessionTests(unittest.TestCase):
         session = self.session()
         session.start()
         with patch(
-            "roller.harnesses.hermes.convert_hermes_trace",
+            "roller.actf.hermes.convert_hermes_trace",
             side_effect=ValueError("broken trace"),
         ):
             result = session.finish("ok")
@@ -873,8 +873,10 @@ class HermesCliTests(unittest.TestCase):
             ]
             with (
                 patch.dict("os.environ", {"OC_TEST_KEY": "test-only-key"}),
-                patch("roller.cli._docker_preflight", return_value="sha256:test"),
-                patch("roller.cli.Collector") as collector,
+                patch(
+                    "roller.cli.collect._docker_preflight", return_value="sha256:test"
+                ),
+                patch("roller.cli.collect.Collector") as collector,
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 collector.return_value.collect.return_value = []
@@ -925,8 +927,10 @@ class HermesCliTests(unittest.TestCase):
 
             with (
                 patch.dict("os.environ", {"HERMES_KEY": "test-key"}),
-                patch("roller.cli._docker_preflight", return_value="sha256:test"),
-                patch("roller.cli.HermesHarness", side_effect=make),
+                patch(
+                    "roller.cli.collect._docker_preflight", return_value="sha256:test"
+                ),
+                patch("roller.cli.collect.HermesHarness", side_effect=make),
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(_collect(_build_parser().parse_args(command)), 0)
@@ -974,8 +978,10 @@ class HermesCliTests(unittest.TestCase):
             ]
             with (
                 patch.dict("os.environ", {"HERMES_KEY": "test-key"}),
-                patch("roller.cli._docker_preflight", return_value="sha256:test"),
-                patch("roller.cli.Collector") as collector,
+                patch(
+                    "roller.cli.collect._docker_preflight", return_value="sha256:test"
+                ),
+                patch("roller.cli.collect.Collector") as collector,
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 collector.return_value.collect.return_value = []
@@ -1086,7 +1092,7 @@ class HermesCliTests(unittest.TestCase):
             output = io.StringIO()
             with (
                 patch(
-                    "roller.cli._docker_preflight",
+                    "roller.cli.collect._docker_preflight",
                     side_effect=AssertionError("Docker must not run"),
                 ),
                 contextlib.redirect_stdout(output),

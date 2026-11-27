@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from roller.claude_code_actf import (
+from roller.actf.claude_code import (
     claude_code_events_to_actf,
     convert_claude_code_trace,
     extract_anthropic_wire_context,

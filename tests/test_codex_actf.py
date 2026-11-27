@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from roller.codex_actf import (
+from roller.actf.codex import (
     codex_events_to_actf,
     convert_codex_trace,
 )

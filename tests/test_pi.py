@@ -11,11 +11,11 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from roller.actf.pi import convert_pi_trace, extract_pi_usage, pi_events_to_actf
 from roller.cli import _build_parser, _collect
-from roller.harnesses.docker import DockerRuntime
+from roller.docker_runtime import DockerRuntime
 from roller.harnesses.pi import RUNNER_PATH, PiConfig, PiHarness
 from roller.models import RunRequest, Task
-from roller.pi_actf import convert_pi_trace, extract_pi_usage, pi_events_to_actf
 from roller.sft import actf_to_sft
 
 TOOL = {
@@ -572,7 +572,7 @@ class PiHarnessTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as tmp,
             patch.dict(os.environ, {"LOCAL_TEST_KEY": "test-secret"}),
             patch(
-                "roller.harnesses.pi.convert_pi_trace",
+                "roller.actf.pi.convert_pi_trace",
                 side_effect=ValueError("invalid journal"),
             ),
         ):

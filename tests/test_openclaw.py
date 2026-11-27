@@ -9,17 +9,19 @@ from pathlib import Path
 from unittest import mock
 
 from roller.bundles import TaskBundleStore
-from roller.harnesses.docker import DockerRuntime
+from roller.docker_runtime import DockerRuntime
 from roller.harnesses.openclaw import (
-    DEFAULT_OPENCLAW_IMAGE,
     OPENCLAW_STATE_CONTAINER_PATH,
     TRANSCRIPT_EXPORT_CONTAINER_PATH,
     OpenClawConfig,
     OpenClawHarness,
-    expand_env_placeholders,
-    load_model_config,
     prepare_model_config,
     validate_openclaw_thinking,
+)
+from roller.harnesses.openclaw_config import (
+    DEFAULT_OPENCLAW_IMAGE,
+    expand_env_placeholders,
+    load_model_config,
 )
 from roller.models import HarnessResult, RunRequest, Task
 from roller.tasks import load_tasks
@@ -913,7 +915,7 @@ class OpenClawHelpersTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as temporary,
             mock.patch(
-                "roller.harnesses.openclaw.convert_openclaw_trace",
+                "roller.actf.openclaw.convert_openclaw_trace",
                 side_effect=ValueError("invalid trace"),
             ),
         ):

@@ -17,26 +17,27 @@ from unittest.mock import patch
 import pytest
 
 from roller import sft_dataset, xtuner_dataset
+from roller.actf.stirrup import (
+    STIRRUP_COMPACTION_SFT_REASON,
+    extract_stirrup_usage,
+    read_stirrup_native,
+    stirrup_events_to_actf,
+)
 from roller.blobs import BLOBS_DIR, load_blobs, store_blobs
-from roller.cli import _build_parser, _collect, _request_field
+from roller.cli import _build_parser, _collect
 from roller.collector import CollectionConfig, Collector
 from roller.compaction_sft import (
     build_compaction_segments,
     export_compaction_segments,
     has_main_compaction,
 )
-from roller.harnesses.docker import DockerRuntime
+from roller.docker_runtime import DockerRuntime
 from roller.harnesses.stirrup import StirrupConfig, StirrupHarness, sample_seed
 from roller.models import RunRequest, Task
+from roller.option_specs import parse_request_field as _request_field
 from roller.sandbox import SandboxRun, SandboxTarget
 from roller.sft import actf_to_sft, normalize_sft_record, validate_sft_record
 from roller.sft_dataset import sample_records
-from roller.stirrup_actf import (
-    STIRRUP_COMPACTION_SFT_REASON,
-    extract_stirrup_usage,
-    read_stirrup_native,
-    stirrup_events_to_actf,
-)
 
 PNG = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQ"
@@ -469,13 +470,13 @@ class StirrupConfigTests(unittest.TestCase):
             parser = _build_parser()
             with (
                 patch.dict(os.environ, {"OPENAI_API_KEY": "k"}),
-                patch("roller.cli._stirrup_installed", return_value=False),
+                patch("roller.cli.preflight._stirrup_installed", return_value=False),
                 self.assertRaisesRegex(ValueError, r"roller-agent\[stirrup\]"),
             ):
                 _collect(parser.parse_args(argv))
             with (
                 patch.dict(os.environ, {"OPENAI_API_KEY": "k"}),
-                patch("roller.cli._stirrup_installed", return_value=True),
+                patch("roller.cli.preflight._stirrup_installed", return_value=True),
                 patch("sys.stdout"),
             ):
                 self.assertEqual(_collect(parser.parse_args(argv)), 0)

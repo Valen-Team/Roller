@@ -4,7 +4,7 @@ import json
 from unittest.mock import Mock, patch
 
 from roller.cleanup import HOST, clean, kept_because
-from roller.harnesses.docker import DockerRuntime, begin_collection
+from roller.docker_runtime import DockerRuntime, begin_collection
 
 
 def test_cleanup_keeps_live_unknown_and_foreign_collectors():
@@ -44,7 +44,7 @@ def test_launches_carry_owner_labels_and_separate_process_group(tmp_path):
     runtime = DockerRuntime()
     begin_collection(tmp_path)
     try:
-        with patch("roller.harnesses.docker.subprocess.run") as run:
+        with patch("roller.docker_runtime.subprocess.run") as run:
             runtime.run(["run", "-d", "image"])
         args = run.call_args.args[0]
         assert f"ai.roller.run_dir={tmp_path}" in args

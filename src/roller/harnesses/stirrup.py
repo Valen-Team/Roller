@@ -18,6 +18,7 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Any, ClassVar
 
+from roller.harness_registry import convert_native_trace, extract_native_usage
 from roller.harnesses.base import TurnResult
 from roller.harnesses.bridge import (
     BridgeHarness,
@@ -27,7 +28,6 @@ from roller.harnesses.bridge import (
 )
 from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
 from roller.sandbox import SandboxRun
-from roller.stirrup_actf import convert_stirrup_trace, extract_stirrup_usage
 from roller.thinking import normalize_thinking, resolve_thinking
 
 STIRRUP_VERSION = "0.2.1"
@@ -194,12 +194,15 @@ class StirrupSession(BridgeSession):
         return trace.is_file()  # written here, not in the container
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:
-        return convert_stirrup_trace(
-            trace, destination, keep_thinking=self.harness.config.keep_thinking
+        return convert_native_trace(
+            "stirrup",
+            trace,
+            destination,
+            keep_thinking=self.harness.config.keep_thinking,
         )
 
     def extract_usage(self, trace: Path) -> dict[str, int | float]:
-        return extract_stirrup_usage(trace)
+        return extract_native_usage("stirrup", trace)
 
     def version_fields(self) -> dict[str, Any]:
         return {"stirrup_version": self.version, "api_mode": "chat_completions"}
@@ -224,3 +227,78 @@ class StirrupHarness(BridgeHarness):
 
     name = "stirrup"
     session_class = StirrupSession
+
+
+def _stirrup_cli_options():
+    from roller.option_specs import OptionSpec, parse_request_field
+
+    return (
+        OptionSpec(
+            "--stirrup-max-steps",
+            yaml_key="max_steps",
+            type=int,
+            default=30,
+            help="Stirrup max_turns: model turns per task, the finish turn included (default: 30)",
+        ),
+        OptionSpec(
+            "--stirrup-context-length",
+            yaml_key="context_length",
+            type=int,
+            default=128000,
+            help=(
+                "Stirrup model context window; history is summarized at 70%% of it "
+                "(default: 128000 tokens)"
+            ),
+        ),
+        OptionSpec(
+            "--stirrup-output-tokens",
+            yaml_key="output_tokens",
+            type=int,
+            default=8192,
+            help="max_tokens of every Stirrup request (default: 8192)",
+        ),
+        OptionSpec(
+            "--stirrup-command-timeout",
+            yaml_key="command_timeout",
+            type=int,
+            default=300,
+            help="seconds before a code_exec command is stopped (default: 300)",
+        ),
+        OptionSpec(
+            "--stirrup-temperature",
+            yaml_key="temperature",
+            type=float,
+            help="temperature of every request",
+        ),
+        OptionSpec(
+            "--stirrup-top-p",
+            yaml_key="top_p",
+            type=float,
+            help="top_p of every request",
+        ),
+        OptionSpec(
+            "--stirrup-seed",
+            yaml_key="seed",
+            type=int,
+            help=(
+                "base seed; each sample's request seed is derived from it, the task ID "
+                "and the sample index"
+            ),
+        ),
+        OptionSpec(
+            "--stirrup-request-set",
+            yaml_key="request_set",
+            yaml_kind="repeat",
+            action="append",
+            default=(),
+            type=parse_request_field,
+            metavar="KEY=JSON",
+            help=(
+                "add a top-level request field after Roller's own, such as n=1 or "
+                "stream=false; repeatable, in order"
+            ),
+        ),
+    )
+
+
+CLI_OPTIONS = _stirrup_cli_options()

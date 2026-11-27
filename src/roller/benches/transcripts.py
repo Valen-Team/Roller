@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import importlib
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+
+from roller.harness_registry import convert_native_trace
 
 
 def session_trajectory(session: Any) -> dict[str, Any]:
@@ -31,13 +32,6 @@ def session_trajectory(session: Any) -> dict[str, Any]:
         )
         if copied.returncode:
             raise RuntimeError(f"{name}: transcript copy failed")
-    module = (
-        "roller.actf" if name == "openclaw" else f"roller.{name.replace('-', '_')}_actf"
-    )
-    converter = getattr(
-        importlib.import_module(module),
-        f"convert_{name.replace('-', '_')}_trace",
-    )
     converter_kwargs = {
         "keep_thinking": getattr(
             getattr(harness, "config", None), "keep_thinking", True
@@ -45,7 +39,8 @@ def session_trajectory(session: Any) -> dict[str, Any]:
     }
     if name in {"openclaw", "codex", "claude-code"}:
         converter_kwargs["user_messages"] = session.messages
-    return converter(
+    return convert_native_trace(
+        name,
         Path(source),
         session.output_dir / "rollout" / "bench_ACTF.json",
         **converter_kwargs,

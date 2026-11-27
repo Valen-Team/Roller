@@ -15,12 +15,11 @@ from roller.cli import main
 from roller.hf_dataset import (
     STATS_END,
     STATS_START,
-    Rules,
     export_run,
     hermes_session,
-    load_rules,
     session_trace,
 )
+from roller.hf_redaction import Rules, load_rules
 from roller.storage import safe_component
 from roller.viewer.app import RollerRun
 
@@ -1264,7 +1263,7 @@ class ImportedRunRedactionTests(unittest.TestCase):
             with (
                 mock.patch.object(Path, "home", return_value=Path("/Users/alice")),
                 mock.patch(
-                    "roller.hf_dataset._git_identity",
+                    "roller.hf_redaction._git_identity",
                     return_value=("Alice Smith", "alice@example.org"),
                 ),
             ):

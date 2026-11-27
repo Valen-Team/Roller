@@ -15,7 +15,7 @@ from roller.capture import native_directory, read_jsonl, validate_capture
 from roller.cli import _build_parser, _collect
 from roller.harness_registry import HARNESS_NAMES
 from roller.model_protocols import tool_call_ids
-from roller.opencode_actf import native_messages
+from roller.opencode_capture import native_messages
 
 COMMON = "Use native Agent tools, no research, no web access, no nested delegation. All children must run in foreground with run_in_background=false. "
 CASES = {

@@ -9,7 +9,7 @@ import pytest
 def no_docker_daemon():
     """Keep ``collect --resume`` from asking this machine's Docker for leftover containers."""
 
-    with patch("roller.cli.remove_leftover_containers", return_value=0):
+    with patch("roller.cli.preflight.remove_leftover_containers", return_value=0):
         yield
 
 

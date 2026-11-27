@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 
-from roller.harnesses.codex import DEFAULT_CODEX_IMAGE
+from roller.harnesses.codex_config import DEFAULT_CODEX_IMAGE
 from roller.harnesses.deepseek import DEFAULT_DEEPSEEK_IMAGE
 from roller.harnesses.hermes import DEFAULT_HERMES_IMAGE
 from roller.harnesses.opencode import DEFAULT_OPENCODE_IMAGE

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -15,7 +16,19 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from roller.benches import get_bench
 from roller.harness_registry import HARNESS_NAMES
+from roller.harnesses import HARNESS_API_PROTOCOL, HARNESS_CLI_OPTIONS
+from roller.option_specs import (
+    BENCH_SELECTION_OPTIONS,
+    COLLECT_ONLY_FLAGS,
+    EXECUTION_CORE_OPTIONS,
+    EXECUTION_OPTIONS,
+    EXECUTION_RUNTIME_OPTIONS,
+    OptionSpec,
+    default_namespace,
+    option_map,
+)
 from roller.thinking import normalize_thinking
 
 BENCH_RUN_SCHEMA = "roller.bench-run/v1"
@@ -26,9 +39,9 @@ ANY_ENV_REFERENCE_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 
 @dataclass(frozen=True)
 class BenchRunPlan:
-    """Resolved configuration translated to the existing ``collect`` CLI."""
+    """Resolved benchmark configuration mapped directly to ``collect`` arguments."""
 
-    collect_argv: tuple[str, ...]
+    collect_args: argparse.Namespace
     environment: dict[str, str]
     provenance: dict[str, Any]
     resolved: dict[str, Any]
@@ -120,30 +133,32 @@ def _mapping(
     return dict(value)
 
 
-def _reject_unknown(section: Mapping[str, Any], allowed: set[str], label: str) -> None:
-    unknown = sorted(set(section) - allowed)
+def _reject_unknown(mapping: Mapping[str, Any], allowed: set[str], label: str) -> None:
+    unknown = sorted(set(mapping) - allowed)
     if unknown:
         raise ValueError(f"{label} has unknown field(s): {', '.join(unknown)}")
 
 
-def _required_string(section: Mapping[str, Any], key: str, label: str) -> str:
-    value = section.get(key)
+def _required_string(mapping: Mapping[str, Any], key: str, label: str) -> str:
+    value = mapping.get(key)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label}.{key} must be a non-empty string")
     return value.strip()
 
 
-def _optional_string(section: Mapping[str, Any], key: str, label: str) -> str | None:
-    value = section.get(key)
+def _optional_string(mapping: Mapping[str, Any], key: str, label: str) -> str | None:
+    value = mapping.get(key)
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{label}.{key} must be a non-empty string when set")
+        raise ValueError(f"{label}.{key} must be a non-empty string")
     return value.strip()
 
 
-def _string_list(section: Mapping[str, Any], key: str, label: str) -> list[str]:
-    value = section.get(key, [])
+def _string_list(mapping: Mapping[str, Any], key: str, label: str) -> list[str]:
+    value = mapping.get(key)
+    if value is None:
+        return []
     if not isinstance(value, list) or not all(
         isinstance(item, str) and item.strip() for item in value
     ):
@@ -151,229 +166,74 @@ def _string_list(section: Mapping[str, Any], key: str, label: str) -> list[str]:
     return [item.strip() for item in value]
 
 
-def _append_value(argv: list[str], flag: str, value: Any) -> None:
-    if value is not None:
-        argv.extend((flag, str(value)))
-
-
-def _append_bool(argv: list[str], flag: str, value: Any, label: str) -> None:
-    if not isinstance(value, bool):
-        raise ValueError(f"{label} must be boolean")
-    argv.append(flag if value else f"--no-{flag.removeprefix('--')}")
-
-
-def _append_switch(argv: list[str], flag: str, value: Any, label: str) -> None:
-    if not isinstance(value, bool):
-        raise ValueError(f"{label} must be boolean")
-    if value:
-        argv.append(flag)
-
-
-_HARNESS_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
-    "openclaw": {
-        "model_config": ("--model-config", "value"),
-        "gateway_port": ("--gateway-port", "value"),
-        "gateway_port_step": ("--gateway-port-step", "value"),
-        "gateway_startup_timeout": ("--gateway-startup-timeout", "value"),
-        "model_request_timeout": ("--openclaw-model-request-timeout", "value"),
-        "max_tokens": ("--openclaw-max-tokens", "value"),
-        "session_id": ("--session-id", "value"),
-        "search_provider": ("--search-provider", "value"),
-        "collect_paths": ("--collect-path", "repeat"),
-        "set_image_model": ("--set-image-model", "bool"),
-        "cache_trace": ("--cache-trace", "bool"),
-        "config_set": ("--openclaw-config-set", "repeat"),
-    },
-    "codex": {
-        "config": ("--codex-config", "value"),
-        "reasoning_summary": ("--reasoning-summary", "value"),
-        "web_search": ("--codex-web-search", "value"),
-        "websockets": ("--codex-websockets", "bool"),
-        "image_detail": ("--codex-image-detail", "value"),
-        "tool_images_as_user": ("--codex-tool-images-as-user", "bool"),
-        "chat_completions": ("--codex-chat-completions", "switch"),
-        "config_set": ("--codex-config-set", "repeat"),
-    },
-    "claude-code": {
-        "settings": ("--claude-settings", "value"),
-        "max_turns": ("--claude-max-turns", "value"),
-        "max_thinking_tokens": ("--claude-max-thinking-tokens", "value"),
-        "permission_mode": ("--claude-permission-mode", "value"),
-        "capture_calls": ("--claude-capture-calls", "switch"),
-        "unique_tool_ids": ("--claude-unique-tool-ids", "switch"),
-        "pdf_as_images": ("--claude-pdf-as-images", "switch"),
-        "chat_completions": ("--claude-chat-completions", "switch"),
-        "tool_images_inline": ("--claude-tool-images-inline", "switch"),
-        "sandbox_binary": ("--claude-sandbox-binary", "value"),
-        "context_window": ("--claude-context-window", "value"),
-    },
-    "hermes": {
-        "max_iterations": ("--hermes-max-iterations", "value"),
-        "context_length": ("--hermes-context-length", "value"),
-        "vision": ("--hermes-vision", "bool"),
-        "toolsets": ("--hermes-toolset", "repeat"),
-    },
-    "opencode": {
-        "max_steps": ("--opencode-max-steps", "value"),
-        "context_length": ("--opencode-context-length", "value"),
-        "output_tokens": ("--opencode-output-tokens", "value"),
-        "vision": ("--opencode-vision", "bool"),
-        "native_tools": ("--opencode-native-tools", "switch"),
-        "deny_tools": ("--opencode-deny-tool", "repeat"),
-    },
-    "deepseek": {
-        "max_steps": ("--deepseek-max-steps", "value"),
-        "context_length": ("--deepseek-context-length", "value"),
-        "output_tokens": ("--deepseek-output-tokens", "value"),
-        "profile": ("--deepseek-profile", "value"),
-        "permission_mode": ("--deepseek-permission-mode", "value"),
-        "input_modalities": ("--deepseek-input-modalities", "value"),
-    },
-    "pi": {
-        "max_steps": ("--pi-max-steps", "value"),
-        "context_length": ("--pi-context-length", "value"),
-        "output_tokens": ("--pi-output-tokens", "value"),
-        "input_modalities": ("--pi-input-modalities", "value"),
-    },
-    "stirrup": {
-        "max_steps": ("--stirrup-max-steps", "value"),
-        "context_length": ("--stirrup-context-length", "value"),
-        "output_tokens": ("--stirrup-output-tokens", "value"),
-        "command_timeout": ("--stirrup-command-timeout", "value"),
-        "temperature": ("--stirrup-temperature", "value"),
-        "top_p": ("--stirrup-top-p", "value"),
-        "seed": ("--stirrup-seed", "value"),
-        "request_set": ("--stirrup-request-set", "repeat"),
-    },
-}
-
-_HARNESS_API_PROTOCOL = {
-    "codex": "openai-responses",
-    "claude-code": "anthropic-messages",
-    "hermes": "openai-completions",
-    "opencode": "openai-completions",
-    "deepseek": "openai-completions",
-    "pi": "openai-completions",
-    "stirrup": "openai-completions",
-}
-
-_EXECUTION_VALUES = {
-    "output": "--output",
-    "run_name": "--run-name",
-    "parallel": "--parallel",
-    "launch_interval": "--launch-interval",
-    "grader_parallel": "--grader-parallel",
-    "grader_retries": "--grader-retries",
-    "samples": "--samples",
-    "retries": "--retries",
-    "retry_backoff": "--retry-backoff",
-    "max_consecutive_errors": "--max-consecutive-errors",
-    "timeout": "--timeout",
-    "start_index": "--start-index",
-    "limit": "--limit",
-    "wire_trace": "--wire-trace",
-    "capture_debug": "--capture-debug",
-    "thinking_capabilities": "--thinking-capabilities",
-    "container_user": "--container-user",
-    "network": "--network",
-    "docker_binary": "--docker-binary",
-    "sandbox_provider": "--sandbox-provider",
-    "sandbox_template": "--sandbox-template",
-    "max_input_file_bytes": "--max-input-file-bytes",
-    "max_task_input_bytes": "--max-task-input-bytes",
-}
-_EXECUTION_BOOLS = {"keep_thinking": "--keep-thinking"}
-_EXECUTION_SWITCHES = {
-    "resume": "--resume",
-    "resume_verify_outputs": "--resume-verify-outputs",
-    "resume_unscored": "--resume-unscored",
-    "training_files_only": "--training-files-only",
-    "capture_calls": "--capture-calls",
-    "token_ids": "--token-ids",
-    "keep_container_on_error": "--keep-container-on-error",
-    "rebuild_task_images": "--rebuild-task-images",
-}
-
-# ``collect`` options a run configuration does not set. tests/test_bench_run_config.py
-# requires every other ``collect`` option to appear in this module.
-COLLECT_ONLY_FLAGS = frozenset(
-    {
-        "--help",
-        # ``bench run --dry-run`` appends it.
-        "--dry-run",
-        # A run configuration always selects tasks through ``benchmark``.
-        "--tasks",
-        "--prompt-key",
-        "--id-key",
-        "--workspace",
-        # ``--bench`` always honours task-declared timeouts.
-        "--task-timeouts",
-        # Logging is configured from the ``bench run`` arguments before the file is read.
-        "--log-level",
-        # Per-Harness overrides for mixed-Harness task files. A run configuration has one
-        # Harness, set through ``harness.image``, ``model.base_url`` and ``model.api_key_env``.
-        "--openclaw-image",
-        "--codex-image",
-        "--claude-code-image",
-        "--hermes-image",
-        "--opencode-image",
-        "--deepseek-image",
-        "--pi-image",
-        "--stirrup-image",
-        "--codex-api-base",
-        "--claude-api-base",
-        "--hermes-api-base",
-        "--opencode-api-base",
-        "--deepseek-api-base",
-        "--pi-api-base",
-        "--stirrup-api-base",
-        "--codex-api-key-env",
-        "--claude-api-key-env",
-        "--hermes-api-key-env",
-        "--opencode-api-key-env",
-        "--deepseek-api-key-env",
-        "--pi-api-key-env",
-        "--stirrup-api-key-env",
+def _default_collect_values() -> dict[str, Any]:
+    values: dict[str, Any] = {
+        "command": "collect",
+        "tasks": None,
+        "bench": None,
+        "model": [],
+        "model_label": None,
+        "harness": None,
+        "prompt_key": "prompt",
+        "id_key": "id",
+        "workspace": None,
+        "dry_run": False,
+        "task_timeouts": False,
+        "log_level": "INFO",
+        "docker_image": None,
+        "openclaw_image": None,
+        "codex_image": None,
+        "hermes_image": None,
+        "opencode_image": None,
+        "deepseek_image": None,
+        "pi_image": None,
+        "stirrup_image": None,
+        "claude_code_image": None,
+        "api_base": None,
+        "hermes_api_base": None,
+        "hermes_api_key_env": None,
+        "opencode_api_base": None,
+        "deepseek_api_base": None,
+        "pi_api_base": None,
+        "opencode_api_key_env": None,
+        "deepseek_api_key_env": None,
+        "pi_api_key_env": None,
+        "stirrup_api_base": None,
+        "stirrup_api_key_env": None,
+        "codex_api_base": None,
+        "claude_api_base": None,
+        "api_key_env": None,
+        "codex_api_key_env": None,
+        "claude_api_key_env": None,
     }
-)
+    values.update(default_namespace(BENCH_SELECTION_OPTIONS))
+    values.update(default_namespace(EXECUTION_CORE_OPTIONS))
+    values.update(default_namespace(EXECUTION_RUNTIME_OPTIONS))
+    for options in HARNESS_CLI_OPTIONS.values():
+        values.update(default_namespace(options))
+    return values
 
-_BENCHMARK_EXTRA: dict[str, dict[str, tuple[str, str]]] = {
-    "qwenclawbench": {
-        "runs_per_task": ("--bench-runs-per-task", "value"),
-    },
-}
 
-
-def _append_benchmark_extra(
-    argv: list[str], benchmark: str, extra: Mapping[str, Any]
+def _apply_option_map(
+    target: dict[str, Any],
+    specs: Mapping[str, OptionSpec],
+    values: Mapping[str, Any],
+    label: str,
 ) -> None:
-    supported = _BENCHMARK_EXTRA.get(benchmark, {})
-    _reject_unknown(extra, set(supported), "benchmark.extra")
-    for name, value in extra.items():
-        flag, _kind = supported[name]
-        _append_value(argv, flag, value)
+    _reject_unknown(values, set(specs), label)
+    for name, raw in values.items():
+        spec = specs[name]
+        if raw is None:
+            continue
+        target[spec.resolved_dest] = spec.coerce_yaml(raw, f"{label}.{name}")
 
 
-def _append_harness_extra(
-    argv: list[str], harness: str, extra: Mapping[str, Any]
-) -> None:
-    supported = _HARNESS_EXTRA[harness]
-    _reject_unknown(extra, set(supported), "harness.extra")
-    for name, value in extra.items():
-        flag, kind = supported[name]
-        if kind == "bool":
-            _append_bool(argv, flag, value, f"harness.extra.{name}")
-        elif kind == "switch":
-            _append_switch(argv, flag, value, f"harness.extra.{name}")
-        elif kind == "repeat":
-            if not isinstance(value, list) or not all(
-                isinstance(item, str) and item for item in value
-            ):
-                raise ValueError(f"harness.extra.{name} must be a string list")
-            for item in value:
-                argv.extend((flag, item))
-        else:
-            _append_value(argv, flag, value)
+def _benchmark_option_map(benchmark: str) -> dict[str, OptionSpec]:
+    try:
+        adapter = get_bench(benchmark)
+    except KeyError:
+        return {}
+    return option_map(adapter.cli_options)
 
 
 def _openclaw_model_config(
@@ -471,7 +331,7 @@ def load_bench_run_plan(
     environ: Mapping[str, str] | None = None,
     temporary_root: Path,
 ) -> BenchRunPlan:
-    """Load layered YAML/JSON and translate it to ``roller collect`` arguments."""
+    """Load layered YAML/JSON and resolve it into structured ``collect`` arguments."""
 
     environment = os.environ if environ is None else environ
     base_path = Path(config_path).expanduser().resolve()
@@ -495,6 +355,7 @@ def load_bench_run_plan(
     model = _mapping(resolved, "model", required=True)
     harness = _mapping(resolved, "harness", required=True)
     execution = _mapping(resolved, "execution")
+    execution_specs = option_map(EXECUTION_OPTIONS)
     _reject_unknown(
         benchmark,
         {
@@ -524,11 +385,7 @@ def load_bench_run_plan(
         "model",
     )
     _reject_unknown(harness, {"id", "image", "extra"}, "harness")
-    _reject_unknown(
-        execution,
-        {*_EXECUTION_VALUES, *_EXECUTION_BOOLS, *_EXECUTION_SWITCHES, "pass_env"},
-        "execution",
-    )
+    _reject_unknown(execution, set(execution_specs), "execution")
 
     benchmark_id = _required_string(benchmark, "id", "benchmark")
     benchmark_root = _required_string(benchmark, "root", "benchmark")
@@ -561,30 +418,34 @@ def load_bench_run_plan(
                 f"model.api_key_env references missing environment variable {api_key_env}"
             )
 
-    argv = [
-        "collect",
-        "--bench",
-        benchmark_id,
-        "--bench-root",
-        benchmark_root,
-        "--model",
-        model_id,
-        "--harness",
-        harness_id,
-    ]
-    for category in _string_list(benchmark, "categories", "benchmark"):
-        argv.extend(("--bench-category", category))
-    for task_id in _string_list(benchmark, "task_ids", "benchmark"):
-        argv.extend(("--bench-task-id", task_id))
-    _append_value(
-        argv, "--bench-variant", _optional_string(benchmark, "variant", "benchmark")
+    collect_values = _default_collect_values()
+    collect_values["bench"] = benchmark_id
+    collect_values["bench_root"] = benchmark_root
+    collect_values["model"] = [model_id]
+    collect_values["harness"] = harness_id
+    collect_values["bench_category"] = _string_list(
+        benchmark, "categories", "benchmark"
     )
-    if "timeout_multiplier" in benchmark:
-        _append_value(
-            argv, "--bench-timeout-multiplier", benchmark["timeout_multiplier"]
-        )
+    collect_values["bench_task_id"] = _string_list(benchmark, "task_ids", "benchmark")
+    collect_values["bench_variant"] = _optional_string(
+        benchmark, "variant", "benchmark"
+    )
+    if (
+        "timeout_multiplier" in benchmark
+        and benchmark["timeout_multiplier"] is not None
+    ):
+        multiplier = benchmark["timeout_multiplier"]
+        if isinstance(multiplier, bool):
+            raise ValueError("benchmark.timeout_multiplier must not be a boolean")
+        collect_values["bench_timeout_multiplier"] = float(multiplier)
+
     benchmark_extra = _mapping(benchmark, "extra")
-    _append_benchmark_extra(argv, benchmark_id, benchmark_extra)
+    _apply_option_map(
+        collect_values,
+        _benchmark_option_map(benchmark_id),
+        benchmark_extra,
+        "benchmark.extra",
+    )
 
     model_params = model.get("params", {})
     if not isinstance(model_params, dict):
@@ -610,14 +471,14 @@ def load_bench_run_plan(
                     "harness.extra.model_config is not set"
                 )
             model_id, generated = _openclaw_model_config(model, temporary_root)
-            argv[argv.index("--model") + 1] = model_id
+            collect_values["model"] = [model_id]
             harness_extra["model_config"] = str(generated)
     else:
         if base_url is None or api_key_env is None:
             raise ValueError(
                 f"{harness_id} requires model.base_url and model.api_key_env"
             )
-        expected_protocol = _HARNESS_API_PROTOCOL[harness_id]
+        expected_protocol = HARNESS_API_PROTOCOL[harness_id]
         if api_protocol is not None and api_protocol != expected_protocol:
             raise ValueError(
                 f"model.api_protocol must be {expected_protocol!r} for {harness_id}"
@@ -627,27 +488,25 @@ def load_bench_run_plan(
                 f"model.params is only supported by generated OpenClaw model config; "
                 f"use harness.extra for {harness_id}"
             )
-        _append_value(argv, "--api-base", base_url)
-        _append_value(argv, "--api-key-env", api_key_env)
+        collect_values["api_base"] = base_url
+        collect_values["api_key_env"] = api_key_env
 
-    _append_value(argv, "--model-label", _optional_string(model, "label", "model"))
-    _append_value(argv, "--thinking", thinking)
-    _append_value(argv, "--docker-image", _optional_string(harness, "image", "harness"))
-    _append_harness_extra(argv, harness_id, harness_extra)
+    collect_values["model_label"] = _optional_string(model, "label", "model")
+    collect_values["thinking"] = thinking
+    collect_values["docker_image"] = _optional_string(harness, "image", "harness")
+    _apply_option_map(
+        collect_values,
+        option_map(HARNESS_CLI_OPTIONS[harness_id]),
+        harness_extra,
+        "harness.extra",
+    )
 
-    for name, flag in _EXECUTION_VALUES.items():
-        if name in execution:
-            _append_value(argv, flag, execution[name])
-    for name, flag in _EXECUTION_BOOLS.items():
-        if name in execution:
-            _append_bool(argv, flag, execution[name], f"execution.{name}")
-    for name, flag in _EXECUTION_SWITCHES.items():
-        if name in execution:
-            _append_switch(argv, flag, execution[name], f"execution.{name}")
-    for name in _string_list(execution, "pass_env", "execution"):
+    pass_env = _string_list(execution, "pass_env", "execution")
+    for name in pass_env:
         if not ENV_NAME_RE.fullmatch(name):
             raise ValueError(f"execution.pass_env contains invalid name: {name}")
-        argv.extend(("--pass-env", name))
+    _apply_option_map(collect_values, execution_specs, execution, "execution")
+    collect_values["pass_env"] = pass_env
 
     redacted = _redact(resolved)
     digest = hashlib.sha256(
@@ -678,7 +537,7 @@ def load_bench_run_plan(
                 "api_key_env": api_key_env,
                 "api_protocol": (
                     api_protocol
-                    or _HARNESS_API_PROTOCOL.get(harness_id)
+                    or HARNESS_API_PROTOCOL.get(harness_id)
                     or ("openai-completions" if base_url is not None else None)
                 ),
                 "thinking": thinking,
@@ -692,23 +551,28 @@ def load_bench_run_plan(
             "execution": _redact(execution),
         },
     }
-    return BenchRunPlan(tuple(argv), exported_environment, provenance, resolved)
+    return BenchRunPlan(
+        argparse.Namespace(**collect_values),
+        exported_environment,
+        provenance,
+        resolved,
+    )
 
 
 @contextmanager
 def temporary_environment(values: Mapping[str, str]) -> Iterator[None]:
     """Apply benchmark-specific environment values for one in-process run."""
 
-    previous = {name: os.environ.get(name) for name in values}
+    previous = {key: os.environ.get(key) for key in values}
     os.environ.update(values)
     try:
         yield
     finally:
-        for name, value in previous.items():
-            if value is None:
-                os.environ.pop(name, None)
+        for key, old in previous.items():
+            if old is None:
+                os.environ.pop(key, None)
             else:
-                os.environ[name] = value
+                os.environ[key] = old
 
 
 __all__ = [

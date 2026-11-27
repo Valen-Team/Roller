@@ -34,7 +34,7 @@ def test_missing_credentials_fail_before_docker_even_on_dry_run(tmp_path, monkey
                 *flags,
             ]
         )
-        with patch("roller.cli._docker_preflight") as docker:
+        with patch("roller.cli.collect._docker_preflight") as docker:
             with pytest.raises(ValueError, match="OPENAI_API_KEY"):
                 _collect(args)
             docker.assert_not_called()

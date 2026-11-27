@@ -26,8 +26,8 @@ class BenchTranscriptTests(unittest.TestCase):
         )
 
         with patch(
-            "roller.benches.transcripts.importlib.import_module",
-            return_value=SimpleNamespace(convert_openclaw_trace=converter),
+            "roller.actf.openclaw.convert_openclaw_trace",
+            converter,
         ):
             session_trajectory(session)
 
@@ -50,8 +50,8 @@ class BenchTranscriptTests(unittest.TestCase):
         )
 
         with patch(
-            "roller.benches.transcripts.importlib.import_module",
-            return_value=SimpleNamespace(convert_claude_code_trace=converter),
+            "roller.actf.claude_code.convert_claude_code_trace",
+            converter,
         ):
             session_trajectory(session)
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from roller.deepseek_actf import convert_deepseek_trace, extract_deepseek_usage
+from roller.harness_registry import convert_native_trace, extract_native_usage
 from roller.harnesses.bridge import (
     BridgeHarness,
     BridgeSession,
@@ -155,12 +155,15 @@ class DeepSeekSession(BridgeSession):
         }
 
     def convert_trace(self, trace: Path, destination: Path) -> dict[str, Any]:
-        return convert_deepseek_trace(
-            trace, destination, keep_thinking=self.harness.config.keep_thinking
+        return convert_native_trace(
+            "deepseek",
+            trace,
+            destination,
+            keep_thinking=self.harness.config.keep_thinking,
         )
 
     def extract_usage(self, trace: Path) -> dict[str, int | float]:
-        return extract_deepseek_usage(trace)
+        return extract_native_usage("deepseek", trace)
 
     def version_fields(self) -> dict[str, Any]:
         config = self.harness.config
@@ -194,3 +197,54 @@ class DeepSeekHarness(BridgeHarness):
 
     name = "deepseek"
     session_class = DeepSeekSession
+
+
+def _deepseek_cli_options():
+    from roller.option_specs import OptionSpec
+
+    return (
+        OptionSpec(
+            "--deepseek-profile",
+            yaml_key="profile",
+            default="sdk-minimal",
+            metavar="NAME",
+            help="native DeepSeek SDK profile (default: sdk-minimal; sdk selects the full native tool set)",
+        ),
+        OptionSpec(
+            "--deepseek-permission-mode",
+            yaml_key="permission_mode",
+            choices=DEEPSEEK_PERMISSION_MODES,
+            help="native DeepSeek permission mode inside the task container (default: the profile's own)",
+        ),
+        OptionSpec(
+            "--deepseek-max-steps",
+            yaml_key="max_steps",
+            type=int,
+            default=12,
+            help="maximum model steps per DeepSeek user turn (default: 12)",
+        ),
+        OptionSpec(
+            "--deepseek-input-modalities",
+            yaml_key="input_modalities",
+            choices=("text", "text,image"),
+            default="text",
+            help="DeepSeek model input capabilities (default: text; text,image lets read_image send images to the model)",
+        ),
+        OptionSpec(
+            "--deepseek-context-length",
+            yaml_key="context_length",
+            type=int,
+            default=128000,
+            help="DeepSeek model context window (default: 128000 tokens)",
+        ),
+        OptionSpec(
+            "--deepseek-output-tokens",
+            yaml_key="output_tokens",
+            type=int,
+            default=8192,
+            help="DeepSeek maximum output tokens (default: 8192)",
+        ),
+    )
+
+
+CLI_OPTIONS = _deepseek_cli_options()
