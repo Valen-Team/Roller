@@ -71,7 +71,11 @@ def _bench(args: argparse.Namespace) -> int:
 def _bench_report(args: argparse.Namespace) -> int:
     output = Path(args.output) if args.output else None
     label, report, written = generate_bench_report(Path(args.run_dir), output=output)
-    print(format_report(label, report))
-    if written is not None:
-        print(f"Report written to {written}")
+    use_json = bool(getattr(args, "json", False)) or getattr(args, "format", "text") == "json"
+    if use_json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print(format_report(label, report))
+        if written is not None:
+            print(f"Report written to {written}")
     return 0

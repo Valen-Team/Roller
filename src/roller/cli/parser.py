@@ -280,6 +280,17 @@ def _build_parser() -> argparse.ArgumentParser:
     bench_report.add_argument(
         "--output", "-o", help="also write the report JSON to this path"
     )
+    bench_report.add_argument(
+        "--json",
+        action="store_true",
+        help="print the report JSON to stdout without summary formatting",
+    )
+    bench_report.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="stdout output format (default: text)",
+    )
 
     collect = subparsers.add_parser("collect", help="collect trajectories")
     task_source = collect.add_mutually_exclusive_group(required=True)
