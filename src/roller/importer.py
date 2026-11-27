@@ -1,18 +1,20 @@
-"""Import the local sessions of Claude Code and Codex as a Roller run.
+"""Import the local sessions of Claude Code, Codex, and OpenCode as a Roller run.
 
 Each session becomes one sample: its native session as ``trace.jsonl``, the
 ACTF trajectory and, when one can be made, the SFT record, so ``roller view``
-and ``roller export`` read it like a collected sample. A session whose file has
-not changed since the last import is left as it is.
+and ``roller export`` read it like a collected sample. A session whose file or
+per-session digest has not changed since the last import is left as it is.
 """
 
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import io
 import json
 import os
 import shutil
+import sqlite3
 from collections import Counter
 from collections.abc import Iterator
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -84,6 +86,8 @@ class Session:
     project: str
     size: int
     mtime: float
+    source_kind: str = "file"
+    digest: str | None = None
 
 
 @dataclass
@@ -199,7 +203,11 @@ def _probe(path: Path) -> Session | str | None:
                         info.update(candidate)
                         if info.get("id") and info.get("directory"):
                             break
-            elif rtype == "request" and not fallback_id and record.get("native_session_id"):
+            elif (
+                rtype == "request"
+                and not fallback_id
+                and record.get("native_session_id")
+            ):
                 fallback_id = str(record["native_session_id"])
         if info.get("parentID"):
             return "subagent"
@@ -231,6 +239,257 @@ def _probe(path: Path) -> Session | str | None:
     )
 
 
+def _opencode_export_bytes(export_record: dict[str, Any]) -> tuple[bytes, str]:
+    payload = (json.dumps(export_record, ensure_ascii=False) + "\n").encode("utf-8")
+    return payload, hashlib.sha256(payload).hexdigest()
+
+
+def _opencode_db_build_export(
+    conn: sqlite3.Connection, session_row: dict[str, Any]
+) -> dict[str, Any]:
+    sid = str(session_row["id"])
+    created = session_row.get("time_created")
+    updated = session_row.get("time_updated")
+    time_obj: dict[str, Any] = {}
+    if created is not None:
+        time_obj["created"] = created
+    if updated is not None:
+        time_obj["updated"] = updated
+    info: dict[str, Any] = {
+        "id": sid,
+        "directory": session_row.get("directory") or "",
+        "title": session_row.get("title") or "",
+        "version": session_row.get("version") or "",
+        "time": time_obj,
+    }
+    if session_row.get("parent_id"):
+        info["parentID"] = session_row["parent_id"]
+
+    msg_rows = conn.execute(
+        "SELECT id, time_created, time_updated, data FROM message "
+        "WHERE session_id = ? ORDER BY time_created ASC, id ASC",
+        (sid,),
+    ).fetchall()
+    part_rows = conn.execute(
+        "SELECT id, message_id, time_created, time_updated, data FROM part "
+        "WHERE session_id = ? ORDER BY time_created ASC, id ASC",
+        (sid,),
+    ).fetchall()
+
+    parts_by_msg: dict[str, list[dict[str, Any]]] = {}
+    for row in part_rows:
+        part_data = json.loads(row["data"]) if isinstance(row["data"], str) else {}
+        if not isinstance(part_data, dict):
+            continue
+        part_data.setdefault("id", row["id"])
+        part_data.setdefault("messageID", row["message_id"])
+        part_data.setdefault("sessionID", sid)
+        parts_by_msg.setdefault(str(row["message_id"]), []).append(part_data)
+
+    messages: list[dict[str, Any]] = []
+    for row in msg_rows:
+        msg_data = json.loads(row["data"]) if isinstance(row["data"], str) else {}
+        if not isinstance(msg_data, dict):
+            continue
+        msg_data.setdefault("id", row["id"])
+        msg_data.setdefault("sessionID", sid)
+        if "time" not in msg_data and row["time_created"] is not None:
+            msg_data["time"] = {"created": row["time_created"]}
+        mid = str(msg_data["id"])
+        messages.append({"info": msg_data, "parts": parts_by_msg.get(mid, [])})
+
+    return {"type": "session_export", "data": {"info": info, "messages": messages}}
+
+
+def _opencode_db_sessions(db_path: Path) -> tuple[list[Session], int]:
+    if not db_path.is_file():
+        return [], 0
+    sessions: list[Session] = []
+    subagents = 0
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if not {"session", "message", "part"}.issubset(tables):
+            return [], 0
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(session)").fetchall()}
+        wanted = [
+            col
+            for col in (
+                "id",
+                "parent_id",
+                "directory",
+                "title",
+                "version",
+                "time_created",
+                "time_updated",
+            )
+            if col in cols
+        ]
+        if "id" not in wanted:
+            return [], 0
+        select_sql = f"SELECT {', '.join(wanted)} FROM session"
+        db_mtime = db_path.stat().st_mtime
+        for raw_row in conn.execute(select_sql).fetchall():
+            row = dict(raw_row)
+            if row.get("parent_id"):
+                subagents += 1
+                continue
+            export_record = _opencode_db_build_export(conn, row)
+            payload, digest = _opencode_export_bytes(export_record)
+            updated = row.get("time_updated") or row.get("time_created")
+            mtime = (
+                float(updated) / 1000.0
+                if isinstance(updated, (int, float)) and not isinstance(updated, bool)
+                else db_mtime
+            )
+            sessions.append(
+                Session(
+                    OPENCODE,
+                    db_path,
+                    str(row["id"]),
+                    _opencode_iso(row.get("time_created")),
+                    _project(row.get("directory")),
+                    len(payload),
+                    mtime,
+                    source_kind="opencode-db",
+                    digest=digest,
+                )
+            )
+    finally:
+        conn.close()
+    return sessions, subagents
+
+
+def _materialize_opencode_db_session(db_path: Path, session_id: str) -> bytes:
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        raw_row = conn.execute(
+            "SELECT * FROM session WHERE id = ?", (session_id,)
+        ).fetchone()
+        if raw_row is None:
+            raise ValueError(f"OpenCode session not found in {db_path}: {session_id}")
+        export_record = _opencode_db_build_export(conn, dict(raw_row))
+        payload, _ = _opencode_export_bytes(export_record)
+        return payload
+    finally:
+        conn.close()
+
+
+def _opencode_storage_build_export(
+    storage_dir: Path, session_file: Path
+) -> dict[str, Any] | None:
+    try:
+        info = json.loads(session_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(info, dict):
+        return None
+    sid = str(info.get("id") or session_file.stem)
+    info.setdefault("id", sid)
+    msg_dir = storage_dir / "message" / sid
+    raw_messages: list[dict[str, Any]] = []
+    if msg_dir.is_dir():
+        for msg_file in sorted(msg_dir.glob("*.json")):
+            try:
+                msg_info = json.loads(msg_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(msg_info, dict):
+                continue
+            mid = str(msg_info.get("id") or msg_file.stem)
+            msg_info.setdefault("id", mid)
+            msg_info.setdefault("sessionID", sid)
+            raw_messages.append(msg_info)
+    raw_messages.sort(
+        key=lambda m: (
+            (m.get("time") or {}).get("created", 0)
+            if isinstance(m.get("time"), dict)
+            else 0,
+            str(m.get("id", "")),
+        )
+    )
+    messages: list[dict[str, Any]] = []
+    for msg_info in raw_messages:
+        mid = str(msg_info["id"])
+        part_dir = storage_dir / "part" / mid
+        msg_parts: list[dict[str, Any]] = []
+        if part_dir.is_dir():
+            for part_file in sorted(part_dir.glob("*.json")):
+                try:
+                    part_data = json.loads(part_file.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if not isinstance(part_data, dict):
+                    continue
+                part_data.setdefault("id", part_file.stem)
+                part_data.setdefault("messageID", mid)
+                part_data.setdefault("sessionID", sid)
+                msg_parts.append(part_data)
+        msg_parts.sort(key=lambda p: str(p.get("id", "")))
+        messages.append({"info": msg_info, "parts": msg_parts})
+    return {"type": "session_export", "data": {"info": info, "messages": messages}}
+
+
+def _opencode_storage_sessions(storage_dir: Path) -> tuple[list[Session], int]:
+    session_root = storage_dir / "session"
+    if not session_root.is_dir():
+        return [], 0
+    sessions: list[Session] = []
+    subagents = 0
+    for session_file in sorted(session_root.rglob("*.json")):
+        export_record = _opencode_storage_build_export(storage_dir, session_file)
+        if export_record is None:
+            continue
+        info = export_record["data"]["info"]
+        if info.get("parentID"):
+            subagents += 1
+            continue
+        payload, digest = _opencode_export_bytes(export_record)
+        time_obj = info.get("time") or {}
+        updated = time_obj.get("updated") or time_obj.get("created")
+        mtime = (
+            float(updated) / 1000.0
+            if isinstance(updated, (int, float)) and not isinstance(updated, bool)
+            else session_file.stat().st_mtime
+        )
+        sessions.append(
+            Session(
+                OPENCODE,
+                session_file,
+                str(info["id"]),
+                _opencode_iso(time_obj.get("created")),
+                _project(info.get("directory")),
+                len(payload),
+                mtime,
+                source_kind="opencode-storage",
+                digest=digest,
+            )
+        )
+    return sessions, subagents
+
+
+def _materialize_opencode_storage_session(session_file: Path, session_id: str) -> bytes:
+    # session_file is <storage_dir>/session/.../<id>.json
+    storage_dir = next(
+        (parent for parent in session_file.parents if parent.name == "storage"),
+        session_file.parent.parent.parent,
+    )
+    export_record = _opencode_storage_build_export(storage_dir, session_file)
+    if export_record is None:
+        raise ValueError(
+            f"OpenCode storage session not readable at {session_file}: {session_id}"
+        )
+    payload, _ = _opencode_export_bytes(export_record)
+    return payload
+
+
 def discover(
     paths: list[Path],
     harness: str | None = None,
@@ -240,33 +499,36 @@ def discover(
     """Find the sessions under ``paths`` and count the subagent sessions left out."""
 
     files: list[Path] = []
+    db_paths: list[Path] = []
+    storage_dirs: list[Path] = []
     for root in paths:
-        files += (
-            [root]
-            if root.is_file()
-            else sorted(
+        if root.is_file():
+            if root.name == "opencode.db":
+                db_paths.append(root)
+            else:
+                files.append(root)
+        elif root.is_dir():
+            if (root / "opencode.db").is_file():
+                db_paths.append(root / "opencode.db")
+            if (root / "storage" / "session").is_dir():
+                storage_dirs.append(root / "storage")
+            elif root.name == "storage" and (root / "session").is_dir():
+                storage_dirs.append(root)
+            files += sorted(
                 path
                 for path in root.rglob("*")
                 if path.name.endswith((".jsonl", ".jsonl.zst"))
             )
-        )
     subagents = 0
     chosen: dict[tuple[str, str], Session] = {}
-    for path in files:
-        if "subagents" in path.parts or path.name.startswith("agent-"):
-            subagents += 1
-            continue
-        session = _probe(path)
-        if session == "subagent":
-            subagents += 1
-        if not isinstance(session, Session):
-            continue
+
+    def consider(session: Session) -> None:
         key = (session.harness, session.session_id)
         # A live session over its compressed or archived copy; the longest
         # file of a Claude Code session that was continued in another project.
         rank = (
-            "archived_sessions" in path.parts,
-            path.name.endswith(".zst"),
+            "archived_sessions" in session.path.parts,
+            session.path.name.endswith(".zst"),
             -session.size,
         )
         current = chosen.get(key)
@@ -276,6 +538,29 @@ def discover(
             -current.size,
         ):
             chosen[key] = session
+
+    for db_path in db_paths:
+        db_sessions, db_subagents = _opencode_db_sessions(db_path)
+        subagents += db_subagents
+        for session in db_sessions:
+            consider(session)
+
+    for storage_dir in storage_dirs:
+        storage_sessions, storage_subagents = _opencode_storage_sessions(storage_dir)
+        subagents += storage_subagents
+        for session in storage_sessions:
+            consider(session)
+
+    for path in files:
+        if "subagents" in path.parts or path.name.startswith("agent-"):
+            subagents += 1
+            continue
+        session = _probe(path)
+        if session == "subagent":
+            subagents += 1
+        if not isinstance(session, Session):
+            continue
+        consider(session)
     sessions = [
         session
         for session in chosen.values()
@@ -347,8 +632,10 @@ def _metadata(session: Session, trace: Path) -> dict[str, Any]:
         info: dict[str, Any] = {}
         for event in events:
             if event.get("type") == "session_export":
-                info = {**info, **(event.get("data", {}).get("info") or {})}
-            elif event.get("type") == "event" and (event.get("event") or {}).get("type") in {
+                info = {**info, **((event.get("data") or {}).get("info") or {})}
+            elif event.get("type") == "event" and (event.get("event") or {}).get(
+                "type"
+            ) in {
                 "session.created",
                 "session.updated",
             }:
@@ -370,7 +657,9 @@ def _metadata(session: Session, trace: Path) -> dict[str, Any]:
         return {
             "model": models.most_common(1)[0][0] if models else "unknown",
             "models": sorted(models),
-            "title": _title_text(info["title"]) if info.get("title") else first_text or None,
+            "title": _title_text(info["title"])
+            if info.get("title")
+            else first_text or None,
             "cwd": info.get("directory"),
             "cli_version": info.get("version"),
             "git": git,
@@ -472,19 +761,36 @@ def import_session(
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
     trace = staging / "trace.jsonl"
-    with session.path.open("rb") as source, trace.open("wb") as target:
-        shutil.copyfileobj(
-            zstandard.ZstdDecompressor().stream_reader(source, read_across_frames=True)
-            if session.path.name.endswith(".zst")
-            else source,
-            target,
+    if session.source_kind == "opencode-db":
+        trace.write_bytes(
+            _materialize_opencode_db_session(session.path, session.session_id)
         )
-    convert = {
-        CLAUDE_CODE: convert_claude_code_trace,
-        CODEX: convert_codex_trace,
-        OPENCODE: convert_opencode_trace,
-    }[session.harness]
-    trajectory = convert(trace, staging / "trace_ACTF.json")
+    elif session.source_kind == "opencode-storage":
+        trace.write_bytes(
+            _materialize_opencode_storage_session(session.path, session.session_id)
+        )
+    else:
+        with session.path.open("rb") as source, trace.open("wb") as target:
+            shutil.copyfileobj(
+                zstandard.ZstdDecompressor().stream_reader(
+                    source, read_across_frames=True
+                )
+                if session.path.name.endswith(".zst")
+                else source,
+                target,
+            )
+    if session.harness == OPENCODE:
+        trajectory = convert_opencode_trace(
+            trace,
+            staging / "trace_ACTF.json",
+            require_captured_requests=False,
+        )
+    else:
+        convert = {
+            CLAUDE_CODE: convert_claude_code_trace,
+            CODEX: convert_codex_trace,
+        }[session.harness]
+        trajectory = convert(trace, staging / "trace_ACTF.json")
     if not trajectory["steps"]:
         shutil.rmtree(staging)
         return None
@@ -555,6 +861,11 @@ def import_session(
                 "source_path": str(session.path.resolve()),
                 "source_size": session.size,
                 "source_mtime": session.mtime,
+                **(
+                    {"source_digest": session.digest}
+                    if session.digest is not None
+                    else {}
+                ),
                 "session_id": session.session_id,
                 "cwd": metadata["cwd"],
                 "cli_version": metadata["cli_version"],
@@ -612,10 +923,13 @@ def import_sessions(
             next_index += 1
             continue
         source = (previous[1].get("provenance") or {}).get("import") or {}
-        if (source.get("source_size"), source.get("source_mtime")) == (
-            session.size,
-            session.mtime,
-        ):
+        unchanged = (
+            source.get("source_digest") == session.digest
+            if session.digest is not None
+            else (source.get("source_size"), source.get("source_mtime"))
+            == (session.size, session.mtime)
+        )
+        if unchanged:
             summary.unchanged += 1
         else:
             jobs.append((session, int(previous[1]["source_index"]), previous[0]))

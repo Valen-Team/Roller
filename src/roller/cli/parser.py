@@ -147,7 +147,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     importer = subparsers.add_parser(
         "import",
-        help="import the local sessions of Claude Code and Codex as a Roller run",
+        help="import the local sessions of Claude Code, Codex, and OpenCode as a Roller run",
     )
     importer.add_argument(
         "paths",

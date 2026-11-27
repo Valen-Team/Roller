@@ -109,11 +109,31 @@ def _tool_result_content(result: str, attachments: list[Any]) -> list[dict[str, 
     return content
 
 
+def _json_type(value: Any) -> dict[str, Any]:
+    if isinstance(value, bool):
+        return {"type": "boolean"}
+    if isinstance(value, int):
+        return {"type": "integer"}
+    if isinstance(value, float):
+        return {"type": "number"}
+    if isinstance(value, str):
+        return {"type": "string"}
+    if isinstance(value, list):
+        return {"type": "array"}
+    if isinstance(value, dict):
+        return {"type": "object"}
+    return {}
+
+
 def opencode_events_to_actf(
-    events: Iterable[dict[str, Any]], *, keep_thinking: bool = True
+    events: Iterable[dict[str, Any]],
+    *,
+    keep_thinking: bool = True,
+    require_captured_requests: bool = True,
 ) -> dict[str, Any]:
     events = list(events)
     schemas, systems = {}, []
+    has_requests = False
     roots = root_session_ids(events)
     for event in events:
         if event.get("type") != "request":
@@ -124,6 +144,7 @@ def opencode_events_to_actf(
             and event["native_session_id"] not in roots
         ):
             continue
+        has_requests = True
         body = event["body"]
         for tool in body.get("tools", []):
             name = tool.get("function", {}).get("name")
@@ -139,9 +160,10 @@ def opencode_events_to_actf(
                     raise ValueError("OpenCode system prompt must be text")
                 if text not in systems:
                     systems.append(text)
-    if not systems:
+    if not systems and require_captured_requests:
         raise ValueError("OpenCode journal has no captured system prompt")
     rows, calls_seen = [], set()
+    inferred_tools: dict[str, dict[str, dict[str, Any]]] = {}
     sft_unavailable_reason = None
     for native in native_messages(events, root_only=True):
         info, parts = native["info"], native["parts"]
@@ -182,9 +204,14 @@ def opencode_events_to_actf(
                 if not call_id or call_id in calls_seen:
                     raise ValueError("OpenCode tool call ID is missing or repeated")
                 if name not in schemas:
-                    raise ValueError(
-                        f"OpenCode tool call has no captured schema: {name}"
-                    )
+                    if require_captured_requests:
+                        raise ValueError(
+                            f"OpenCode tool call has no captured schema: {name}"
+                        )
+                    fields = inferred_tools.setdefault(name, {})
+                    for key, value in arguments.items():
+                        if isinstance(key, str):
+                            fields.setdefault(key, _json_type(value))
                 calls_seen.add(call_id)
                 content.append(
                     {
@@ -285,22 +312,52 @@ def opencode_events_to_actf(
             }
         )
         rows.extend(results)
+    all_tools = list(schemas.values()) + [
+        {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": "Tool invoked by OpenCode.",
+                "parameters": {
+                    "type": "object",
+                    "properties": fields,
+                    "additionalProperties": True,
+                },
+            },
+        }
+        for name, fields in inferred_tools.items()
+    ]
     trajectory = openclaw_events_to_actf(
         rows,
-        system_prompts=["\n\n".join(systems)],
-        tools=list(schemas.values()),
+        system_prompts=["\n\n".join(systems)] if systems else [],
+        tools=all_tools,
         keep_thinking=keep_thinking,
     )
+    if schemas and inferred_tools:
+        tools_capture = {"source": "requests", "status": "captured_merged"}
+    elif inferred_tools:
+        tools_capture = {"source": "session", "status": "inferred"}
+    elif schemas or has_requests:
+        tools_capture = {"source": "requests", "status": "captured"}
+    else:
+        tools_capture = {"source": "none", "status": "missing"}
+    trajectory["tools_capture"] = tools_capture
     if sft_unavailable_reason:
         trajectory["sft_unavailable_reason"] = sft_unavailable_reason
     return trajectory
 
 
 def convert_opencode_trace(
-    source: Path, destination: Path, *, keep_thinking: bool = True
+    source: Path,
+    destination: Path,
+    *,
+    keep_thinking: bool = True,
+    require_captured_requests: bool = True,
 ) -> dict[str, Any]:
     trajectory = opencode_events_to_actf(
-        read_opencode_events(source), keep_thinking=keep_thinking
+        read_opencode_events(source),
+        keep_thinking=keep_thinking,
+        require_captured_requests=require_captured_requests,
     )
     atomic_write_json(destination, trajectory)
     return trajectory
