@@ -414,6 +414,8 @@ ruff format --check
     <td align="center">
       <a href="https://github.com/Credica"><img src="https://github.com/Credica.png?size=128" width="64" height="64" alt="Credica"><br><sub><b>Credica</b></sub></a>
     </td>
+  </tr>
+  <tr>
     <td align="center">
       <a href="https://github.com/Orion-DH"><img src="https://github.com/Orion-DH.png?size=128" width="64" height="64" alt="Orion-DH"><br><sub><b>Orion-DH</b></sub></a>
     </td>
@@ -425,6 +427,12 @@ ruff format --check
     </td>
     <td align="center">
       <a href="https://github.com/yuhangzang"><img src="https://github.com/yuhangzang.png?size=128" width="64" height="64" alt="yuhangzang"><br><sub><b>yuhangzang</b></sub></a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/arpitgoswami"><img src="https://github.com/arpitgoswami.png?size=128" width="64" height="64" alt="arpitgoswami"><br><sub><b>arpitgoswami</b></sub></a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/s1reyash"><img src="https://github.com/s1reyash.png?size=128" width="64" height="64" alt="s1reyash"><br><sub><b>s1reyash</b></sub></a>
     </td>
   </tr>
 </table>
