@@ -14,11 +14,10 @@ per question; five is the number the benchmark reports.
 
 ## Setup
 
-The `zerobench` extra reads the dataset. The Harness options below are not
-released yet, so install from Git:
+The `zerobench` extra reads the dataset:
 
 ```bash
-pip install 'roller-agent[zerobench] @ git+https://github.com/Valen-Team/Roller.git'
+pip install 'roller-agent[zerobench]'
 ```
 
 You need a sandbox provider registered under the `roller.sandbox_providers`

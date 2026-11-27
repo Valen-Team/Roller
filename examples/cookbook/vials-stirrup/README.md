@@ -1,7 +1,7 @@
 # VIALS with Stirrup
 
 Collect and grade [VIALS](https://huggingface.co/datasets/handshake-ai-research/VIALS)
-with tools. The agent is Stirrup 0.2.1 with `code_exec`, `view_image` and
+with tools. The agent is Stirrup 0.2.2 with `code_exec`, `view_image` and
 `finish`. The task follows the tool-assisted agent adapter of VIALS: its prompt,
 the question's images as files under `/task`, and the answer read from the last
 `ANSWER:` line of `/task/answer.txt`. Each of the 161 questions runs three
@@ -10,10 +10,10 @@ times, and the report gives pass^3, avg@3 and pass@3.
 ## Setup
 
 The `stirrup` extra needs Python 3.12 or later; the `vials` extra reads the
-dataset. Both options are not released yet, so install from Git:
+dataset:
 
 ```bash
-pip install 'roller-agent[stirrup,vials] @ git+https://github.com/Valen-Team/Roller.git'
+pip install 'roller-agent[stirrup,vials]'
 ```
 
 Build the tools image: Python 3.13 with the eleven Python packages the prompt
