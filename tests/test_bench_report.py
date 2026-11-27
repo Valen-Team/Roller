@@ -559,6 +559,51 @@ class BenchReportCommandTests(unittest.TestCase):
         with self.assertRaisesRegex(TaskFormatError, "no bench samples"):
             self._report()
 
+    def test_json_and_format_json_print_valid_json_without_extra_text(self) -> None:
+        from roller.cli import main
+
+        self._info(total=1)
+        self._sample("t1", score=1.0)
+        out_path = self.run_dir / "custom-report.json"
+
+        for argv in (
+            ["bench", "report", str(self.run_dir), "--json", "--output", str(out_path)],
+            ["bench", "report", str(self.run_dir), "--format", "json"],
+        ):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                with self.assertRaises(SystemExit) as ctx:
+                    main(argv)
+            self.assertEqual(ctx.exception.code, 0)
+            parsed = json.loads(buf.getvalue())
+            self.assertEqual(parsed["task_count"], 1)
+            self.assertEqual(parsed["scored_count"], 1)
+            self.assertNotIn("Report written to", buf.getvalue())
+
+        self.assertTrue(out_path.is_file())
+        self.assertEqual(json.loads(out_path.read_text(encoding="utf-8")), parsed)
+
+        text_buf = io.StringIO()
+        with contextlib.redirect_stdout(text_buf):
+            with self.assertRaises(SystemExit) as ctx:
+                main(["bench", "report", str(self.run_dir), "--format", "text"])
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertIn("model  model-a", text_buf.getvalue())
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                main(
+                    [
+                        "bench",
+                        "report",
+                        str(self.run_dir),
+                        "--json",
+                        "--format",
+                        "text",
+                    ]
+                )
+        self.assertEqual(ctx.exception.code, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

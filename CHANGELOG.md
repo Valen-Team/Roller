@@ -4,6 +4,10 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 
 ## Unreleased
 
+### Added
+
+- `roller bench report --json` and `--format json` print the benchmark report JSON directly to stdout without summary formatting.
+
 ## 0.7.0 - 2026-11-27
 
 Roller 0.7.0 adds the Stirrup Harness, Claude Code remote sandbox execution, the VIALS and ZeroBench bench adapters, OpenAI multimodal SFT records with XTuner export, `--training-files-only` compact runs, upgraded pinned Harness versions, and a decoupled layered module architecture.
