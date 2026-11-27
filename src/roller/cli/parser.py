@@ -289,7 +289,7 @@ def _build_parser() -> argparse.ArgumentParser:
     bench_report_format.add_argument(
         "--format",
         choices=("text", "json"),
-        default="text",
+        default=None,
         help="stdout output format (default: text)",
     )
 

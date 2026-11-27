@@ -72,7 +72,7 @@ def _bench_report(args: argparse.Namespace) -> int:
     output = Path(args.output) if args.output else None
     label, report, written = generate_bench_report(Path(args.run_dir), output=output)
     use_json = (
-        bool(getattr(args, "json", False)) or getattr(args, "format", "text") == "json"
+        bool(getattr(args, "json", False)) or getattr(args, "format", None) == "json"
     )
     if use_json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
