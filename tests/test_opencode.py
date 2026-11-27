@@ -713,7 +713,7 @@ class FakeRuntime(DockerRuntime):
         if args[:2] == ["image", "inspect"]:
             stdout = "sha256:test"
         elif args[-1] == "--check":
-            stdout = "1.18.30"
+            stdout = "1.19.6"
         elif args[-1].endswith("/result.json"):
             stdout = json.dumps(self.result)
         elif args[0] == "cp" and args[1].endswith(".opencode-turn.json"):
@@ -865,14 +865,14 @@ class OpenCodeHarnessTests(unittest.TestCase):
         self.assertEqual(
             locked,
             {
-                "docker_image": "roller-opencode:1.18.30",
+                "docker_image": "roller-opencode:1.19.6",
                 "container_user": "0",
                 "network": "host",
                 "api_base": "https://opencode.example/v1",
                 "api_key_env": "LOCAL_TEST_KEY",
                 "reasoning_effort": None,
                 "max_steps": 12,
-                "opencode_version": "1.18.30",
+                "opencode_version": "1.19.6",
                 "context_length": 128000,
                 "output_tokens": 8192,
                 "vision": True,

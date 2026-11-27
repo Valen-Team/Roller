@@ -16,8 +16,8 @@ from roller.models import RunRequest
 from roller.native_images import attached_images
 from roller.thinking import normalize_thinking, resolve_thinking
 
-OPENCODE_VERSION = "1.18.30"
-DEFAULT_OPENCODE_IMAGE = "roller-opencode:1.18.30"
+OPENCODE_VERSION = "1.19.6"
+DEFAULT_OPENCODE_IMAGE = "roller-opencode:1.19.6"
 RUNNER_PATH = Path(__file__).resolve().parents[1] / "assets" / "opencode" / "runner.py"
 STATE = "/roller/opencode-state"
 RUNNER = "/roller/opencode_runner.py"

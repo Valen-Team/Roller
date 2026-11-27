@@ -1022,14 +1022,14 @@ class HermesCliTests(unittest.TestCase):
         self.assertEqual(
             default,
             {
-                "docker_image": "roller-hermes:d15ed4445207",
+                "docker_image": "roller-hermes:8fc037444731",
                 "container_user": "0",
                 "network": "host",
                 "api_base": "https://hermes.example/v1",
                 "api_key_env": "HERMES_KEY",
                 "reasoning_effort": None,
                 "max_iterations": 12,
-                "hermes_revision": "d15ed4445207dda418b984e8bda0f68f48b8c6f3",
+                "hermes_revision": "8fc0374447313e276f6b9a2764bfc750190c966a",
                 "context_length": None,
                 "vision": True,
                 "toolsets": ["terminal", "file", "vision"],

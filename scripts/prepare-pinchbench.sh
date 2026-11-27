@@ -26,7 +26,7 @@ if [[ "$actual_revision" != "$expected_revision" ]]; then
   exit 1
 fi
 
-image_tag="ghcr.io/openclaw/openclaw:2026.7.1-2"
+image_tag="ghcr.io/openclaw/openclaw:2026.11.10"
 if ! docker image inspect "$image_tag" >/dev/null 2>&1; then
   docker pull --platform linux/amd64 "$image_tag"
 fi

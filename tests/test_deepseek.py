@@ -166,21 +166,21 @@ class DeepSeekProfileTests(unittest.TestCase):
         session = harness.create_session(
             RunRequest(0, Task("test", ("one",), 0), "model", 60), Path("unused"), 1
         )
-        session.version = "0.1.5rc1"
+        session.version = "0.2.2rc2"
         return session
 
     def test_default_lock_settings_and_environment_are_unchanged(self):
         self.assertEqual(
             locked_configuration(),
             {
-                "docker_image": "roller-deepseek:0.1.5rc1",
+                "docker_image": "roller-deepseek:0.2.2rc2",
                 "container_user": "0",
                 "network": "host",
                 "api_base": "https://deepseek.example/v1",
                 "api_key_env": "LOCAL_TEST_KEY",
                 "reasoning_effort": None,
                 "max_steps": 12,
-                "deepseek_version": "0.1.5rc1",
+                "deepseek_version": "0.2.2rc2",
                 "context_length": 128000,
                 "output_tokens": 8192,
                 "tools": ["bash"],
@@ -212,7 +212,7 @@ class DeepSeekProfileTests(unittest.TestCase):
         )
         self.assertEqual(
             session.version_fields(),
-            {"deepseek_version": "0.1.5rc1", "profile": "sdk-minimal"},
+            {"deepseek_version": "0.2.2rc2", "profile": "sdk-minimal"},
         )
         self.assertEqual(session.turn_options(60)["profile"], "sdk-minimal")
         self.assertEqual(
@@ -243,7 +243,7 @@ class DeepSeekProfileTests(unittest.TestCase):
         self.assertEqual(
             session.version_fields(),
             {
-                "deepseek_version": "0.1.5rc1",
+                "deepseek_version": "0.2.2rc2",
                 "profile": "sdk",
                 "permission_mode": "danger-full-access",
             },
@@ -575,7 +575,7 @@ class FakeRuntime(DockerRuntime):
         if args[:2] == ["image", "inspect"]:
             stdout = "sha256:test"
         elif args[-1] == "--check":
-            stdout = "0.1.5rc1"
+            stdout = "0.2.2rc2"
         elif args[-1].endswith("/result.json"):
             stdout = json.dumps(self.result)
         elif args[0] == "cp" and args[1].endswith(

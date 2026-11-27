@@ -9,7 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 
-VERSION = "1.18.30"
+VERSION = "1.19.6"
 TOOLS = ("bash", "read", "write", "edit", "apply_patch", "glob", "grep", "skill")
 EXPLORE_TOOLS = ("bash", "read", "glob", "grep")
 

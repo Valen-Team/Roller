@@ -337,7 +337,7 @@ wheels = [
 
 [[package]]
 name = "e2b"
-version = "2.64.0"
+version = "2.66.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs", marker = "python_full_version >= '3.11' or (extra == 'extra-12-roller-agent-pdf' and extra == 'extra-12-roller-agent-stirrup')" },
@@ -353,9 +353,9 @@ dependencies = [
     { name = "typing-extensions", marker = "python_full_version >= '3.11' or (extra == 'extra-12-roller-agent-pdf' and extra == 'extra-12-roller-agent-stirrup')" },
     { name = "wcmatch", marker = "python_full_version >= '3.11' or (extra == 'extra-12-roller-agent-pdf' and extra == 'extra-12-roller-agent-stirrup')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/09/54b9afeb22f8af273c53bbdf10111f9e7f0ed98024c5b3926b386ddaa795/e2b-2.64.0.tar.gz", hash = "sha256:dbf6d9f673a0869dc34b1c73307dad1f7eedbd28101b4a25a8efd02f94b0b073", size = 279229, upload-time = "2026-11-13T19:10:37.087Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/6c/52195262f313445e31a8d0ce36fdd71fbdbc0fb3b57c48222ac0cdf95e6f/e2b-2.66.0.tar.gz", hash = "sha256:425cea78e36e2709baeb70c71079506df4edd4c94291950de7d5627e0e1473bd", size = 289165, upload-time = "2026-11-26T16:27:52.141Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7f/9b/ba5ea8c1e0c4884448d37c3aad6281ed2bd3edea2ca164784cf8bad8397b/e2b-2.64.0-py3-none-any.whl", hash = "sha256:a5fff266802661796539574878d82dbb8a17823be3013a6aeff1460b4cff1682", size = 438428, upload-time = "2026-11-13T19:10:35.601Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/e2/7bdb8af81902d90850a71d04b83de9118cefe38d1cf38a3f7c02d56e83d7/e2b-2.66.0-py3-none-any.whl", hash = "sha256:2d784610e86bcd7ba8c285604256681ae262c93a9f7b0f1db124ef9296ee77a0", size = 453696, upload-time = "2026-11-26T16:27:50.652Z" },
 ]
 
 [[package]]
@@ -1626,15 +1626,15 @@ name = "pillow"
 version = "13.0.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
-    "python_full_version == '3.11.*' and sys_platform == 'win32'",
-    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'win32'",
+    "python_full_version == '3.11.*' and sys_platform == 'emscripten'",
+    "python_full_version == '3.11.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ce/a4/9cc30690a394a8305e8be4c9036aa16d0dfddadd09079860b582f562496d/pillow-13.0.0.tar.gz", hash = "sha256:cdcd1ba258178f7356d74170c9a81ba4eab6a5d55748bc402a5a2a6fe6be3510", size = 47058631, upload-time = "2026-10-16T22:18:09.718Z" }
 wheels = [
@@ -2513,7 +2513,7 @@ zerobench = [
 [package.metadata]
 requires-dist = [
     { name = "datasets", marker = "extra == 'zerobench'", specifier = ">=2.14" },
-    { name = "e2b", marker = "python_full_version >= '3.11' and extra == 'e2b'", specifier = "==2.64.0" },
+    { name = "e2b", marker = "python_full_version >= '3.11' and extra == 'e2b'", specifier = "==2.66.0" },
     { name = "jsonschema", marker = "extra == 'test'" },
     { name = "pillow", marker = "python_full_version >= '3.11' and extra == 'pdf'", specifier = ">=13" },
     { name = "pillow", marker = "extra == 'zerobench'", specifier = ">=10" },
@@ -2522,7 +2522,7 @@ requires-dist = [
     { name = "pypdfium2", marker = "python_full_version >= '3.11' and extra == 'pdf'", specifier = ">=4.30" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
-    { name = "stirrup", marker = "python_full_version >= '3.12' and extra == 'stirrup'", specifier = "==0.2.1" },
+    { name = "stirrup", marker = "python_full_version >= '3.12' and extra == 'stirrup'", specifier = "==0.2.2" },
     { name = "tomli", marker = "python_full_version < '3.11' and extra == 'test'" },
     { name = "zstandard", specifier = ">=0.22" },
 ]
@@ -2819,7 +2819,7 @@ wheels = [
 
 [[package]]
 name = "stirrup"
-version = "0.2.1"
+version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "python_full_version >= '3.12'" },
@@ -2834,9 +2834,9 @@ dependencies = [
     { name = "tenacity", marker = "python_full_version >= '3.12'" },
     { name = "trafilatura", marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/94/6ce12d2e35bb54909b1f675143e931ea609afb596638deb3f60ac36b7ca7/stirrup-0.2.1.tar.gz", hash = "sha256:b9cf35ef54e96c460e44d975666dd6508835b2417350a3b7d0d4324252456086", size = 125965, upload-time = "2026-10-22T05:11:37.69Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7f/4a/03c03675b0844fe3d78d4b24361d22cbe700ee5ba8d1dc7d2ecbf6de0959/stirrup-0.2.2.tar.gz", hash = "sha256:2fb06e6f60776a636ff828d517a79464abf36682ca6345c513649948a0ae4776", size = 126711, upload-time = "2026-11-20T20:25:48.709Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/76/066a4c55f74d7e4304e78c45005c5ef8e7a2af724d8b6268d99fbaed9cc5/stirrup-0.2.1-py3-none-any.whl", hash = "sha256:7c48efb398b7dd44b20219747114e905dc7d676e128ca25ac78340bac23b0935", size = 146122, upload-time = "2026-10-22T05:11:36.599Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/3f/338b9e9a1119a809c6fcc3b7abfa9d6d564d109b5f2b44dd3da8cfc8d989/stirrup-0.2.2-py3-none-any.whl", hash = "sha256:c0efd43ab6bdf0e70dd7d96090d65798bd4a611367f727e7aac80c7bfe5c22b4", size = 146861, upload-time = "2026-11-20T20:25:47.406Z" },
 ]
 
 [[package]]

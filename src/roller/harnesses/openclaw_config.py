@@ -20,7 +20,7 @@ from roller.harnesses.container import PROXY_ENV_NAMES
 from roller.thinking import normalize_thinking
 from roller.wire_trace import WireTraceProxy, rewrite_model_config
 
-DEFAULT_OPENCLAW_IMAGE = "ghcr.io/openclaw/openclaw:2026.7.1-2"
+DEFAULT_OPENCLAW_IMAGE = "ghcr.io/openclaw/openclaw:2026.11.10"
 OPENCLAW_STATE_CONTAINER_PATH = "/tmp/roller-openclaw-state"
 # The workspace of an OpenClaw install. Roller links it to the task workspace
 # and runs the agent in it, so a session records the working directory that

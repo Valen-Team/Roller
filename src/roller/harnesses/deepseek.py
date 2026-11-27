@@ -16,8 +16,8 @@ from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
 from roller.sandbox import SandboxRun
 from roller.thinking import normalize_thinking, resolve_thinking
 
-DEEPSEEK_VERSION = "0.1.5rc1"
-DEFAULT_DEEPSEEK_IMAGE = "roller-deepseek:0.1.5rc1"
+DEEPSEEK_VERSION = "0.2.2rc2"
+DEFAULT_DEEPSEEK_IMAGE = "roller-deepseek:0.2.2rc2"
 RUNNER_PATH = Path(__file__).resolve().parents[1] / "assets" / "deepseek" / "runner.py"
 STATE = "/roller/deepseek-state"
 RUNNER = "/roller/deepseek_runner.py"

@@ -17,7 +17,7 @@ from pathlib import Path
 
 DELEGATE_CALL = ContextVar("roller_delegate_call", default=None)
 
-REVISION = "d15ed4445207dda418b984e8bda0f68f48b8c6f3"
+REVISION = "8fc0374447313e276f6b9a2764bfc750190c966a"
 
 
 def plain(value):

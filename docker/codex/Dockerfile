@@ -9,7 +9,7 @@ RUN set -eu; \
             > /etc/ssl/certs/ca-certificates.crt; \
     fi
 
-ARG CODEX_VERSION=0.149.0
+ARG CODEX_VERSION=0.172.0
 ARG NPM_REGISTRY
 ARG DEBIAN_MIRROR
 ARG DEBIAN_SECURITY_MIRROR

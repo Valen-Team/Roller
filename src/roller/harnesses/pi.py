@@ -17,8 +17,8 @@ from roller.native_images import attached_images
 from roller.thinking import normalize_thinking, resolve_thinking
 
 logger = logging.getLogger(__name__)
-PI_VERSION = "0.85.1"
-DEFAULT_PI_IMAGE = "roller-pi:0.85.1"
+PI_VERSION = "1.6.1"
+DEFAULT_PI_IMAGE = "roller-pi:1.6.1"
 RUNNER_PATH = Path(__file__).resolve().parents[1] / "assets" / "pi" / "runner.py"
 STATE = "/roller/pi-state"
 RUNNER = "/roller/pi_runner.py"

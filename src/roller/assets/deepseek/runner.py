@@ -16,7 +16,7 @@ import time
 from importlib.metadata import version
 from pathlib import Path
 
-VERSION = "0.1.5rc1"
+VERSION = "0.2.2rc2"
 STATE = Path("/roller/deepseek-state")
 SOCKET = str(STATE / "runner.sock")
 

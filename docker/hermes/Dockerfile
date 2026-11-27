@@ -1,9 +1,9 @@
-ARG BASE_IMAGE=python:3.11-slim-bookworm
+ARG BASE_IMAGE=python:3.14-slim-bookworm
 FROM ${BASE_IMAGE}
 
 # The adapter relies on the request and persistence hooks at this revision.
-ARG HERMES_REVISION=d15ed4445207dda418b984e8bda0f68f48b8c6f3
-ARG UV_VERSION=0.11.6
+ARG HERMES_REVISION=8fc0374447313e276f6b9a2764bfc750190c966a
+ARG UV_VERSION=0.13.10
 ARG PIP_INDEX_URL=https://pypi.org/simple
 ARG PIP_TRUSTED_HOST
 ARG PYPI_DOWNLOAD_BASE=https://files.pythonhosted.org
