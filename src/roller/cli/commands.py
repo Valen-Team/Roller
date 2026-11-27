@@ -16,6 +16,7 @@ from roller.atif import export_run
 from roller.cleanup import clean
 from roller.cli.bench import _bench
 from roller.cli.collect import _collect
+from roller.cli.doctor import _doctor
 from roller.cli.parser import _build_parser
 from roller.docker_runtime import DockerRuntime
 from roller.tasks import TaskFormatError
@@ -177,6 +178,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             exit_code = _init(args)
         elif args.command == "clean":
             exit_code = _clean(args)
+        elif args.command == "doctor":
+            exit_code = _doctor(args)
         else:
             parser.error(f"unsupported command: {args.command}")
             return

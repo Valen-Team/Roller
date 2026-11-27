@@ -47,6 +47,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="target directory (default: current directory)",
     )
 
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="check Python, optional extras, sandbox providers, and Docker",
+    )
+    doctor.add_argument(
+        "--docker-binary",
+        default="docker",
+        help="Docker CLI binary to check (default: docker)",
+    )
+
     view = subparsers.add_parser("view", help="browse a Roller run in a local web UI")
     view.add_argument(
         "run_dir", help="Roller run directory containing info.json/samples"
