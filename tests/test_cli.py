@@ -901,5 +901,57 @@ class RetryBackoffCliTests(unittest.TestCase):
         self.assertEqual(self.backoffs, [0.0, 30.0])
 
 
+class DoctorTests(unittest.TestCase):
+    def test_doctor_succeeds_without_docker_and_reports_versions_and_extras(self) -> None:
+        from roller.cli import main
+
+        buf = io.StringIO()
+        with (
+            patch("roller.cli.doctor.shutil.which", return_value=None),
+            patch("roller.cli.doctor.importlib.metadata.entry_points", return_value=[]),
+            contextlib.redirect_stdout(buf),
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            main(["doctor"])
+
+        self.assertEqual(ctx.exception.code, 0)
+        out = buf.getvalue()
+        self.assertIn("Python:", out)
+        self.assertIn("roller-agent:", out)
+        self.assertIn("Docker: not found", out)
+        self.assertIn("Optional extras:", out)
+        self.assertIn("swebench-pro:", out)
+        self.assertIn("stirrup:", out)
+        self.assertIn("Sandbox providers: none discovered", out)
+
+    def test_doctor_reports_docker_and_sandbox_providers_when_available(self) -> None:
+        from roller.cli import main
+
+        ep = MagicMock()
+        ep.name = "e2b"
+        ep.value = "roller_e2b:E2BSandbox"
+        fake_runtime = MagicMock()
+        fake_runtime.version.return_value = subprocess.CompletedProcess(
+            args=["docker", "version"],
+            returncode=0,
+            stdout="27.0.3\n",
+            stderr="",
+        )
+        buf = io.StringIO()
+        with (
+            patch("roller.cli.doctor.shutil.which", return_value="/usr/local/bin/docker"),
+            patch("roller.cli.doctor.DockerRuntime", return_value=fake_runtime),
+            patch("roller.cli.doctor.importlib.metadata.entry_points", return_value=[ep]),
+            contextlib.redirect_stdout(buf),
+            self.assertRaises(SystemExit) as ctx,
+        ):
+            main(["doctor"])
+
+        self.assertEqual(ctx.exception.code, 0)
+        out = buf.getvalue()
+        self.assertIn("Docker: available (27.0.3)", out)
+        self.assertIn("e2b (roller_e2b:E2BSandbox)", out)
+
+
 if __name__ == "__main__":
     unittest.main()
