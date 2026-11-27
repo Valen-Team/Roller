@@ -27,7 +27,9 @@ examples/
 │   ├── negative/                   预期拒绝的输入
 │   └── suite.py                    列表、校验、分组运行与验收
 ├── cookbook/                       实战案例
-│   └── wildclawbench-open-models/  两个自部署模型采集 WildClawBench 的配置和命令
+│   ├── wildclawbench-open-models/  两个自部署模型采集 WildClawBench 的配置和命令
+│   ├── vials-stirrup/              Stirrup 采集并评分 VIALS 的配置和命令
+│   └── zerobench-claude-code/      Claude Code 在远程 sandbox 采集 ZeroBench 的配置和命令
 ├── benchmarks/                     `roller bench run` 的 YAML 运行配置
 │   ├── base.yaml                   模型连接与执行设置
 │   └── <bench>.yaml                各 benchmark 的任务选择、评分环境和 Harness
@@ -231,7 +233,7 @@ roller collect \
 
 ## Codex：运行相同 Task
 
-服务必须支持 Responses 协议，且本地已构建 `roller-codex:0.149.0`：
+服务必须支持 Responses 协议，且本地已构建 `roller-codex:0.172.0`：
 
 ```bash
 roller collect \
@@ -309,7 +311,7 @@ Hermes 也可作为 User Simulator。当前固定启用容器内 `terminal`、`f
 
 ## Claude Code：运行相同 Task
 
-服务必须支持 Anthropic `/v1/messages`，且本地已构建 `roller-claude-code:2.1.222`：
+服务必须支持 Anthropic `/v1/messages`，且本地已构建 `roller-claude-code:2.1.332`：
 
 ```bash
 roller collect \
@@ -329,6 +331,41 @@ roller collect \
 `--claude-settings` 可省略；示例文件仅关闭 commit co-author 标记，不改变 permission mode、thinking
 或工具行为。第四条 task 通过 `claude --continue` 延续 session。镜像、endpoint 和 thinking
 配置见 [Claude Code Harness 指南](https://valen-team.github.io/zh-Hans/roller/harnesses/claude-code-configuration/)。
+
+## Stirrup：agent 在采集进程，容器执行代码
+
+Stirrup 需要 Python 3.12 或更高版本，并安装 `stirrup` extra：
+
+```bash
+pip install 'roller-agent[stirrup]'
+```
+
+与其他 Harness 不同，agent loop 在采集进程内运行，容器只执行它发出的命令并保存 task 文件，
+因此容器拿不到模型 Key，请求同样经过本地录制代理，`--wire-trace full`、`--capture-calls` 和
+`--token-ids` 在 Docker 与远程 sandbox 中的行为一致。工具有 `code_exec`、`view_image` 和
+`finish`，一个 task 只运行一条 prompt。镜像只需 bash、GNU coreutils 和 task 用到的软件，默认
+`python:3.13-slim`，可用 `--stirrup-image` 替换；远程 sandbox 通过
+`--sandbox-provider NAME --sandbox-template NAME` 选择。
+
+请求字段由 `--stirrup-*` 选项设置：`--stirrup-max-steps`（默认 30，含 finish 轮）、
+`--stirrup-context-length`（默认 128000，历史在 70% 处汇总）、`--stirrup-output-tokens`
+（`max_tokens`，默认 8192）、`--stirrup-command-timeout`（默认 300 秒）、`--stirrup-temperature`、
+`--stirrup-top-p`、`--stirrup-seed`（每条样本的 seed 由它、task ID 和样本序号推导），以及可重复的
+`--stirrup-request-set KEY=JSON`；`--thinking` 写入 `chat_template_kwargs.reasoning_effort`。
+
+完整的一次真实运行见 [VIALS × Stirrup 实战案例](cookbook/vials-stirrup/README.md)：161 道科学
+图像问答，每题 3 条样本，容器无网络，报告给出 pass^3、avg@3 和 pass@3。
+
+```bash
+cd examples/cookbook/vials-stirrup
+export MODEL=glm-5.3-flash
+export MODEL_BASE=http://localhost:8000/v1
+export JUDGE_BASE_URL=https://api.openai.com/v1
+export JUDGE_API_KEY=...
+
+./collect.sh --dry-run
+./collect.sh
+```
 
 ## 进阶案例
 
@@ -376,6 +413,16 @@ roller collect \
 ```
 
 模型配置用于声明图像能力；服务与模型也必须支持对应协议下的视觉输入。
+
+## 实战案例
+
+| 案例 | 内容 |
+| --- | --- |
+| [wildclawbench-open-models](cookbook/wildclawbench-open-models/README.md) | 两个自部署模型在 WildClawBench 上采集、评分，并发布为 Hugging Face 数据集 |
+| [vials-stirrup](cookbook/vials-stirrup/README.md) | Stirrup 用 `code_exec`、`view_image` 和 `finish` 回答 161 道 VIALS 科学图像问答，报告 pass^3、avg@3 和 pass@3 |
+| [zerobench-claude-code](cookbook/zerobench-claude-code/README.md) | Claude Code 在无出网 sandbox 中回答 ZeroBench 问题，报告 avg@k 和 pass@k |
+
+每个案例目录都提供 `README.md` 和可直接执行的 `collect.sh`。运行条件、数据下载和评分规则见各自的 README。
 
 ## 验收与查看
 
