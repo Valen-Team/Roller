@@ -7,7 +7,7 @@ import {
 } from "/opt/roller-pi/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
 import { configureHttpDispatcher } from "/opt/roller-pi/node_modules/@earendil-works/pi-coding-agent/dist/core/http-dispatcher.js";
 
-const VERSION = "0.85.1";
+const VERSION = "1.6.1";
 const STATE = "/roller/pi-state";
 const agentDir = "/roller/pi-home/agent";
 const redact = (value) => {

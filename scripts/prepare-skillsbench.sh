@@ -24,8 +24,8 @@ if [[ "$actual_revision" != "$expected_revision" ]]; then
   exit 1
 fi
 
-docker build -t roller-opencode:1.18.30 "$repo_root/docker/opencode"
+docker build -t roller-opencode:1.19.6 "$repo_root/docker/opencode"
 
 printf 'SkillsBench root: %s\n' "$(cd "$bench_root" && pwd)"
 printf 'Revision: %s\n' "$actual_revision"
-printf 'Base image: roller-opencode:1.18.30\n'
+printf 'Base image: roller-opencode:1.19.6\n'

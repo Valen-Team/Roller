@@ -17,7 +17,7 @@ from roller.thinking import normalize_thinking
 COMMON_ENV_NAMES = PROXY_ENV_NAMES
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-DEFAULT_CLAUDE_CODE_IMAGE = "roller-claude-code:2.1.222"
+DEFAULT_CLAUDE_CODE_IMAGE = "roller-claude-code:2.1.332"
 CLAUDE_HOME_CONTAINER_PATH = "/roller/claude-home"
 # Native and delivered IDs of every tool call --claude-unique-tool-ids repaired.
 TOOL_ID_MAPPINGS_NAME = "tool_id_mappings.jsonl"

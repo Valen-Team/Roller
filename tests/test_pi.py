@@ -396,7 +396,7 @@ class FakeRuntime(DockerRuntime):
         if args[:2] == ["image", "inspect"]:
             stdout = "sha256:test"
         elif args[-1] == "--check":
-            stdout = "0.85.1"
+            stdout = "1.6.1"
         elif args[-1].endswith("/result.json"):
             stdout = json.dumps(self.result)
         elif args[0] == "cp" and args[1].endswith(":/roller/pi-state/trace.jsonl"):

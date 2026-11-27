@@ -46,7 +46,7 @@ class TaskImageBuildTests(unittest.TestCase):
                 result = prepare_task_images(
                     "docker",
                     [request],
-                    {"opencode": "roller-opencode:1.18.30"},
+                    {"opencode": "roller-opencode:1.19.6"},
                 )
 
             self.assertEqual(result, {"task": "sha256:final"})
@@ -74,7 +74,7 @@ class TaskImageBuildTests(unittest.TestCase):
                 result = prepare_task_images(
                     "docker",
                     [request],
-                    {"opencode": "roller-opencode:1.18.30"},
+                    {"opencode": "roller-opencode:1.19.6"},
                 )
 
             build.assert_not_called()

@@ -31,7 +31,7 @@ export default async function RollerJournal() {
           ...(sessionID ? { native_session_id: sessionID } : {}) });
         return fetch(input, init);
       };
-      write({ type: "bridge_ready", version: "1.18.30" });
+      write({ type: "bridge_ready", version: "1.19.6" });
     },
     event: ({ event }) => {
       if (["message.updated", "message.part.updated", "session.created", "session.updated", "session.error"].includes(event.type)) {

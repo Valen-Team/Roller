@@ -15,8 +15,8 @@ from roller.harnesses.container import PROXY_ENV_NAMES as COMMON_ENV_NAMES
 from roller.thinking import normalize_thinking, resolve_thinking
 from roller.usage import ZERO_USAGE
 
-HERMES_REVISION = "d15ed4445207dda418b984e8bda0f68f48b8c6f3"
-DEFAULT_HERMES_IMAGE = "roller-hermes:d15ed4445207"
+HERMES_REVISION = "8fc0374447313e276f6b9a2764bfc750190c966a"
+DEFAULT_HERMES_IMAGE = "roller-hermes:8fc037444731"
 RUNNER_PATH = Path(__file__).resolve().parents[1] / "assets" / "hermes" / "runner.py"
 STATE = "/roller/hermes-state"
 RUNNER = "/roller/hermes_runner.py"

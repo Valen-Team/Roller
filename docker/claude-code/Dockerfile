@@ -9,7 +9,7 @@ RUN set -eu; \
             > /etc/ssl/certs/ca-certificates.crt; \
     fi
 
-ARG CLAUDE_CODE_VERSION=2.1.222
+ARG CLAUDE_CODE_VERSION=2.1.332
 ARG NPM_REGISTRY
 ARG DEBIAN_MIRROR
 ARG DEBIAN_SECURITY_MIRROR

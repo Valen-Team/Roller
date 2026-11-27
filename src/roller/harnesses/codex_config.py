@@ -19,7 +19,7 @@ from roller.wire_trace import RESPONSES_IMAGE_DETAILS
 COMMON_ENV_NAMES = PROXY_ENV_NAMES
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-DEFAULT_CODEX_IMAGE = "roller-codex:0.149.0"
+DEFAULT_CODEX_IMAGE = "roller-codex:0.172.0"
 CODEX_HOME_CONTAINER_PATH = "/roller/codex-home"
 # Codex always replays reasoning.encrypted_content with store=false; give
 # relayed endpoints a few chances before one rejected replay ends the rollout.

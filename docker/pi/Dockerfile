@@ -41,9 +41,9 @@ WORKDIR /opt/roller-pi
 RUN if [ -n "${NPM_REGISTRY:-}" ]; then export npm_config_registry="$NPM_REGISTRY"; fi \
     && npm init -y \
     && npm install --omit=dev --ignore-scripts --save-exact \
-        @earendil-works/pi-coding-agent@0.85.1 \
-        @earendil-works/pi-agent-core@0.85.1 \
-        @earendil-works/pi-ai@0.85.1 \
+        @earendil-works/pi-coding-agent@1.6.1 \
+        @earendil-works/pi-agent-core@1.6.1 \
+        @earendil-works/pi-ai@1.6.1 \
     && npm cache clean --force
 ENV PI_OFFLINE=1 PI_TELEMETRY=0
 # Older distributions ship fd without flags required by Pi's find tool.
