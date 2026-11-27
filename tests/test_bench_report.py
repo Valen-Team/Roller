@@ -580,6 +580,30 @@ class BenchReportCommandTests(unittest.TestCase):
             self.assertEqual(parsed["scored_count"], 1)
             self.assertNotIn("Report written to", buf.getvalue())
 
+        self.assertTrue(out_path.is_file())
+        self.assertEqual(json.loads(out_path.read_text(encoding="utf-8")), parsed)
+
+        text_buf = io.StringIO()
+        with contextlib.redirect_stdout(text_buf):
+            with self.assertRaises(SystemExit) as ctx:
+                main(["bench", "report", str(self.run_dir), "--format", "text"])
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertIn("model  model-a", text_buf.getvalue())
+
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                main(
+                    [
+                        "bench",
+                        "report",
+                        str(self.run_dir),
+                        "--json",
+                        "--format",
+                        "text",
+                    ]
+                )
+        self.assertEqual(ctx.exception.code, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
