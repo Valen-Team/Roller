@@ -435,6 +435,11 @@ ruff format --check
       <a href="https://github.com/s1reyash"><img src="https://github.com/s1reyash.png?size=128" width="64" height="64" alt="s1reyash"><br><sub><b>s1reyash</b></sub></a>
     </td>
   </tr>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/Aadithya-kl"><img src="https://github.com/Aadithya-kl.png?size=128" width="64" height="64" alt="Aadithya-kl"><br><sub><b>Aadithya-kl</b></sub></a>
+    </td>
+  </tr>
 </table>
 
 <a id="more-from-valen-team"></a>
