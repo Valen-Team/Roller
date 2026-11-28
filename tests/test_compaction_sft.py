@@ -2718,3 +2718,148 @@ def test_text_blocks_are_concatenated_as_the_endpoint_joins_them() -> None:
         )[0]["content"]
         == "<system-reminder>ctx</system-reminder>\nThe image is at /task/image.jpg."
     )
+
+
+def _tool_image_window(tmp_path: Path, answer: str = "a pixel") -> list[dict]:
+    """A Claude Code window whose Read result returned an image, then a boundary."""
+    root = "root:session"
+    _actf(
+        tmp_path,
+        {
+            "content": "",
+            "tool_calls": [{"name": "Read", "arguments": {"path": "image.png"}}],
+        },
+        "a pixel",
+    )
+    _write(
+        tmp_path / "trace.jsonl",
+        [
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "uuid": "boundary-1",
+                "timestamp": "2026-10-15T00:00:03Z",
+                "isSidechain": False,
+            },
+        ],
+    )
+    read = {
+        "content": [
+            {
+                "type": "tool_use",
+                "id": "call-1",
+                "name": "Read",
+                "input": {"path": "image.png"},
+            }
+        ]
+    }
+    after = {
+        "model": "claude",
+        "system": "s",
+        "tools": [],
+        "messages": [
+            {"role": "user", "content": "summary"},
+            {"role": "assistant", "content": read["content"]},
+            READ_RESULT,
+        ],
+    }
+    return [
+        _call(
+            1,
+            root,
+            "anthropic-messages",
+            {**after, "messages": [{"role": "user", "content": "describe"}]},
+            read,
+        ),
+        _call(
+            4,
+            root,
+            "anthropic-messages",
+            after,
+            {"content": [{"type": "text", "text": answer}]},
+        ),
+    ]
+
+
+def test_an_unmatched_tool_image_call_names_the_call_and_step(
+    tmp_path: Path,
+) -> None:
+    calls = _tool_image_window(tmp_path, answer="a cat")
+    manifest = _capture(tmp_path, "root:session", calls)
+    with pytest.raises(SFTConversionError, match="matches neither") as error:
+        build_compaction_segments(tmp_path, "claude-code", manifest, images_inline=True)
+    assert (
+        "Call call-4 matches neither the next step nor a native summary "
+        "(request_seq 4, protocol anthropic-messages; expected ACTF main step 2 "
+        "of 2, but the assistant text differs)"
+    ) in str(error.value)
+
+    calls[1]["output"] = {
+        "content": [{"type": "text", "text": "a pixel"}, *calls[0]["output"]["content"]]
+    }
+    manifest = _capture(tmp_path, "root:session", calls)
+    with pytest.raises(SFTConversionError, match="tool calls differ") as error:
+        build_compaction_segments(tmp_path, "claude-code", manifest)
+    assert "Call has ['Read'], step has []" in str(error.value)
+
+    calls[1] = {**calls[0], "call_id": "call-5", "request_seq": 5}
+    calls[1]["started_at"] = "2026-10-15T00:00:05Z"
+    calls.insert(1, _tool_image_window(tmp_path)[1])
+    manifest = _capture(tmp_path, "root:session", calls)
+    with pytest.raises(SFTConversionError, match="matches neither") as error:
+        build_compaction_segments(tmp_path, "claude-code", manifest)
+    assert "Call call-5" in str(error.value)
+    assert "all 2 ACTF main steps are already bound" in str(error.value)
+
+
+def test_missing_and_incomplete_tool_image_calls_are_described(
+    tmp_path: Path,
+) -> None:
+    calls = _tool_image_window(tmp_path)
+    read = {
+        "content": "",
+        "tool_calls": [{"name": "Read", "arguments": {"path": "image.png"}}],
+    }
+    _actf(tmp_path, read, "a pixel", "and nothing else")
+    manifest = _capture(tmp_path, "root:session", calls)
+    with pytest.raises(SFTConversionError, match="1 steps have no Call") as error:
+        build_compaction_segments(tmp_path, "claude-code", manifest)
+    assert "2 of 3 ACTF main steps bound by 2 root Calls" in str(error.value)
+
+    calls[1]["export_status"] = "unavailable"
+    manifest = _capture(tmp_path, "root:session", calls)
+    with pytest.raises(SFTConversionError, match="call-4 is incomplete") as error:
+        build_compaction_segments(tmp_path, "claude-code", manifest)
+    assert "protocol anthropic-messages) has export_status unavailable" in str(
+        error.value
+    )
+
+
+def test_a_segment_without_input_names_its_call(tmp_path: Path) -> None:
+    calls = _tool_image_window(tmp_path)
+    calls[1]["context"] = {"model": "claude", "tools": [], "messages": []}
+    manifest = _capture(tmp_path, "root:session", calls)
+    with pytest.raises(SFTConversionError, match="lacks its actual input") as error:
+        build_compaction_segments(tmp_path, "claude-code", manifest, images_inline=True)
+    assert "Call call-4 (request_seq 4, protocol anthropic-messages)" in str(
+        error.value
+    )
+
+
+def test_a_native_context_change_names_the_unusable_root_call(
+    tmp_path: Path,
+) -> None:
+    calls = _tool_image_window(tmp_path)
+    _write(tmp_path / "trace.jsonl", [{"type": "compaction"}])
+    manifest = _capture(tmp_path, "root:session", calls)
+    with pytest.raises(SFTConversionError, match="lacks usable root Calls") as error:
+        build_compaction_segments(tmp_path, "openclaw", manifest)
+    assert (
+        "Call call-1 (request_seq 1, protocol anthropic-messages) is not "
+        "openai-chat-completions"
+    ) in str(error.value)
+
+    manifest = _capture(tmp_path, "someone-else", calls)
+    with pytest.raises(SFTConversionError, match="lacks usable root Calls") as error:
+        build_compaction_segments(tmp_path, "openclaw", manifest)
+    assert "no usable root Call among 2 captured Calls" in str(error.value)

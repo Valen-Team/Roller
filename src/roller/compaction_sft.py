@@ -302,6 +302,39 @@ def _is_summary_call(
     )
 
 
+def _call_context(call: Mapping[str, Any]) -> str:
+    """Where a Call sits in the capture, for error messages."""
+    return f"request_seq {call.get('request_seq')}, protocol {call.get('protocol')}"
+
+
+def _describe_call(call: Mapping[str, Any]) -> str:
+    return f"Call {call.get('call_id')} ({_call_context(call)})"
+
+
+def _step_mismatch(
+    messages: list[dict[str, Any]],
+    index: int,
+    targets: list[tuple[str, tuple[tuple[str, str], ...]]],
+) -> str:
+    """Why a Call's output does not bind to the next ACTF main step."""
+    if index >= len(targets):
+        return f"all {len(targets)} ACTF main steps are already bound"
+    expected = f"expected ACTF main step {index + 1} of {len(targets)}"
+    if len(messages) != 1:
+        return f"{expected}, but the Call has {len(messages)} assistant messages"
+    content, tools = _assistant_signature(messages[0])
+    native_content, native_tools = targets[index]
+    if content != native_content:
+        return f"{expected}, but the assistant text differs"
+    if [name for name, _ in tools] != [name for name, _ in native_tools]:
+        return (
+            f"{expected}, but the tool calls differ: Call has "
+            f"{[name for name, _ in tools]}, step has "
+            f"{[name for name, _ in native_tools]}"
+        )
+    return f"{expected}, but the tool call arguments differ"
+
+
 def _calls_matching_main_steps(
     sample_dir: Path,
     calls: list[dict[str, Any]],
@@ -340,7 +373,11 @@ def _calls_matching_main_steps(
     verified = []
     for call in calls:
         if call.get("export_status") != "available":
-            raise SFTConversionError(f"main Call {call.get('call_id')} is incomplete")
+            raise SFTConversionError(
+                f"main Call {call.get('call_id')} is incomplete: "
+                f"{_describe_call(call)} has export_status "
+                f"{call.get('export_status')}"
+            )
         messages = _target_messages_from_call(call)
         index = len(verified) - len(summaries or ())
         if (
@@ -360,15 +397,19 @@ def _calls_matching_main_steps(
         ):
             raise SFTConversionError(
                 f"root Calls do not correspond one-to-one with ACTF main steps; Call "
-                f"{call.get('call_id')} matches neither the next step nor a native summary"
+                f"{call.get('call_id')} matches neither the next step nor a native summary "
+                f"({_call_context(call)}; {_step_mismatch(messages, index, targets)})"
             )
         elif summaries is not None:
             summaries.add(call["call_id"])
             verified.append((call, messages))
-    if len(verified) - len(summaries or ()) != len(steps):
+    bound_steps = len(verified) - len(summaries or ())
+    if bound_steps != len(steps):
         raise SFTConversionError(
             "root Calls do not correspond one-to-one with ACTF main steps; "
-            f"{len(steps) - len(verified)} steps have no Call"
+            f"{len(steps) - bound_steps} steps have no Call "
+            f"({bound_steps} of {len(steps)} ACTF main "
+            f"steps bound by {len(calls)} root Calls)"
         )
     return verified
 
@@ -525,12 +566,16 @@ def _segment_records(
         when = _time(call.get("started_at")) if boundaries else None
         if when in times:
             raise SFTConversionError(
-                "main Call starts at an ambiguous compaction boundary"
+                "main Call starts at an ambiguous compaction boundary: "
+                f"{_describe_call(call)} starts at {call.get('started_at')}"
             )
         current_native = sum(when > boundary for boundary in times) if when else 0
         prompt, tools = _prompt_from_call(call, images_inline=images_inline)
         if not prompt:
-            raise SFTConversionError("compaction segment lacks its actual input")
+            raise SFTConversionError(
+                "compaction segment lacks its actual input: "
+                f"{_describe_call(call)} has an empty prompt"
+            )
         if not keep_thinking:
             for message in [*prompt, *target]:
                 if message["role"] == "assistant":
@@ -659,12 +704,23 @@ def build_compaction_segments(
         )
         summaries = set()
     if not boundaries:
-        if not main or any(
-            call.get("protocol") != "openai-chat-completions" for call in main
-        ):
+        unsupported = next(
+            (
+                call
+                for call in main
+                if call.get("protocol") != "openai-chat-completions"
+            ),
+            None,
+        )
+        if not main or unsupported is not None:
             if native_reset:
                 raise SFTConversionError(
-                    "native context change lacks usable root Calls"
+                    "native context change lacks usable root Calls: "
+                    + (
+                        f"{_describe_call(unsupported)} is not openai-chat-completions"
+                        if unsupported
+                        else f"no usable root Call among {len(calls)} captured Calls"
+                    )
                 )
             return []
         if not native_reset and not _raw_context_changed(main):

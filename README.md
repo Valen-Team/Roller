@@ -439,6 +439,9 @@ ruff format --check
     <td align="center">
       <a href="https://github.com/Aadithya-kl"><img src="https://github.com/Aadithya-kl.png?size=128" width="64" height="64" alt="Aadithya-kl"><br><sub><b>Aadithya-kl</b></sub></a>
     </td>
+    <td align="center">
+      <a href="https://github.com/orshih6"><img src="https://github.com/orshih6.png?size=128" width="64" height="64" alt="orshih6"><br><sub><b>orshih6</b></sub></a>
+    </td>
   </tr>
 </table>
 

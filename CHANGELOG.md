@@ -9,6 +9,10 @@ Notable changes to Roller. Versions follow the tags of this repository and the `
 - `roller doctor` reports Python, `roller-agent`, Docker availability, optional extras, and sandbox providers.
 - `roller bench report --json` and `--format json` print the benchmark report JSON directly to stdout without summary formatting.
 
+### Changed
+
+- Compaction SFT conversion errors now name the Call (ID, request sequence, protocol) and the ACTF main step that failed to align, and say why the Call's output did not match.
+
 ## 0.7.0 - 2026-11-27
 
 Roller 0.7.0 adds the Stirrup Harness, Claude Code remote sandbox execution, the VIALS and ZeroBench bench adapters, OpenAI multimodal SFT records with XTuner export, `--training-files-only` compact runs, upgraded pinned Harness versions, and a decoupled layered module architecture.
