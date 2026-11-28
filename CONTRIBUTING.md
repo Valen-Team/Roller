@@ -163,7 +163,7 @@ Roller loads that entry point and calls it with no arguments. `--sandbox-provide
 | | `upload(source, target, *, contents, timeout)` | Copy a host file or directory in; `contents` copies a directory's contents rather than the directory itself |
 | | `download(source, target, *, contents, timeout)` | Copy a sandbox file or directory out to the collector |
 | | `close()` | Stop the box and everything it started |
-| | `route_http(base, key, timeout)` | Optional. Return the `(base, key)` pair a sandbox without egress uses to reach the recording proxy on the collector; without it, the collector's own values are used as they are |
+| | `route_http(base, key, timeout)` | Optional. Return the relay's sandbox-accessible base URL as a string. Roller pairs it with the key `sandbox-relay`. Without this method, Roller uses the original base URL and key |
 
 ## Pull requests
 

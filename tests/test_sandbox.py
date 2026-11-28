@@ -5,11 +5,12 @@ import tarfile
 from collections.abc import Callable
 from pathlib import Path
 from subprocess import CompletedProcess
+from unittest.mock import Mock
 
 import pytest
 
 from roller.cli import _build_parser, _collect
-from roller.sandbox import SandboxRun, SandboxTarget
+from roller.sandbox import SandboxRun, SandboxTarget, route_sandbox_http
 from roller.sandbox_files import unpack_archive
 
 
@@ -243,7 +244,9 @@ class MemoryProvider:
         self.removed.append(instance_id)
 
 
-def test_documented_provider_contract_runs_without_docker(tmp_path: Path):
+def test_documented_provider_contract_runs_without_docker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     provider = MemoryProvider()
     template = "bench-runtime"
     target = SandboxTarget("memory", template, provider.resolve(template))
@@ -252,6 +255,14 @@ def test_documented_provider_contract_runs_without_docker(tmp_path: Path):
     box = run.create("attempt-1", 60, 10)
     assert box.run(["true"], timeout=5).returncode == 0
     assert box.spawn(["sleep", "1"], log_path=tmp_path / "spawn.log").wait() == 0
+
+    base, key = "https://model.example/v1", "fixture-key"
+    relay = "https://relay.example/v1"
+    assert route_sandbox_http(box, base, key, 5) == (base, key)
+    route = Mock(return_value=relay)
+    monkeypatch.setattr(box, "route_http", route, raising=False)
+    assert route_sandbox_http(box, base, key, 5) == (relay, "sandbox-relay")
+    route.assert_called_once_with(base, key, 5)
 
     upload = tmp_path / "input.txt"
     upload.write_text("payload", encoding="utf-8")
