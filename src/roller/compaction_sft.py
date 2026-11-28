@@ -403,11 +403,12 @@ def _calls_matching_main_steps(
         elif summaries is not None:
             summaries.add(call["call_id"])
             verified.append((call, messages))
-    if len(verified) - len(summaries or ()) != len(steps):
+    bound_steps = len(verified) - len(summaries or ())
+    if bound_steps != len(steps):
         raise SFTConversionError(
             "root Calls do not correspond one-to-one with ACTF main steps; "
-            f"{len(steps) - len(verified)} steps have no Call "
-            f"({len(verified) - len(summaries or ())} of {len(steps)} ACTF main "
+            f"{len(steps) - bound_steps} steps have no Call "
+            f"({bound_steps} of {len(steps)} ACTF main "
             f"steps bound by {len(calls)} root Calls)"
         )
     return verified

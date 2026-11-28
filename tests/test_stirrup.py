@@ -36,7 +36,12 @@ from roller.harnesses.stirrup import StirrupConfig, StirrupHarness, sample_seed
 from roller.models import RunRequest, Task
 from roller.option_specs import parse_request_field as _request_field
 from roller.sandbox import SandboxRun, SandboxTarget
-from roller.sft import actf_to_sft, normalize_sft_record, validate_sft_record
+from roller.sft import (
+    SFTConversionError,
+    actf_to_sft,
+    normalize_sft_record,
+    validate_sft_record,
+)
 from roller.sft_dataset import sample_records
 
 PNG = (
@@ -338,6 +343,23 @@ class StirrupCompactionTests(unittest.TestCase):
             [call["function"]["name"] for call in summary["tool_calls"]],
             ["view_image"],
         )
+
+    def test_missing_main_call_is_counted_separately_from_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sample = Path(tmp)
+            manifest = write_compacted_sample(sample)
+            path = sample / "trace_ACTF.json"
+            actf = json.loads(path.read_text(encoding="utf-8"))
+            actf["steps"].append(
+                {"assistant_content": {"content": "Uncaptured final answer."}}
+            )
+            path.write_text(json.dumps(actf), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                SFTConversionError,
+                r"1 steps have no Call \(2 of 3 ACTF main steps bound by 3 root Calls\)",
+            ):
+                build_compaction_segments(sample, "stirrup", manifest)
 
     def test_summary_request_is_a_window_of_its_own(self):
         with tempfile.TemporaryDirectory() as tmp:

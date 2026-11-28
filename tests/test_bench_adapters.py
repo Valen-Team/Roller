@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import re
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from roller.benches import BenchFormatError, binding_from_task_row
-from roller.benches.base import BenchBinding, GradeSpec
+from roller.benches import BenchFormatError, binding_from_task_row, missing_grader_env
+from roller.benches.base import BenchAdapter, BenchBinding, GradeSpec
 from roller.benches.grading import GradedHarness, prepare_benchmark_workspace
 from roller.benches.pinchbench import PinchBenchAdapter
 from roller.benches.skillsbench import (
@@ -924,6 +925,120 @@ RUN echo tar -xzf is documentation
         self.assertIn("tar --no-same-owner -xf /tmp/already-safe.tar", portable)
         self.assertIn("    tar \\\n    xz-utils", portable)
         self.assertIn("RUN echo tar -xzf is documentation", portable)
+
+
+MINIMAL_GRADER = """\
+def grade(transcript, workspace_path):
+    return {"overall_score": 1.0}
+"""
+
+
+class MinimalAdapter(BenchAdapter):
+    """The adapter in CONTRIBUTING.md, kept next to the test that runs it."""
+
+    name = "minimal"
+    description = "One JSON task per file under tasks/"
+
+    def load(
+        self,
+        root: Path,
+        *,
+        categories: list[str] | None = None,
+        task_ids: list[str] | None = None,
+        variant: str | None = None,
+        timeout_multiplier: float = 1.0,
+    ) -> list[dict]:
+        if variant is not None:
+            raise BenchFormatError(f"{self.name}: this bench has no variants")
+        rows = []
+        for path in sorted(root.glob("tasks/*.json")):
+            task = json.loads(path.read_text(encoding="utf-8"))
+            if task_ids and task["id"] not in task_ids:
+                continue
+            if categories and task.get("category") not in categories:
+                continue
+            binding = BenchBinding(
+                name=self.name,
+                category=task.get("category"),
+                grade=GradeSpec(code=MINIMAL_GRADER, env_names=("MINIMAL_JUDGE_KEY",)),
+            )
+            rows.append(
+                {
+                    "schema_version": "roller.task/v1",
+                    "id": task["id"],
+                    "prompt": task["prompt"],
+                    "timeout_seconds": max(1, math.ceil(45 * timeout_multiplier)),
+                    "bench": binding.as_dict(),
+                }
+            )
+        return rows
+
+
+class ContributorTemplateTests(unittest.TestCase):
+    def _root(self, temporary: str) -> Path:
+        root = Path(temporary) / "benchmark"
+        (root / "tasks").mkdir(parents=True)
+        for task_id, category in (("one", "math"), ("two", "science")):
+            (root / "tasks" / f"{task_id}.json").write_text(
+                json.dumps(
+                    {
+                        "id": task_id,
+                        "prompt": f"Answer {task_id}.",
+                        "category": category,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return root
+
+    def test_documented_adapter_loads_rows_the_collect_path_accepts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            adapter = MinimalAdapter()
+            root = self._root(temporary)
+            self.assertEqual([row["id"] for row in adapter.load(root)], ["one", "two"])
+            self.assertEqual(
+                [row["id"] for row in adapter.load(root, categories=["science"])],
+                ["two"],
+            )
+            self.assertEqual(
+                [row["id"] for row in adapter.load(root, task_ids=["one"])], ["one"]
+            )
+            self.assertEqual(
+                adapter.load(root, timeout_multiplier=2)[0]["timeout_seconds"], 90
+            )
+            with self.assertRaisesRegex(BenchFormatError, "no variants"):
+                adapter.load(root, variant="all")
+
+            row = adapter.load(root, task_ids=["one"])[0]
+            binding = binding_from_task_row(row)
+            assert binding is not None
+            self.assertEqual(binding.name, "minimal")
+            self.assertEqual(binding.category, "math")
+            self.assertEqual(adapter.required_env(binding), (("MINIMAL_JUDGE_KEY",),))
+            self.assertEqual(
+                missing_grader_env([row], environ={}), ["MINIMAL_JUDGE_KEY (1 task)"]
+            )
+            self.assertEqual(
+                missing_grader_env([row], environ={"MINIMAL_JUDGE_KEY": "key"}), []
+            )
+
+    def test_documented_adapter_aggregates_with_the_base_class_default(self) -> None:
+        report = MinimalAdapter().aggregate(
+            [
+                {
+                    "task_id": "one",
+                    "status": "ok",
+                    "bench_scores": {"overall_score": 1.0},
+                },
+                {
+                    "task_id": "two",
+                    "status": "error",
+                    "bench_scores": {"overall_score": 0.0},
+                },
+            ]
+        )
+        self.assertEqual(report["task_count"], 2)
+        self.assertEqual(report["average"], 0.5)
 
 
 if __name__ == "__main__":
